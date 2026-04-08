@@ -66,7 +66,7 @@ scrapeRouter.post("/", (_req, res) => {
   currentRunId = run.lastInsertRowid as number
   isRunning = true
 
-  const proc = spawn("python3", ["scrape.py"], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"] })
+  const proc = spawn("xvfb-run", ["python3", "scrape.py"], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"] })
 
   let stdout = ""
   let stderr = ""
@@ -110,7 +110,7 @@ scrapeRouter.post("/cards", (req, res) => {
   currentRunId = run.lastInsertRowid as number
   isRunning = true
 
-  const proc = spawn("python3", ["scrape.py"], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"] })
+  const proc = spawn("xvfb-run", ["python3", "scrape.py"], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"] })
 
   let stderr = ""
   proc.stderr.on("data", (d) => (stderr += d.toString()))
