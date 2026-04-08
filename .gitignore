@@ -1,9 +1,9 @@
 node_modules/
 dist/
-data/
+data/chrome-profile/
+data/logs/
 prices/
 portfolio.csv
 .DS_Store
-*.db
 *.db-wal
 *.db-shm
