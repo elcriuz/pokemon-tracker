@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { api } from "@/lib/api"
 import { formatEUR, formatPct, urlToFlag } from "@/lib/utils"
-import { TrendingUp, TrendingDown, CreditCard, Plus, RefreshCw, ExternalLink, Check, ArrowUpDown } from "lucide-react"
+import { TrendingUp, TrendingDown, CreditCard, Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Monitor } from "lucide-react"
 import { useMemo, useState } from "react"
 import { AddCardDialog } from "@/components/cards/AddCardDialog"
 import { PortfolioChart } from "@/components/charts/PortfolioChart"
@@ -126,6 +126,18 @@ export function Dashboard() {
             >
               Auswahl aufheben
             </button>
+          )}
+          {isAnyScraping && (
+            <a
+              href={`http://${window.location.hostname}:6080/vnc.html`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 transition-colors"
+              title="Chrome-Fenster live sehen (noVNC)"
+            >
+              <Monitor className="w-4 h-4" />
+              Live View
+            </a>
           )}
           <button
             onClick={() => setShowAdd(true)}

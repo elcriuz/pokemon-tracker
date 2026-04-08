@@ -324,6 +324,7 @@ def create_driver():
 
     options = uc.ChromeOptions()
     options.add_argument("--window-size=1280,900")
+    options.add_argument("--window-position=0,0")
     options.add_argument(f"--user-data-dir={profile_dir}")
     options.add_argument("--disable-dev-shm-usage")
 
