@@ -12,6 +12,7 @@ Env:
     TELEGRAM_BOT_TOKEN   - Telegram Bot Token fuer Alerts
     TELEGRAM_CHAT_ID     - Telegram Chat ID fuer Alerts
     CF_WAIT_TIMEOUT      - Sekunden warten auf menschliche Hilfe bei CF (default: 300)
+    BATCH_SIZE           - Chrome-Neustart alle N Karten (default: 50)
 """
 
 import csv
@@ -22,7 +23,7 @@ import sys
 import time
 import random
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent
@@ -30,13 +31,15 @@ PORTFOLIO_FILE = BASE_DIR / "portfolio.csv"
 PRICES_DIR = BASE_DIR / "prices"
 LATEST_FILE = PRICES_DIR / "latest.json"
 LOG_DIR = BASE_DIR / "data" / "logs"
+RESUME_FILE = BASE_DIR / "data" / "scrape_resume.json"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-# Timing
-MIN_DELAY = 12
-MAX_DELAY = 20
-INITIAL_WAIT = 12
-CF_WAIT_TIMEOUT = int(os.environ.get("CF_WAIT_TIMEOUT", "300"))  # 5 Minuten default
+# Timing — schneller nach dem ersten erfolgreichen Load
+FIRST_WAIT = 12       # Erste Seite (Cloudflare-Bypass)
+MIN_DELAY = 8         # Minimum zwischen Karten
+MAX_DELAY = 14        # Maximum zwischen Karten
+CF_WAIT_TIMEOUT = int(os.environ.get("CF_WAIT_TIMEOUT", "300"))
+BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "50"))
 
 # Logging
 log_file = LOG_DIR / f"scrape_{datetime.now().strftime('%Y-%m-%d_%H%M')}.log"
@@ -55,17 +58,16 @@ ERR_CLOUDFLARE = "cloudflare_blocked"
 ERR_NO_PRICES = "no_prices_extracted"
 ERR_CRASH = "exception"
 ERR_TIMEOUT = "cloudflare_timeout"
+ERR_SKIPPED = "skipped_recent"
 STATUS_OK = "ok"
 
 
 # ─── Telegram ───────────────────────────────────────────────
 
 def load_telegram_config():
-    """Laedt Telegram-Config aus env oder DB settings."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
-        # Fallback: aus SQLite settings lesen
         try:
             db_path = BASE_DIR / "data" / "tracker.db"
             if db_path.exists():
@@ -82,7 +84,6 @@ def load_telegram_config():
 
 
 def send_telegram(message):
-    """Sendet Telegram-Nachricht. Gibt True/False zurueck."""
     token, chat_id = load_telegram_config()
     if not token or not chat_id:
         return False
@@ -101,7 +102,6 @@ def send_telegram(message):
 # ─── Cloudflare Detection ───────────────────────────────────
 
 def is_cloudflare_challenge(content):
-    """Erkennt ob die Seite eine Cloudflare Challenge zeigt."""
     if len(content) > 10000:
         return False
     indicators = ["challenge", "just a moment", "checking your browser", "cloudflare"]
@@ -110,7 +110,6 @@ def is_cloudflare_challenge(content):
 
 
 def try_solve_turnstile(driver):
-    """Versucht den Turnstile-Checkbox automatisch zu klicken."""
     try:
         frames = driver.find_elements("tag name", "iframe")
         for frame in frames:
@@ -132,20 +131,10 @@ def try_solve_turnstile(driver):
 
 
 def wait_for_cloudflare(driver, card_name):
-    """
-    Wartet auf Cloudflare-Bypass. Strategie:
-    1. Auto-Solve versuchen (3x)
-    2. Falls das nicht klappt: Telegram-Alert → warten auf menschliche Hilfe
-    3. Timeout nach CF_WAIT_TIMEOUT Sekunden
-
-    Returns: (content, status) - status ist STATUS_OK oder ERR_CLOUDFLARE/ERR_TIMEOUT
-    """
     content = driver.page_source
-
     if not is_cloudflare_challenge(content):
         return content, STATUS_OK
 
-    # Phase 1: Auto-Solve (3 Versuche, je 15s)
     log.warning(f"  Cloudflare Challenge erkannt fuer: {card_name}")
     for attempt in range(3):
         log.info(f"  Auto-Solve Versuch {attempt+1}/3...")
@@ -156,10 +145,9 @@ def wait_for_cloudflare(driver, card_name):
             log.info("  Cloudflare automatisch geloest!")
             return content, STATUS_OK
 
-    # Phase 2: Menschliche Hilfe anfordern
     log.warning(f"  Auto-Solve fehlgeschlagen. Warte auf menschliche Hilfe ({CF_WAIT_TIMEOUT}s)...")
     send_telegram(
-        f"⚠️ <b>Cloudflare Challenge</b>\n\n"
+        f"\u26a0\ufe0f <b>Cloudflare Challenge</b>\n\n"
         f"Karte: {card_name}\n"
         f"Bitte via VNC/Browser eingreifen!\n"
         f"Timeout in {CF_WAIT_TIMEOUT // 60} Minuten."
@@ -172,19 +160,17 @@ def wait_for_cloudflare(driver, card_name):
         if not is_cloudflare_challenge(content):
             elapsed = int(time.time() - start)
             log.info(f"  Cloudflare geloest (nach {elapsed}s menschlicher Hilfe)")
-            send_telegram(f"✅ Cloudflare geloest! Scrape wird fortgesetzt.")
+            send_telegram(f"\u2705 Cloudflare geloest! Scrape wird fortgesetzt.")
             return content, STATUS_OK
 
-    # Phase 3: Timeout
     log.error(f"  Cloudflare Timeout nach {CF_WAIT_TIMEOUT}s")
-    send_telegram(f"❌ Cloudflare Timeout fuer: {card_name}. Karte wird uebersprungen.")
+    send_telegram(f"\u274c Cloudflare Timeout fuer: {card_name}. Karte wird uebersprungen.")
     return content, ERR_TIMEOUT
 
 
 # ─── Price Extraction ────────────────────────────────────────
 
 def parse_de_price(price_str):
-    """Konvertiert '1.124,38' -> 1124.38"""
     if not price_str:
         return None
     cleaned = price_str.replace(".", "").replace(",", ".")
@@ -195,9 +181,7 @@ def parse_de_price(price_str):
 
 
 def extract_prices(content):
-    """Extrahiert alle Preise aus dem Seitenquelltext."""
     prices = {}
-
     patterns = {
         "trend": r"(?:Price Trend|Preis-Trend)[^€]*?([\d.,]+)\s*€",
         "avg30": r"(?:30-days average|30-Tages-Durchschnitt)[^€]*?([\d.,]+)\s*€",
@@ -205,7 +189,6 @@ def extract_prices(content):
         "avg1": r"(?:1-day average|1-Tages-Durchschnitt)[^€]*?([\d.,]+)\s*€",
         "from": r"(?:From|ab)[^€]*?([\d.,]+)\s*€",
     }
-
     for key, pattern in patterns.items():
         m = re.search(pattern, content, re.IGNORECASE)
         if m:
@@ -229,38 +212,30 @@ def extract_prices(content):
 
 
 def extract_card_info(content):
-    """Extrahiert Karteninformationen aus dem Seitenquelltext."""
     info = {}
-
     title_m = re.search(r"<title>(.*?)</title>", content)
     if title_m:
         info["page_title"] = title_m.group(1).replace(" | Cardmarket", "")
-
     og_m = re.search(r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', content)
     if not og_m:
         og_m = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', content)
     if og_m:
         info["image_url"] = og_m.group(1)
-
     return info
 
 
 # ─── Image Download ──────────────────────────────────────────
 
 def download_image(image_url, card_url, driver=None):
-    """Laedt Kartenbild herunter via Browser-Navigation."""
     import hashlib
-
     images_dir = BASE_DIR / "data" / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
-
     url_hash = hashlib.md5(card_url.encode()).hexdigest()[:12]
     ext = ".png"
     filepath = images_dir / f"{url_hash}{ext}"
 
     if filepath.exists():
         return url_hash + ext
-
     if not driver:
         return None
 
@@ -291,7 +266,6 @@ def download_image(image_url, card_url, driver=None):
 # ─── Portfolio Loading ────────────────────────────────────────
 
 def load_portfolio():
-    """Laedt die Kartenliste aus portfolio.csv."""
     cards = []
     with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -307,10 +281,42 @@ def load_portfolio():
     return cards
 
 
-# ─── Main Scraper ─────────────────────────────────────────────
+# ─── Resume Support ───────────────────────────────────────────
 
-def scrape_cards(cards):
-    """Scrapt Preise fuer alle Karten."""
+def load_resume_state():
+    """Laedt den Resume-State vom letzten abgebrochenen Run."""
+    if RESUME_FILE.exists():
+        try:
+            state = json.loads(RESUME_FILE.read_text())
+            # Nur wenn der letzte Run heute war
+            if state.get("date") == datetime.now().strftime("%Y-%m-%d"):
+                return state
+        except Exception:
+            pass
+    return None
+
+
+def save_resume_state(completed_urls, results):
+    """Speichert den aktuellen Fortschritt fuer Resume."""
+    state = {
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "completed_urls": list(completed_urls),
+        "results_count": len(results),
+        "timestamp": datetime.now().isoformat(),
+    }
+    RESUME_FILE.write_text(json.dumps(state))
+
+
+def clear_resume_state():
+    """Loescht den Resume-State nach erfolgreichem Durchlauf."""
+    if RESUME_FILE.exists():
+        RESUME_FILE.unlink()
+
+
+# ─── Chrome Management ───────────────────────────────────────
+
+def create_driver():
+    """Erstellt einen neuen Chrome-Driver mit persistentem Profil."""
     import undetected_chromedriver as uc
 
     profile_dir = BASE_DIR / "data" / "chrome-profile"
@@ -319,108 +325,158 @@ def scrape_cards(cards):
     options = uc.ChromeOptions()
     options.add_argument("--window-size=1280,900")
     options.add_argument(f"--user-data-dir={profile_dir}")
+    options.add_argument("--disable-dev-shm-usage")
 
-    log.info("Chrome starten (persistentes Profil)...")
     driver = uc.Chrome(options=options, version_main=146)
+    return driver
 
+
+# ─── Main Scraper ─────────────────────────────────────────────
+
+def scrape_single_card(driver, card, timestamp, is_first):
+    """Scrapt eine einzelne Karte. Returns (result_dict, status_str)."""
+    card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
+
+    driver.get(card["url"])
+    wait = FIRST_WAIT if is_first else random.uniform(MIN_DELAY, MAX_DELAY)
+    log.info(f"  Warte {wait:.0f}s...")
+    time.sleep(wait)
+
+    content, cf_status = wait_for_cloudflare(driver, card_name)
+
+    if cf_status in (ERR_CLOUDFLARE, ERR_TIMEOUT):
+        log.error(f"  UEBERSPRUNGEN: Cloudflare nicht geloest")
+        return {
+            "url": card["url"], "name": card["name"], "notes": card["notes"],
+            "timestamp": timestamp, "error": cf_status,
+            "error_detail": "Cloudflare Challenge konnte nicht geloest werden",
+        }, "cloudflare"
+
+    prices = extract_prices(content)
+    info = extract_card_info(content)
+
+    grade = card.get("grade", "")
+    grade_map = {"PSA10": "psa10_low", "PSA9": "psa9_low", "CGC10": "cgc10_low", "BGS10": "bgs10_low"}
+    grade_key = grade_map.get(grade.replace(" ", ""))
+    grade_value = prices.get(grade_key) if grade_key else None
+
+    image_file = None
+    if info.get("image_url"):
+        image_file = download_image(info["image_url"], card["url"], driver)
+
+    if not prices or not prices.get("trend"):
+        log.warning(f"  WARNUNG: Keine Preise extrahiert!")
+        error = ERR_NO_PRICES
+        status = "no_prices"
+    else:
+        error = None
+        status = "ok"
+        if grade_value:
+            log.info(f"  {grade} Low: EUR {grade_value} (Trend: EUR {prices.get('trend')})")
+        else:
+            log.info(f"  Trend: EUR {prices.get('trend')}, Low: EUR {prices.get('from')}")
+
+    result = {
+        "url": card["url"],
+        "name": card["name"] or info.get("page_title", ""),
+        "grade": grade,
+        "value": grade_value or prices.get("trend"),
+        "notes": card["notes"],
+        "image": image_file,
+        "timestamp": timestamp,
+        "error": error,
+        **prices,
+    }
+    return result, status
+
+
+def scrape_cards(cards):
+    """Scrapt Preise fuer alle Karten mit Batch-Support und Resume."""
     results = []
     stats = {"ok": 0, "cloudflare": 0, "no_prices": 0, "errors": 0, "skipped": 0}
     total = len(cards)
     timestamp = datetime.now().isoformat()
 
-    for i, card in enumerate(cards):
-        card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
-        log.info(f"\n[{i+1}/{total}] {card_name}")
+    # Resume: bereits gescrapte Karten ueberspringen
+    resume_state = load_resume_state()
+    completed_urls = set()
+    if resume_state:
+        completed_urls = set(resume_state.get("completed_urls", []))
+        if completed_urls:
+            log.info(f"Resume: {len(completed_urls)} Karten vom letzten Run ueberspringen")
 
-        try:
-            driver.get(card["url"])
+    # Karten filtern
+    remaining_cards = []
+    for card in cards:
+        if card["url"] in completed_urls:
+            stats["skipped"] += 1
+            continue
+        remaining_cards.append(card)
 
-            wait = INITIAL_WAIT if i == 0 else random.uniform(MIN_DELAY, MAX_DELAY)
-            log.info(f"  Warte {wait:.0f}s...")
-            time.sleep(wait)
+    if not remaining_cards:
+        log.info("Alle Karten bereits gescrapt (Resume). Nichts zu tun.")
+        return results, stats
 
-            # Cloudflare-Handling mit Auto-Solve + Human Override
-            content, cf_status = wait_for_cloudflare(driver, card_name)
+    log.info(f"{len(remaining_cards)} Karten zu scrapen (von {total} gesamt, {stats['skipped']} uebersprungen)")
 
-            if cf_status in (ERR_CLOUDFLARE, ERR_TIMEOUT):
-                log.error(f"  UEBERSPRUNGEN: Cloudflare nicht geloest")
-                stats["cloudflare"] += 1
+    # Batches verarbeiten
+    driver = None
+    batch_num = 0
+
+    try:
+        for i, card in enumerate(remaining_cards):
+            # Neuen Chrome starten bei Batch-Grenze oder am Anfang
+            if driver is None or (BATCH_SIZE > 0 and i > 0 and i % BATCH_SIZE == 0):
+                if driver:
+                    log.info(f"\n--- Batch {batch_num} abgeschlossen, Chrome neustarten ---")
+                    driver.quit()
+                    time.sleep(5)  # Kurze Pause zwischen Batches
+                batch_num += 1
+                log.info(f"Chrome starten (Batch {batch_num}, persistentes Profil)...")
+                driver = create_driver()
+
+            card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
+            log.info(f"\n[{i + stats['skipped'] + 1}/{total}] {card_name}")
+
+            try:
+                result, status = scrape_single_card(driver, card, timestamp, is_first=(i == 0 and batch_num == 1))
+                results.append(result)
+                stats[status if status in stats else "errors"] += 1
+                completed_urls.add(card["url"])
+
+                # Resume-State nach jeder erfolgreichen Karte speichern
+                save_resume_state(completed_urls, results)
+
+            except Exception as e:
+                log.error(f"  FEHLER: {e}", exc_info=True)
+                stats["errors"] += 1
                 results.append({
-                    "url": card["url"],
-                    "name": card["name"],
-                    "notes": card["notes"],
-                    "timestamp": timestamp,
-                    "error": cf_status,
-                    "error_detail": "Cloudflare Challenge konnte nicht geloest werden",
+                    "url": card["url"], "name": card["name"], "notes": card["notes"],
+                    "timestamp": timestamp, "error": ERR_CRASH, "error_detail": str(e),
                 })
-                continue
+                # Bei Crash: Chrome neustarten
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+                driver = None
+                log.info("  Chrome wird nach Fehler neugestartet...")
 
-            prices = extract_prices(content)
-            info = extract_card_info(content)
+    finally:
+        if driver:
+            driver.quit()
 
-            # Graded Preis bestimmen
-            grade = card.get("grade", "")
-            grade_map = {
-                "PSA10": "psa10_low", "PSA9": "psa9_low",
-                "CGC10": "cgc10_low", "BGS10": "bgs10_low",
-            }
-            grade_key = grade_map.get(grade.replace(" ", ""))
-            grade_value = prices.get(grade_key) if grade_key else None
+    # Erfolgreich durchgelaufen: Resume-State loeschen
+    clear_resume_state()
 
-            # Bild herunterladen (einmalig)
-            image_file = None
-            if info.get("image_url"):
-                image_file = download_image(info["image_url"], card["url"], driver)
-
-            # Fehler-Check: Preise gefunden?
-            if not prices or not prices.get("trend"):
-                log.warning(f"  WARNUNG: Keine Preise extrahiert!")
-                stats["no_prices"] += 1
-                error = ERR_NO_PRICES
-            else:
-                stats["ok"] += 1
-                error = None
-                if grade_value:
-                    log.info(f"  {grade} Low: EUR {grade_value} (Trend: EUR {prices.get('trend')})")
-                else:
-                    log.info(f"  Trend: EUR {prices.get('trend')}, Low: EUR {prices.get('from')}")
-
-            result = {
-                "url": card["url"],
-                "name": card["name"] or info.get("page_title", ""),
-                "grade": grade,
-                "value": grade_value or prices.get("trend"),
-                "notes": card["notes"],
-                "image": image_file,
-                "timestamp": timestamp,
-                "error": error,
-                **prices,
-            }
-            results.append(result)
-
-        except Exception as e:
-            log.error(f"  FEHLER: {e}", exc_info=True)
-            stats["errors"] += 1
-            results.append({
-                "url": card["url"],
-                "name": card["name"],
-                "notes": card["notes"],
-                "timestamp": timestamp,
-                "error": ERR_CRASH,
-                "error_detail": str(e),
-            })
-
-    driver.quit()
     return results, stats
 
 
 def save_results(results, stats):
-    """Speichert Ergebnisse als CSV und JSON."""
     PRICES_DIR.mkdir(exist_ok=True)
     now = datetime.now()
     date_str = now.strftime("%Y-%m-%d_%H%M")
 
-    # CSV mit Datum
     csv_file = PRICES_DIR / f"{date_str}.csv"
     fieldnames = ["name", "grade", "value", "trend", "avg7", "avg30", "avg1", "from",
                    "psa10_low", "psa9_low", "cgc10_low", "bgs10_low",
@@ -431,53 +487,48 @@ def save_results(results, stats):
         writer.writerows(results)
     log.info(f"\nCSV gespeichert: {csv_file}")
 
-    # latest.json
     with open(LATEST_FILE, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     log.info(f"JSON gespeichert: {LATEST_FILE}")
 
-    # Zusammenfassung
     total_value = sum(r.get("value", 0) or 0 for r in results)
     counted = sum(1 for r in results if r.get("value"))
     graded = sum(1 for r in results if r.get("grade"))
 
+    est_time = (stats["ok"] + stats["no_prices"]) * 12
     summary = f"""
 {'='*50}
 SCRAPE ZUSAMMENFASSUNG ({now.strftime('%d.%m.%Y %H:%M')})
 {'='*50}
-Karten gesamt:   {len(results)}
+Karten gesamt:   {len(results)} (+ {stats['skipped']} uebersprungen)
   Erfolgreich:   {stats['ok']}
   Keine Preise:  {stats['no_prices']}
   Cloudflare:    {stats['cloudflare']}
   Fehler:        {stats['errors']}
   Graded:        {graded}
+Dauer:           ~{est_time // 60}m {est_time % 60}s
 Portfolio-Wert:  EUR {total_value:,.2f}
 Log-Datei:       {log_file}
 {'='*50}"""
     log.info(summary)
 
-    # Telegram-Summary bei Problemen
     if stats["cloudflare"] > 0 or stats["errors"] > 0 or stats["no_prices"] > 0:
         problems = []
-        if stats["cloudflare"]: problems.append(f"☁️ {stats['cloudflare']}x Cloudflare")
-        if stats["no_prices"]: problems.append(f"⚠️ {stats['no_prices']}x keine Preise")
-        if stats["errors"]: problems.append(f"❌ {stats['errors']}x Fehler")
-
-        # Betroffene Karten auflisten
+        if stats["cloudflare"]: problems.append(f"\u2601\ufe0f {stats['cloudflare']}x Cloudflare")
+        if stats["no_prices"]: problems.append(f"\u26a0\ufe0f {stats['no_prices']}x keine Preise")
+        if stats["errors"]: problems.append(f"\u274c {stats['errors']}x Fehler")
         failed_cards = [r["name"] or r["url"].split("/")[-1] for r in results if r.get("error")]
-
         send_telegram(
-            f"📊 <b>Scrape Report</b>\n\n"
-            f"✅ {stats['ok']}/{len(results)} erfolgreich\n"
+            f"\U0001f4ca <b>Scrape Report</b>\n\n"
+            f"\u2705 {stats['ok']}/{len(results)} erfolgreich\n"
             f"{chr(10).join(problems)}\n\n"
             f"<b>Betroffene Karten:</b>\n"
-            f"{chr(10).join('• ' + c for c in failed_cards[:10])}\n\n"
+            f"{chr(10).join(chr(8226) + ' ' + c for c in failed_cards[:10])}\n\n"
             f"Portfolio: EUR {total_value:,.2f}"
         )
     else:
-        # Alles OK: kurze Erfolgsmeldung
         send_telegram(
-            f"✅ <b>Scrape OK</b> — {stats['ok']}/{len(results)} Karten\n"
+            f"\u2705 <b>Scrape OK</b> \u2014 {stats['ok']}/{len(results)} Karten\n"
             f"Portfolio: EUR {total_value:,.2f}"
         )
 
@@ -492,8 +543,8 @@ def main():
         print(f"{len(cards)} Karten in portfolio.csv:")
         for c in cards:
             print(f"  - {c['name'] or c['url']}")
-        est_min = len(cards) * 17 / 60
-        print(f"\nGeschaetzte Dauer: ~{est_min:.0f} Minuten")
+        est_min = len(cards) * 12 / 60
+        print(f"\nGeschaetzte Dauer: ~{est_min:.0f} Minuten ({BATCH_SIZE}er Batches)")
         return
 
     if "--single" in args:
@@ -510,18 +561,17 @@ def main():
             sys.exit(1)
 
     log.info(f"\n{len(cards)} Karten zu scrapen...")
-    log.info(f"Geschaetzte Dauer: ~{len(cards) * 17 / 60:.0f} Minuten")
-    log.info(f"CF Human-Override Timeout: {CF_WAIT_TIMEOUT}s")
+    log.info(f"Geschaetzte Dauer: ~{len(cards) * 12 / 60:.0f} Minuten")
+    log.info(f"Batch-Groesse: {BATCH_SIZE} | CF-Timeout: {CF_WAIT_TIMEOUT}s")
 
     results, stats = scrape_cards(cards)
     save_results(results, stats)
 
-    # Exit-Code basierend auf Ergebnis
     if stats["ok"] == 0 and len(cards) > 0:
-        sys.exit(2)  # Komplett fehlgeschlagen
+        sys.exit(2)
     elif stats["cloudflare"] > 0 or stats["errors"] > 0:
-        sys.exit(1)  # Teilweise fehlgeschlagen
-    sys.exit(0)      # Alles OK
+        sys.exit(1)
+    sys.exit(0)
 
 
 if __name__ == "__main__":
