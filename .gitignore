@@ -1,0 +1,9 @@
+node_modules/
+dist/
+data/
+prices/
+portfolio.csv
+.DS_Store
+*.db
+*.db-wal
+*.db-shm
