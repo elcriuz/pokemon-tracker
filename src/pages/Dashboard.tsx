@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { api } from "@/lib/api"
 import { formatEUR, urlToFlag, timeAgo } from "@/lib/utils"
-import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Monitor } from "lucide-react"
+import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Monitor, X } from "lucide-react"
 import { useMemo, useState } from "react"
 import { AddCardDialog } from "@/components/cards/AddCardDialog"
 
@@ -64,6 +64,7 @@ export function Dashboard() {
     },
   })
   const [showAdd, setShowAdd] = useState(false)
+  const [showVnc, setShowVnc] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [sortKey, setSortKey] = useState<SortKey>("value")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
@@ -147,16 +148,16 @@ export function Dashboard() {
             </button>
           )}
           {isAnyScraping && (
-            <a
-              href={`http://${window.location.hostname}:6080/vnc.html?autoconnect=true`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 transition-colors"
-              title="Chrome-Fenster live sehen (noVNC)"
+            <button
+              onClick={() => setShowVnc((v) => !v)}
+              className={`flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors ${
+                showVnc ? "bg-yellow-500/30 text-yellow-300" : "bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30"
+              }`}
+              title="Chrome-Fenster live sehen"
             >
               <Monitor className="w-4 h-4" />
-              Live View
-            </a>
+              {showVnc ? "Live View aus" : "Live View"}
+            </button>
           )}
           <button
             onClick={() => setShowAdd(true)}
@@ -317,6 +318,29 @@ export function Dashboard() {
       </div>
 
       <AddCardDialog open={showAdd} onClose={() => setShowAdd(false)} />
+
+      {/* VNC Live View Panel */}
+      {showVnc && (
+        <div className="fixed top-0 right-0 h-full w-1/2 z-50 bg-card border-l border-border shadow-2xl flex flex-col">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Monitor className="w-4 h-4 text-yellow-400" />
+              Live View — Scraper
+            </div>
+            <button
+              onClick={() => setShowVnc(false)}
+              className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <iframe
+            src={`http://${window.location.hostname}:6080/vnc.html?autoconnect=true&resize=scale`}
+            className="flex-1 w-full border-0"
+            allow="clipboard-read; clipboard-write"
+          />
+        </div>
+      )}
     </div>
   )
 }
