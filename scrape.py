@@ -365,7 +365,7 @@ def scrape_single_card(driver, card, timestamp, is_first):
     if info.get("image_url"):
         image_file = download_image(info["image_url"], card["url"], driver)
 
-    if not prices or not prices.get("trend"):
+    if not prices or (not prices.get("trend") and not prices.get("from")):
         log.warning(f"  WARNUNG: Keine Preise extrahiert!")
         error = ERR_NO_PRICES
         status = "no_prices"
@@ -375,13 +375,19 @@ def scrape_single_card(driver, card, timestamp, is_first):
         if grade_value:
             log.info(f"  {grade} Low: EUR {grade_value} (Trend: EUR {prices.get('trend')})")
         else:
-            log.info(f"  Trend: EUR {prices.get('trend')}, Low: EUR {prices.get('from')}")
+            log.info(f"  Low: EUR {prices.get('from')}, Trend: EUR {prices.get('trend')}")
+
+    # Value-Bestimmung:
+    # - Graded: guenstigster Preis fuer das jeweilige Grading
+    # - Ungraded: "from" (guenstigster NM-Preis, gefiltert nach Sprache/Condition aus URL)
+    # - Fallback: trend (falls from nicht verfuegbar)
+    value = grade_value or prices.get("from") or prices.get("trend")
 
     result = {
         "url": card["url"],
         "name": card["name"] or info.get("page_title", ""),
         "grade": grade,
-        "value": grade_value or prices.get("trend"),
+        "value": value,
         "notes": card["notes"],
         "image": image_file,
         "timestamp": timestamp,
