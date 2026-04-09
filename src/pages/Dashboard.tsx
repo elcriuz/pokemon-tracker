@@ -129,7 +129,7 @@ export function Dashboard() {
           )}
           {isAnyScraping && (
             <a
-              href={`http://${window.location.hostname}:6080/vnc.html`}
+              href={`http://${window.location.hostname}:6080/vnc.html?autoconnect=true`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 transition-colors"
