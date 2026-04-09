@@ -1,11 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { api } from "@/lib/api"
-import { formatEUR, formatPct, urlToFlag, timeAgo } from "@/lib/utils"
-import { TrendingUp, TrendingDown, CreditCard, Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Monitor } from "lucide-react"
-import { useMemo, useState } from "react"
+import { formatEUR, urlToFlag, timeAgo } from "@/lib/utils"
+import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Monitor } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
 import { AddCardDialog } from "@/components/cards/AddCardDialog"
-import { PortfolioChart } from "@/components/charts/PortfolioChart"
 
 type SortKey = "name" | "value" | "trend" | "from_price" | "avg7" | "avg30" | "created_at" | "scraped_at"
 type SortDir = "asc" | "desc"
@@ -31,6 +30,7 @@ export function Dashboard() {
   const { data: cards } = useQuery({
     queryKey: ["cards", activeBinder],
     queryFn: () => api.getCards(activeBinder),
+    refetchInterval: 60_000,  // Refresh every 60s for fresh timeAgo
   })
   const { data: scrapeStatus } = useQuery({
     queryKey: ["scrapeStatus"],
@@ -38,6 +38,17 @@ export function Dashboard() {
     refetchInterval: (query) => query.state.data?.isRunning ? 3000 : false,
   })
   const queryClient = useQueryClient()
+
+  // After scrape finishes, refresh all data
+  const prevRunning = scrapeStatus?.isRunning
+  useEffect(() => {
+    if (prevRunning === false && scrapeStatus?.latest?.status === "completed") {
+      queryClient.invalidateQueries({ queryKey: ["cards"] })
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+      queryClient.invalidateQueries({ queryKey: ["binders"] })
+    }
+  }, [scrapeStatus?.latest?.id])
+
   const scrapeMutation = useMutation({
     mutationFn: api.triggerScrape,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["scrapeStatus"] }),
@@ -295,41 +306,7 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Stat Cards */}
-      <div className={`grid grid-cols-2 gap-4 ${d.purchaseCount > 0 ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}>
-        <StatCard label="Gesamt-Wert" value={formatEUR(d.totalValue)} sub={`${d.cardCount} Karten (${d.gradedCount} graded)`} positive={isUp} icon={isUp ? TrendingUp : TrendingDown} />
-        {d.purchaseCount > 0 && (
-          <StatCard
-            label="Gewinn/Verlust"
-            value={`${d.totalProfit >= 0 ? "+" : ""}${formatEUR(d.totalProfit)}`}
-            sub={`${formatPct(d.totalProfitPct)} auf ${d.purchaseCount}/${d.uniqueCardCount} Karten`}
-            positive={d.totalProfit >= 0}
-            icon={d.totalProfit >= 0 ? TrendingUp : TrendingDown}
-          />
-        )}
-        <StatCard label="Top Gewinner" value={d.topMovers[0]?.name?.split("(")[0]?.trim() || "\u2014"} sub={d.topMovers[0] ? formatPct(d.topMovers[0].changePct) : "\u2014"} positive icon={TrendingUp} />
-        <StatCard label="Top Verlierer" value={d.topMovers[d.topMovers.length - 1]?.name?.split("(")[0]?.trim() || "\u2014"} sub={d.topMovers[d.topMovers.length - 1] ? formatPct(d.topMovers[d.topMovers.length - 1].changePct) : "\u2014"} positive={false} icon={TrendingDown} />
-      </div>
-
-      {/* Portfolio Chart */}
-      {d.portfolioHistory?.length > 1 && <PortfolioChart data={d.portfolioHistory} />}
-
       <AddCardDialog open={showAdd} onClose={() => setShowAdd(false)} />
-    </div>
-  )
-}
-
-function StatCard({ label, value, sub, positive, icon: Icon }: {
-  label: string; value: string; sub?: string; positive?: boolean; icon: any
-}) {
-  return (
-    <div className="p-4 rounded-lg bg-card border border-border">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm text-muted-foreground">{label}</span>
-        <Icon className={`w-4 h-4 ${positive === true ? "text-positive" : positive === false ? "text-negative" : "text-muted-foreground"}`} />
-      </div>
-      <div className="text-xl font-bold truncate">{value}</div>
-      {sub && <div className={`text-sm ${positive === true ? "text-positive" : positive === false ? "text-negative" : "text-muted-foreground"}`}>{sub}</div>}
     </div>
   )
 }

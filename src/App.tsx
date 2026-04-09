@@ -4,6 +4,7 @@ import { AppShell } from "./components/layout/AppShell"
 import { Dashboard } from "./pages/Dashboard"
 import { CardDetail } from "./pages/CardDetail"
 import { Settings } from "./pages/Settings"
+import { Analytics } from "./pages/Analytics"
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000 } },
@@ -17,6 +18,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/cards/:id" element={<CardDetail />} />
+            <Route path="/analytics" element={<Analytics />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </AppShell>

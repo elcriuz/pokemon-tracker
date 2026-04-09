@@ -1,9 +1,10 @@
 import { Link, useLocation } from "react-router-dom"
-import { LayoutDashboard, Settings, Zap } from "lucide-react"
+import { LayoutDashboard, BarChart3, Settings, Zap } from "lucide-react"
 import type { ReactNode } from "react"
 
 const NAV = [
-  { to: "/", icon: LayoutDashboard, label: "Dashboard" },
+  { to: "/", icon: LayoutDashboard, label: "Karten" },
+  { to: "/analytics", icon: BarChart3, label: "Analytics" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ]
 
