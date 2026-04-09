@@ -27,11 +27,6 @@ export function Dashboard() {
     queryKey: ["dashboard", activeBinder],
     queryFn: () => api.getDashboard(activeBinder),
   })
-  const { data: cards } = useQuery({
-    queryKey: ["cards", activeBinder],
-    queryFn: () => api.getCards(activeBinder),
-    refetchInterval: scrapeStatus?.isRunning ? 5_000 : 60_000,
-  })
   const [wasRunning, setWasRunning] = useState(false)
   const { data: scrapeStatus } = useQuery({
     queryKey: ["scrapeStatus"],
@@ -51,6 +46,11 @@ export function Dashboard() {
     refetchInterval: (query) => query.state.data?.isRunning ? 3000 : 30_000,
   })
   const queryClient = useQueryClient()
+  const { data: cards } = useQuery({
+    queryKey: ["cards", activeBinder],
+    queryFn: () => api.getCards(activeBinder),
+    refetchInterval: scrapeStatus?.isRunning ? 5_000 : 60_000,
+  })
 
   const scrapeMutation = useMutation({
     mutationFn: api.triggerScrape,
