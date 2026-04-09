@@ -47,7 +47,9 @@ export function urlToFlag(url: string | null | undefined): string {
 export function timeAgo(dateStr: string | null | undefined): string {
   if (!dateStr) return ""
   const now = Date.now()
-  const then = new Date(dateStr).getTime()
+  // Timestamps from scraper have no timezone suffix — they are UTC (container runs UTC)
+  const normalized = dateStr.endsWith("Z") ? dateStr : dateStr + "Z"
+  const then = new Date(normalized).getTime()
   const diff = now - then
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return "gerade eben"

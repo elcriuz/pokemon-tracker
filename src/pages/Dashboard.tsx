@@ -3,7 +3,7 @@ import { Link } from "react-router-dom"
 import { api } from "@/lib/api"
 import { formatEUR, urlToFlag, timeAgo } from "@/lib/utils"
 import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Monitor } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { AddCardDialog } from "@/components/cards/AddCardDialog"
 
 type SortKey = "name" | "value" | "trend" | "from_price" | "avg7" | "avg30" | "created_at" | "scraped_at"
@@ -32,29 +32,25 @@ export function Dashboard() {
     queryFn: () => api.getCards(activeBinder),
     refetchInterval: 60_000,  // Refresh every 60s for fresh timeAgo
   })
+  const [wasRunning, setWasRunning] = useState(false)
   const { data: scrapeStatus } = useQuery({
     queryKey: ["scrapeStatus"],
-    queryFn: api.getScrapeStatus,
+    queryFn: async () => {
+      const status = await api.getScrapeStatus()
+      // Detect transition: was running → now done
+      if (wasRunning && !status.isRunning) {
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ["cards"] })
+          queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+          queryClient.invalidateQueries({ queryKey: ["binders"] })
+        }, 500)
+      }
+      setWasRunning(status.isRunning)
+      return status
+    },
     refetchInterval: (query) => query.state.data?.isRunning ? 3000 : 30_000,
   })
   const queryClient = useQueryClient()
-  const [lastScrapeId, setLastScrapeId] = useState<number | null>(null)
-
-  // Detect when a scrape finishes and refresh all data
-  useEffect(() => {
-    if (!scrapeStatus?.latest) return
-    const id = scrapeStatus.latest.id
-    const done = scrapeStatus.latest.status === "completed" || scrapeStatus.latest.status === "failed"
-    if (done && lastScrapeId !== null && lastScrapeId !== id) {
-      // New scrape just finished — refresh everything
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["cards"] })
-        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
-        queryClient.invalidateQueries({ queryKey: ["binders"] })
-      }, 1000)
-    }
-    if (id !== lastScrapeId) setLastScrapeId(id)
-  }, [scrapeStatus?.latest?.id, scrapeStatus?.latest?.status])
 
   const scrapeMutation = useMutation({
     mutationFn: api.triggerScrape,
