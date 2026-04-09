@@ -43,3 +43,18 @@ export function urlToFlag(url: string | null | undefined): string {
   } catch {}
   return ""
 }
+
+export function timeAgo(dateStr: string | null | undefined): string {
+  if (!dateStr) return ""
+  const now = Date.now()
+  const then = new Date(dateStr).getTime()
+  const diff = now - then
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return "gerade eben"
+  if (mins < 60) return `vor ${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `vor ${hours}h`
+  const days = Math.floor(hours / 24)
+  if (days === 1) return "gestern"
+  return `vor ${days}d`
+}

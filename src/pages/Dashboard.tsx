@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { api } from "@/lib/api"
-import { formatEUR, formatPct, urlToFlag } from "@/lib/utils"
+import { formatEUR, formatPct, urlToFlag, timeAgo } from "@/lib/utils"
 import { TrendingUp, TrendingDown, CreditCard, Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Monitor } from "lucide-react"
 import { useMemo, useState } from "react"
 import { AddCardDialog } from "@/components/cards/AddCardDialog"
@@ -221,7 +221,10 @@ export function Dashboard() {
                     {card.grade && <span className="px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-[10px] font-medium">{card.grade}</span>}
                   </div>
                   <div className="font-bold tabular-nums text-base">{formatEUR(card.value)}</div>
-                  <div className="text-xs text-muted-foreground">Low: {formatEUR(card.from_price)}</div>
+                  <div className="text-xs text-muted-foreground flex justify-between">
+                    <span>Low: {formatEUR(card.from_price)}</span>
+                    {card.scraped_at && <span title={new Date(card.scraped_at).toLocaleString("de-DE")}>{timeAgo(card.scraped_at)}</span>}
+                  </div>
                 </div>
               </Link>
             </div>
