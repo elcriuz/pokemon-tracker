@@ -295,7 +295,14 @@ export function Dashboard() {
                     </div>
                     <div className="font-bold tabular-nums text-base">{formatEUR(totalVal)}</div>
                     <div className="text-xs text-muted-foreground flex justify-between">
-                      <span>{qty > 1 ? `${qty}x ${formatEUR(card.value)}` : `Low: ${formatEUR(card.from_price)}`}</span>
+                      <span>
+                        {qty > 1
+                          ? `${qty}x ${formatEUR(card.value)}`
+                          : card.trend && card.trend !== card.value
+                            ? `Trend: ${formatEUR(card.trend)}`
+                            : ""
+                        }
+                      </span>
                       {card.scraped_at && <span title={new Date(card.scraped_at).toLocaleString("de-DE")}>{timeAgo(card.scraped_at)}</span>}
                     </div>
                   </div>
