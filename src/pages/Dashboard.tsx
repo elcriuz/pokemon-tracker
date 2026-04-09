@@ -35,19 +35,26 @@ export function Dashboard() {
   const { data: scrapeStatus } = useQuery({
     queryKey: ["scrapeStatus"],
     queryFn: api.getScrapeStatus,
-    refetchInterval: (query) => query.state.data?.isRunning ? 3000 : false,
+    refetchInterval: (query) => query.state.data?.isRunning ? 3000 : 30_000,
   })
   const queryClient = useQueryClient()
+  const [lastScrapeId, setLastScrapeId] = useState<number | null>(null)
 
-  // After scrape finishes, refresh all data
-  const prevRunning = scrapeStatus?.isRunning
+  // Detect when a scrape finishes and refresh all data
   useEffect(() => {
-    if (prevRunning === false && scrapeStatus?.latest?.status === "completed") {
-      queryClient.invalidateQueries({ queryKey: ["cards"] })
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] })
-      queryClient.invalidateQueries({ queryKey: ["binders"] })
+    if (!scrapeStatus?.latest) return
+    const id = scrapeStatus.latest.id
+    const done = scrapeStatus.latest.status === "completed" || scrapeStatus.latest.status === "failed"
+    if (done && lastScrapeId !== null && lastScrapeId !== id) {
+      // New scrape just finished — refresh everything
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["cards"] })
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+        queryClient.invalidateQueries({ queryKey: ["binders"] })
+      }, 1000)
     }
-  }, [scrapeStatus?.latest?.id])
+    if (id !== lastScrapeId) setLastScrapeId(id)
+  }, [scrapeStatus?.latest?.id, scrapeStatus?.latest?.status])
 
   const scrapeMutation = useMutation({
     mutationFn: api.triggerScrape,
