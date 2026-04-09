@@ -451,8 +451,11 @@ def scrape_cards(cards):
                 stats[status if status in stats else "errors"] += 1
                 completed_urls.add(card["url"])
 
-                # Resume-State nach jeder erfolgreichen Karte speichern
+                # Resume-State + latest.json nach jeder Karte speichern (live updates)
                 save_resume_state(completed_urls, results)
+                PRICES_DIR.mkdir(exist_ok=True)
+                with open(LATEST_FILE, "w", encoding="utf-8") as f:
+                    json.dump(results, f, indent=2, ensure_ascii=False)
 
             except Exception as e:
                 log.error(f"  FEHLER: {e}", exc_info=True)

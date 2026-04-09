@@ -68,12 +68,16 @@ scrapeRouter.post("/", (_req, res) => {
 
   const proc = spawn("python3", ["scrape.py"], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, DISPLAY: ":99" } })
 
-  let stdout = ""
   let stderr = ""
-  proc.stdout.on("data", (d) => (stdout += d.toString()))
   proc.stderr.on("data", (d) => (stderr += d.toString()))
 
+  // Import partial results every 10s while scraping
+  const liveImport = setInterval(() => {
+    try { importResults(); db.pragma("wal_checkpoint(TRUNCATE)") } catch {}
+  }, 10_000)
+
   proc.on("close", (code) => {
+    clearInterval(liveImport)
     const status = code === 0 ? "completed" : "failed"
     try { importResults() } catch (e) { console.error("Import error:", e) }
     db.pragma("wal_checkpoint(TRUNCATE)")

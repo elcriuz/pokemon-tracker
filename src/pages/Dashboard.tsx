@@ -30,7 +30,7 @@ export function Dashboard() {
   const { data: cards } = useQuery({
     queryKey: ["cards", activeBinder],
     queryFn: () => api.getCards(activeBinder),
-    refetchInterval: 60_000,  // Refresh every 60s for fresh timeAgo
+    refetchInterval: scrapeStatus?.isRunning ? 5_000 : 60_000,
   })
   const [wasRunning, setWasRunning] = useState(false)
   const { data: scrapeStatus } = useQuery({
