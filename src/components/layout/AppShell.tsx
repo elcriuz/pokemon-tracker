@@ -20,9 +20,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   })
   const [showVnc, setShowVnc] = useState(false)
   const [manualClose, setManualClose] = useState(false)
+  // noVNC only available on remote server (not localhost/Electron)
+  const isLocal = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+  const hasVnc = !isLocal
 
-  // Auto-open when scraping starts, auto-close when done
+  // Auto-open when scraping starts, auto-close when done (only with VNC)
   useEffect(() => {
+    if (!hasVnc) return
     if (scrapeStatus?.isRunning && !manualClose) {
       setShowVnc(true)
     }
@@ -60,8 +64,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             )
           })}
         </nav>
-        {/* VNC indicator */}
-        {scrapeStatus?.isRunning && (
+        {/* VNC indicator (only on remote server) */}
+        {hasVnc && scrapeStatus?.isRunning && (
           <button
             onClick={() => { setShowVnc((v) => !v); setManualClose(false) }}
             title="Live View"
@@ -79,8 +83,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         {children}
       </main>
 
-      {/* VNC Panel — pushes content, doesn't overlay */}
-      <div className={`fixed top-0 right-0 h-full bg-card border-l border-border flex flex-col transition-all duration-300 ${
+      {/* VNC Panel — pushes content, doesn't overlay (remote only) */}
+      {hasVnc && <div className={`fixed top-0 right-0 h-full bg-card border-l border-border flex flex-col transition-all duration-300 ${
         showVnc ? "w-full md:w-[40vw] lg:w-[50vw]" : "w-0"
       } overflow-hidden`}>
         {showVnc && (
@@ -110,7 +114,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             />
           </>
         )}
-      </div>
+      </div>}
     </div>
   )
 }

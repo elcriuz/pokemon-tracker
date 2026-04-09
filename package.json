@@ -10,7 +10,36 @@
     "build": "vite build",
     "start": "tsx server/index.ts",
     "migrate": "tsx server/migrate.ts",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "electron": "electron electron/main.cjs",
+    "electron:dev": "concurrently \"vite\" \"tsx watch server/index.ts\" \"wait-on http://localhost:3333 && electron electron/main.cjs --dev\"",
+    "electron:build": "vite build && electron-builder"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.packgehabt.pokemon-tracker",
+    "productName": "Pokemon Tracker",
+    "files": [
+      "dist/**/*",
+      "server/**/*",
+      "electron/**/*",
+      "scrape.py",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "public/favicon.svg"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",
@@ -33,6 +62,8 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "concurrently": "^9.2.1",
+    "electron": "^41.2.0",
+    "electron-builder": "^26.8.1",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
@@ -49,7 +80,8 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "better-sqlite3",
-      "esbuild"
+      "esbuild",
+      "electron"
     ]
   }
 }
