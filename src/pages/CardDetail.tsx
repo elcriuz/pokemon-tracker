@@ -46,7 +46,9 @@ export function CardDetail() {
   if (isLoading) return <div className="text-muted-foreground">Laden...</div>
   if (!card) return <div>Karte nicht gefunden</div>
 
-  const profit = card.purchase_price && card.value ? card.value - card.purchase_price : null
+  const qty = card.quantity || 1
+  const profitPerCard = card.purchase_price && card.value ? card.value - card.purchase_price : null
+  const profit = profitPerCard != null ? profitPerCard * qty : null
   const profitPct = card.purchase_price && card.value ? ((card.value - card.purchase_price) / card.purchase_price) * 100 : null
   const isProfitable = profit != null && profit >= 0
 
@@ -77,6 +79,13 @@ export function CardDetail() {
             <h1 className="text-2xl font-bold">{card.name}</h1>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               {card.grade && <span className="px-1.5 py-0.5 rounded text-xs bg-yellow-500/20 text-yellow-400">{card.grade}</span>}
+              {(card.quantity || 1) > 1 && <span className="px-1.5 py-0.5 rounded text-xs bg-ring/20 text-ring">x{card.quantity}</span>}
+              {card.binder_name && (
+                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs" style={{ backgroundColor: card.binder_color + "30", color: card.binder_color }}>
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: card.binder_color }} />
+                  {card.binder_name}
+                </span>
+              )}
               {urlToFlag(card.url) && <span>{urlToFlag(card.url)}</span>}
               {card.notes && <span>{card.notes}</span>}
             </div>

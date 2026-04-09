@@ -13,13 +13,15 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  getDashboard: () => fetchJSON<any>("/dashboard"),
-  getCards: () => fetchJSON<any[]>("/cards"),
+  getDashboard: (binderId?: string) =>
+    fetchJSON<any>(`/dashboard${binderId ? `?binder_id=${binderId}` : ""}`),
+  getCards: (binderId?: string) =>
+    fetchJSON<any[]>(`/cards${binderId ? `?binder_id=${binderId}` : ""}`),
   getCard: (id: number) => fetchJSON<any>(`/cards/${id}`),
   getCardPrices: (id: number) => fetchJSON<any[]>(`/cards/${id}/prices`),
-  addCard: (data: { url: string; name?: string; grade?: string; notes?: string }) =>
+  addCard: (data: any) =>
     fetchJSON<any>("/cards", { method: "POST", body: JSON.stringify(data) }),
-  updateCard: (id: number, data: { name?: string; grade?: string; notes?: string }) =>
+  updateCard: (id: number, data: any) =>
     fetchJSON<any>(`/cards/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteCard: (id: number) =>
     fetchJSON<any>(`/cards/${id}`, { method: "DELETE" }),
@@ -32,4 +34,11 @@ export const api = {
   updateSettings: (data: Record<string, string>) =>
     fetchJSON<any>("/settings", { method: "PUT", body: JSON.stringify(data) }),
   testTelegram: () => fetchJSON<any>("/telegram/test", { method: "POST" }),
+  getBinders: () => fetchJSON<any[]>("/binders"),
+  addBinder: (data: { name: string; color: string }) =>
+    fetchJSON<any>("/binders", { method: "POST", body: JSON.stringify(data) }),
+  updateBinder: (id: number, data: any) =>
+    fetchJSON<any>(`/binders/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteBinder: (id: number) =>
+    fetchJSON<any>(`/binders/${id}`, { method: "DELETE" }),
 }

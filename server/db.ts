@@ -74,10 +74,23 @@ function initSchema(db: Database.Database) {
     );
   `)
 
+  // Binders table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS binders (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT NOT NULL,
+      color      TEXT NOT NULL DEFAULT '#3b82f6',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
   // Add columns if missing (migration for existing DBs)
   try { db.exec("ALTER TABLE cards ADD COLUMN image TEXT NOT NULL DEFAULT ''") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN purchase_price REAL") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN purchase_date TEXT") } catch {}
+  try { db.exec("ALTER TABLE cards ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1") } catch {}
+  try { db.exec("ALTER TABLE cards ADD COLUMN binder_id INTEGER REFERENCES binders(id) ON DELETE SET NULL") } catch {}
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")

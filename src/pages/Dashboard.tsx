@@ -22,8 +22,16 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
 ]
 
 export function Dashboard() {
-  const { data: dashboard, isLoading } = useQuery({ queryKey: ["dashboard"], queryFn: api.getDashboard })
-  const { data: cards } = useQuery({ queryKey: ["cards"], queryFn: api.getCards })
+  const [activeBinder, setActiveBinder] = useState<string | undefined>(undefined)
+  const { data: binders } = useQuery({ queryKey: ["binders"], queryFn: api.getBinders })
+  const { data: dashboard, isLoading } = useQuery({
+    queryKey: ["dashboard", activeBinder],
+    queryFn: () => api.getDashboard(activeBinder),
+  })
+  const { data: cards } = useQuery({
+    queryKey: ["cards", activeBinder],
+    queryFn: () => api.getCards(activeBinder),
+  })
   const { data: scrapeStatus } = useQuery({
     queryKey: ["scrapeStatus"],
     queryFn: api.getScrapeStatus,
@@ -51,15 +59,12 @@ export function Dashboard() {
     return [...cards].sort((a, b) => {
       let av = a[sortKey]
       let bv = b[sortKey]
-      // Nulls to end
       if (av == null && bv == null) return 0
       if (av == null) return 1
       if (bv == null) return -1
-      // String comparison for name/dates
       if (typeof av === "string" && typeof bv === "string") {
         return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av)
       }
-      // Number comparison
       return sortDir === "asc" ? av - bv : bv - av
     })
   }, [cards, sortKey, sortDir])
@@ -149,11 +154,45 @@ export function Dashboard() {
         </div>
       </div>
 
+      {/* Binder Filter */}
+      {binders && binders.length > 0 && (
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={() => setActiveBinder(undefined)}
+            className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
+              !activeBinder ? "bg-ring text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Alle ({d.cardCount})
+          </button>
+          {binders.map((b: any) => (
+            <button
+              key={b.id}
+              onClick={() => setActiveBinder(activeBinder === String(b.id) ? undefined : String(b.id))}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-full transition-colors ${
+                activeBinder === String(b.id) ? "text-white" : "bg-secondary text-muted-foreground hover:text-foreground"
+              }`}
+              style={activeBinder === String(b.id) ? { backgroundColor: b.color } : undefined}
+            >
+              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: b.color }} />
+              {b.name} ({b.card_count})
+            </button>
+          ))}
+          <button
+            onClick={() => setActiveBinder(activeBinder === "none" ? undefined : "none")}
+            className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
+              activeBinder === "none" ? "bg-ring text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Unsortiert
+          </button>
+        </div>
+      )}
+
       {/* Card Gallery Grid */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold">Karten ({cards?.length || 0})</h2>
-          {/* Sort Controls */}
           <div className="flex items-center gap-1 text-xs">
             <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground mr-1" />
             {SORT_OPTIONS.map((opt) => (
@@ -173,62 +212,86 @@ export function Dashboard() {
           </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {sortedCards.map((card: any) => (
-            <div key={card.id} className="relative group">
-              {/* Select Checkbox */}
-              <button
-                onClick={(e) => toggleSelect(e, card.id)}
-                className={`absolute top-2 left-2 z-10 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all ${
-                  selected.has(card.id)
-                    ? "bg-ring border-ring text-primary-foreground"
-                    : "border-white/30 bg-black/30 opacity-0 group-hover:opacity-100"
-                }`}
-              >
-                {selected.has(card.id) && <Check className="w-4 h-4" />}
-              </button>
+          {sortedCards.map((card: any) => {
+            const qty = card.quantity || 1
+            const totalVal = (card.value || 0) * qty
+            return (
+              <div key={card.id} className="relative group">
+                {/* Select Checkbox */}
+                <button
+                  onClick={(e) => toggleSelect(e, card.id)}
+                  className={`absolute top-2 left-2 z-10 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all ${
+                    selected.has(card.id)
+                      ? "bg-ring border-ring text-primary-foreground"
+                      : "border-white/30 bg-black/30 opacity-0 group-hover:opacity-100"
+                  }`}
+                >
+                  {selected.has(card.id) && <Check className="w-4 h-4" />}
+                </button>
 
-              {/* Cardmarket Link */}
-              <a
-                href={card.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                className="absolute top-2 right-2 z-10 w-6 h-6 rounded-md bg-black/30 border border-white/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/60"
-                title="Auf Cardmarket oeffnen"
-              >
-                <ExternalLink className="w-3 h-3 text-white" />
-              </a>
+                {/* Quantity Badge */}
+                {qty > 1 && (
+                  <span className="absolute top-2 right-9 z-10 px-1.5 py-0.5 rounded-md bg-ring text-primary-foreground text-xs font-bold group-hover:right-10">
+                    x{qty}
+                  </span>
+                )}
 
-              <Link
-                to={`/cards/${card.id}`}
-                className={`block rounded-xl bg-card border overflow-hidden transition-all hover:scale-[1.02] hover:shadow-lg hover:shadow-ring/10 ${
-                  selected.has(card.id) ? "border-ring" : "border-border hover:border-ring/50"
-                }`}
-              >
-                {/* Thumbnail */}
-                <div className="aspect-[5/7] bg-secondary overflow-hidden">
-                  {card.image ? (
-                    <img src={`/images/${card.image}`} alt={card.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-muted-foreground text-2xl">?</div>
-                  )}
-                </div>
-                {/* Info */}
-                <div className="p-3 space-y-1">
-                  <div className="font-medium text-sm leading-tight truncate" title={card.name}>{card.name}</div>
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    {urlToFlag(card.url) && <span>{urlToFlag(card.url)}</span>}
-                    {card.grade && <span className="px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-[10px] font-medium">{card.grade}</span>}
+                {/* Cardmarket Link */}
+                <a
+                  href={card.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute top-2 right-2 z-10 w-6 h-6 rounded-md bg-black/30 border border-white/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/60"
+                  title="Auf Cardmarket oeffnen"
+                >
+                  <ExternalLink className="w-3 h-3 text-white" />
+                </a>
+
+                {/* Binder Color Dot */}
+                {card.binder_color && (
+                  <span
+                    className="absolute bottom-[calc(100%-theme(spacing.1))] left-2 z-10 w-3 h-3 rounded-full border-2 border-card"
+                    style={{ backgroundColor: card.binder_color, bottom: "auto", top: "auto" }}
+                    title={card.binder_name}
+                  />
+                )}
+
+                <Link
+                  to={`/cards/${card.id}`}
+                  className={`block rounded-xl bg-card border overflow-hidden transition-all hover:scale-[1.02] hover:shadow-lg hover:shadow-ring/10 ${
+                    selected.has(card.id) ? "border-ring" : "border-border hover:border-ring/50"
+                  }`}
+                >
+                  {/* Thumbnail */}
+                  <div className="relative aspect-[5/7] bg-secondary overflow-hidden">
+                    {card.image ? (
+                      <img src={`/images/${card.image}`} alt={card.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-muted-foreground text-2xl">?</div>
+                    )}
+                    {/* Binder strip at bottom of image */}
+                    {card.binder_color && (
+                      <div className="absolute bottom-0 left-0 right-0 h-1" style={{ backgroundColor: card.binder_color }} />
+                    )}
                   </div>
-                  <div className="font-bold tabular-nums text-base">{formatEUR(card.value)}</div>
-                  <div className="text-xs text-muted-foreground flex justify-between">
-                    <span>Low: {formatEUR(card.from_price)}</span>
-                    {card.scraped_at && <span title={new Date(card.scraped_at).toLocaleString("de-DE")}>{timeAgo(card.scraped_at)}</span>}
+                  {/* Info */}
+                  <div className="p-3 space-y-1">
+                    <div className="font-medium text-sm leading-tight truncate" title={card.name}>{card.name}</div>
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      {urlToFlag(card.url) && <span>{urlToFlag(card.url)}</span>}
+                      {card.grade && <span className="px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-[10px] font-medium">{card.grade}</span>}
+                    </div>
+                    <div className="font-bold tabular-nums text-base">{formatEUR(totalVal)}</div>
+                    <div className="text-xs text-muted-foreground flex justify-between">
+                      <span>{qty > 1 ? `${qty}x ${formatEUR(card.value)}` : `Low: ${formatEUR(card.from_price)}`}</span>
+                      {card.scraped_at && <span title={new Date(card.scraped_at).toLocaleString("de-DE")}>{timeAgo(card.scraped_at)}</span>}
+                    </div>
                   </div>
-                </div>
-              </Link>
-            </div>
-          ))}
+                </Link>
+              </div>
+            )
+          })}
         </div>
       </div>
 
@@ -239,7 +302,7 @@ export function Dashboard() {
           <StatCard
             label="Gewinn/Verlust"
             value={`${d.totalProfit >= 0 ? "+" : ""}${formatEUR(d.totalProfit)}`}
-            sub={`${formatPct(d.totalProfitPct)} auf ${d.purchaseCount}/${d.cardCount} Karten`}
+            sub={`${formatPct(d.totalProfitPct)} auf ${d.purchaseCount}/${d.uniqueCardCount} Karten`}
             positive={d.totalProfit >= 0}
             icon={d.totalProfit >= 0 ? TrendingUp : TrendingDown}
           />

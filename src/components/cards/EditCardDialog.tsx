@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { X } from "lucide-react"
 
@@ -9,15 +9,20 @@ export function EditCardDialog({ card, open, onClose }: { card: any; open: boole
   const [notes, setNotes] = useState("")
   const [purchasePrice, setPurchasePrice] = useState("")
   const [purchaseDate, setPurchaseDate] = useState("")
+  const [quantity, setQuantity] = useState("1")
+  const [binderId, setBinderId] = useState("")
   const queryClient = useQueryClient()
+  const { data: binders } = useQuery({ queryKey: ["binders"], queryFn: api.getBinders })
 
   useEffect(() => {
     if (card) {
       setName(card.name)
       setGrade(card.grade)
-      setNotes(card.notes)
+      setNotes(card.notes || "")
       setPurchasePrice(card.purchase_price != null ? String(card.purchase_price) : "")
       setPurchaseDate(card.purchase_date || "")
+      setQuantity(String(card.quantity || 1))
+      setBinderId(card.binder_id != null ? String(card.binder_id) : "")
     }
   }, [card])
 
@@ -27,6 +32,7 @@ export function EditCardDialog({ card, open, onClose }: { card: any; open: boole
       queryClient.invalidateQueries({ queryKey: ["card", card.id] })
       queryClient.invalidateQueries({ queryKey: ["cards"] })
       queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+      queryClient.invalidateQueries({ queryKey: ["binders"] })
       onClose()
     },
   })
@@ -46,14 +52,36 @@ export function EditCardDialog({ card, open, onClose }: { card: any; open: boole
           <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground text-sm" />
         </label>
 
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-sm text-muted-foreground">Grade</span>
+            <select value={grade} onChange={(e) => setGrade(e.target.value)} className="mt-1 w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground text-sm">
+              <option value="">Ungraded</option>
+              <option value="PSA10">PSA 10</option>
+              <option value="PSA9">PSA 9</option>
+              <option value="CGC10">CGC 10</option>
+              <option value="BGS10">BGS 10</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-sm text-muted-foreground">Anzahl</span>
+            <input
+              type="number"
+              min="1"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground text-sm"
+            />
+          </label>
+        </div>
+
         <label className="block">
-          <span className="text-sm text-muted-foreground">Grade</span>
-          <select value={grade} onChange={(e) => setGrade(e.target.value)} className="mt-1 w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground text-sm">
-            <option value="">Ungraded</option>
-            <option value="PSA10">PSA 10</option>
-            <option value="PSA9">PSA 9</option>
-            <option value="CGC10">CGC 10</option>
-            <option value="BGS10">BGS 10</option>
+          <span className="text-sm text-muted-foreground">Binder</span>
+          <select value={binderId} onChange={(e) => setBinderId(e.target.value)} className="mt-1 w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground text-sm">
+            <option value="">Kein Binder</option>
+            {binders?.map((b: any) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
           </select>
         </label>
 
@@ -92,6 +120,8 @@ export function EditCardDialog({ card, open, onClose }: { card: any; open: boole
               name, grade, notes,
               purchase_price: purchasePrice ? parseFloat(purchasePrice) : null,
               purchase_date: purchaseDate || null,
+              quantity: parseInt(quantity) || 1,
+              binder_id: binderId ? parseInt(binderId) : null,
             })}
             disabled={mutation.isPending}
             className="px-4 py-2 text-sm rounded-lg bg-ring text-primary-foreground hover:bg-ring/80 disabled:opacity-50"

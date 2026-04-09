@@ -4,37 +4,46 @@ import { getDb } from "../db"
 export const dashboardRouter = Router()
 
 // GET /api/dashboard
-dashboardRouter.get("/", (_req, res) => {
+dashboardRouter.get("/", (req, res) => {
   const db = getDb()
+  const binderId = req.query.binder_id as string | undefined
 
   // Latest prices per card
-  const cards = db
-    .prepare(`
-      SELECT c.id, c.name, c.grade, c.purchase_price, p.value, p.trend, p.scraped_at
-      FROM cards c
-      LEFT JOIN prices p ON p.card_id = c.id
-        AND p.scraped_at = (SELECT MAX(p2.scraped_at) FROM prices p2 WHERE p2.card_id = c.id)
-    `)
-    .all() as any[]
+  let cardQuery = `
+    SELECT c.id, c.name, c.grade, c.purchase_price, c.quantity, c.binder_id, p.value, p.trend, p.scraped_at
+    FROM cards c
+    LEFT JOIN prices p ON p.card_id = c.id
+      AND p.scraped_at = (SELECT MAX(p2.scraped_at) FROM prices p2 WHERE p2.card_id = c.id AND p2.value IS NOT NULL)
+  `
+  const params: any[] = []
+  if (binderId) {
+    cardQuery += binderId === "none" ? " WHERE c.binder_id IS NULL" : " WHERE c.binder_id = ?"
+    if (binderId !== "none") params.push(binderId)
+  }
 
-  // Previous prices per card (second most recent)
+  const cards = db.prepare(cardQuery).all(...params) as any[]
+
+  // Previous prices per card
   const previousPrices = db
     .prepare(`
       SELECT p.card_id, p.value
       FROM prices p
       WHERE p.scraped_at = (
         SELECT MAX(p2.scraped_at) FROM prices p2
-        WHERE p2.card_id = p.card_id
-          AND p2.scraped_at < (SELECT MAX(p3.scraped_at) FROM prices p3 WHERE p3.card_id = p.card_id)
+        WHERE p2.card_id = p.card_id AND p2.value IS NOT NULL
+          AND p2.scraped_at < (SELECT MAX(p3.scraped_at) FROM prices p3 WHERE p3.card_id = p.card_id AND p3.value IS NOT NULL)
       )
     `)
     .all() as any[]
 
   const prevMap = new Map(previousPrices.map((p) => [p.card_id, p.value]))
 
-  const totalValue = cards.reduce((sum, c) => sum + (c.value || 0), 0)
-  const previousTotal = cards.reduce((sum, c) => sum + (prevMap.get(c.id) || c.value || 0), 0)
+  // Quantity-aware totals
+  const totalValue = cards.reduce((sum, c) => sum + (c.value || 0) * (c.quantity || 1), 0)
+  const previousTotal = cards.reduce((sum, c) => sum + (prevMap.get(c.id) || c.value || 0) * (c.quantity || 1), 0)
   const changePercent = previousTotal ? ((totalValue - previousTotal) / previousTotal) * 100 : 0
+
+  const totalCards = cards.reduce((sum, c) => sum + (c.quantity || 1), 0)
 
   // Top movers
   const movers = cards
@@ -50,15 +59,16 @@ dashboardRouter.get("/", (_req, res) => {
     .prepare("SELECT * FROM scrape_runs ORDER BY started_at DESC LIMIT 1")
     .get() as any
 
-  // Portfolio history (per card: last price of the day, then sum)
+  // Portfolio history (quantity-aware)
   const history = db
     .prepare(`
-      SELECT date, SUM(value) as totalValue
+      SELECT date, SUM(value * qty) as totalValue
       FROM (
-        SELECT DATE(scraped_at) as date, card_id, value,
-               ROW_NUMBER() OVER (PARTITION BY card_id, DATE(scraped_at) ORDER BY scraped_at DESC) as rn
-        FROM prices
-        WHERE value IS NOT NULL
+        SELECT DATE(p.scraped_at) as date, p.card_id, p.value, c.quantity as qty,
+               ROW_NUMBER() OVER (PARTITION BY p.card_id, DATE(p.scraped_at) ORDER BY p.scraped_at DESC) as rn
+        FROM prices p
+        JOIN cards c ON c.id = p.card_id
+        WHERE p.value IS NOT NULL
       )
       WHERE rn = 1
       GROUP BY date
@@ -66,9 +76,10 @@ dashboardRouter.get("/", (_req, res) => {
     `)
     .all()
 
+  // Quantity-aware purchase totals
   const cardsWithPurchase = cards.filter((c) => c.purchase_price)
-  const totalPurchase = cardsWithPurchase.reduce((sum, c) => sum + c.purchase_price, 0)
-  const purchaseValue = cardsWithPurchase.reduce((sum, c) => sum + (c.value || 0), 0)
+  const totalPurchase = cardsWithPurchase.reduce((sum, c) => sum + c.purchase_price * (c.quantity || 1), 0)
+  const purchaseValue = cardsWithPurchase.reduce((sum, c) => sum + (c.value || 0) * (c.quantity || 1), 0)
   const totalProfit = totalPurchase > 0 ? purchaseValue - totalPurchase : 0
   const totalProfitPct = totalPurchase > 0 ? (totalProfit / totalPurchase) * 100 : 0
 
@@ -80,7 +91,8 @@ dashboardRouter.get("/", (_req, res) => {
     totalProfitPct,
     previousTotalValue: previousTotal,
     changePercent,
-    cardCount: cards.length,
+    cardCount: totalCards,
+    uniqueCardCount: cards.length,
     gradedCount: cards.filter((c) => c.grade).length,
     lastScrapeAt: lastRun?.finished_at || cards[0]?.scraped_at,
     topMovers: movers.slice(0, 6),
