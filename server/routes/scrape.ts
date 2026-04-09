@@ -76,6 +76,7 @@ scrapeRouter.post("/", (_req, res) => {
   proc.on("close", (code) => {
     const status = code === 0 ? "completed" : "failed"
     try { importResults() } catch (e) { console.error("Import error:", e) }
+    db.pragma("wal_checkpoint(TRUNCATE)")
     db.prepare(
       "UPDATE scrape_runs SET finished_at = datetime('now'), status = ?, duration_s = (julianday(datetime('now')) - julianday(started_at)) * 86400, error = ? WHERE id = ?"
     ).run(status, code !== 0 ? stderr.slice(0, 500) : null, currentRunId)
@@ -118,6 +119,7 @@ scrapeRouter.post("/cards", (req, res) => {
   proc.on("close", (code) => {
     const status = code === 0 ? "completed" : "failed"
     try { importResults() } catch (e) { console.error("Import error:", e) }
+    db.pragma("wal_checkpoint(TRUNCATE)")
     db.prepare(
       "UPDATE scrape_runs SET finished_at = datetime('now'), status = ?, duration_s = (julianday(datetime('now')) - julianday(started_at)) * 86400, error = ? WHERE id = ?"
     ).run(status, code !== 0 ? stderr.slice(0, 500) : null, currentRunId)
