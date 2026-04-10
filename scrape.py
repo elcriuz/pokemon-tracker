@@ -115,54 +115,9 @@ def is_cloudflare_challenge(content):
 
 
 def try_solve_turnstile(driver):
-    """Versucht Turnstile via CDP Input.dispatchMouseEvent zu klicken (trusted events)."""
-    try:
-        # From screenshot: checkbox is at ~(505, 395) on the CF challenge page
-        # These are viewport coordinates (relative to page content, not window chrome)
-        # Checkbox position: center of the "Verify you are human" box
-        target_x = 505 + random.randint(-5, 5)
-        target_y = 395 + random.randint(-5, 5)
-
-        log.info(f"  CDP Click auf ({target_x}, {target_y})...")
-
-        # Wait for checkbox to render
-        time.sleep(2)
-
-        # Use CDP to dispatch trusted mouse events
-        # Move mouse (generates mousemove events that CF tracks)
-        steps = 8
-        start_x, start_y = random.randint(600, 800), random.randint(100, 250)
-        for i in range(steps):
-            frac = (i + 1) / steps
-            mx = int(start_x + (target_x - start_x) * frac + random.randint(-3, 3))
-            my = int(start_y + (target_y - start_y) * frac + random.randint(-2, 2))
-            driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
-                "type": "mouseMoved", "x": mx, "y": my,
-            })
-            time.sleep(random.uniform(0.02, 0.08))
-
-        # Hover on target
-        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
-            "type": "mouseMoved", "x": target_x, "y": target_y,
-        })
-        time.sleep(random.uniform(0.3, 0.6))
-
-        # Click: mousePressed + mouseReleased
-        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
-            "type": "mousePressed", "x": target_x, "y": target_y,
-            "button": "left", "clickCount": 1,
-        })
-        time.sleep(random.uniform(0.05, 0.15))
-        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
-            "type": "mouseReleased", "x": target_x, "y": target_y,
-            "button": "left", "clickCount": 1,
-        })
-
-        log.info(f"  CDP Click gesendet bei ({target_x}, {target_y})")
-        return True
-
-    except Exception as e:
-        log.warning(f"  CDP Click fehlgeschlagen: {e}")
+    """Cloudflare Turnstile kann nicht automatisch geloest werden.
+    Wartet auf manuellen Click via noVNC Panel."""
+    log.info("  Warte auf manuellen Click via noVNC...")
 
     return False
 
@@ -172,17 +127,7 @@ def wait_for_cloudflare(driver, card_name):
     if not is_cloudflare_challenge(content):
         return content, STATUS_OK
 
-    log.warning(f"  Cloudflare Challenge erkannt fuer: {card_name}")
-    for attempt in range(3):
-        log.info(f"  Auto-Solve Versuch {attempt+1}/3...")
-        try_solve_turnstile(driver)
-        time.sleep(15)
-        content = driver.page_source
-        if not is_cloudflare_challenge(content):
-            log.info("  Cloudflare automatisch geloest!")
-            return content, STATUS_OK
-
-    log.warning(f"  Auto-Solve fehlgeschlagen. Warte auf menschliche Hilfe ({CF_WAIT_TIMEOUT}s)...")
+    log.warning(f"  Cloudflare Challenge! Bitte im noVNC-Panel klicken. Warte {CF_WAIT_TIMEOUT}s...")
     send_telegram(
         f"\u26a0\ufe0f <b>Cloudflare Challenge</b>\n\n"
         f"Karte: {card_name}\n"
@@ -192,7 +137,7 @@ def wait_for_cloudflare(driver, card_name):
 
     start = time.time()
     while time.time() - start < CF_WAIT_TIMEOUT:
-        time.sleep(10)
+        time.sleep(3)
         content = driver.page_source
         if not is_cloudflare_challenge(content):
             elapsed = int(time.time() - start)
