@@ -174,6 +174,35 @@ def try_solve_turnstile(driver):
             driver.switch_to.default_content()
         except Exception:
             pass
+
+    # No iframe found — CF challenge page without iframe (newer version)
+    # Click in the center area where the checkbox typically appears
+    log.info("  Kein iframe — versuche Blind-Click auf CF Checkbox Position...")
+    try:
+        display = os.environ.get("DISPLAY", ":99")
+        env = {**os.environ, "DISPLAY": display}
+        # CF checkbox is typically around (280, 310) on a 1280x900 challenge page
+        target_x = 280 + random.randint(-5, 5)
+        target_y = 310 + random.randint(-5, 5)
+        # Human-like approach
+        start_x = random.randint(400, 800)
+        start_y = random.randint(100, 250)
+        subprocess.run(["xdotool", "mousemove", "--", str(start_x), str(start_y)], env=env, timeout=5)
+        time.sleep(random.uniform(0.3, 0.6))
+        for step in range(3):
+            frac = (step + 1) / 4
+            sx = int(start_x + (target_x - start_x) * frac + random.randint(-8, 8))
+            sy = int(start_y + (target_y - start_y) * frac + random.randint(-6, 6))
+            subprocess.run(["xdotool", "mousemove", "--", str(sx), str(sy)], env=env, timeout=5)
+            time.sleep(random.uniform(0.05, 0.12))
+        subprocess.run(["xdotool", "mousemove", "--", str(target_x), str(target_y)], env=env, timeout=5)
+        time.sleep(random.uniform(0.4, 0.8))
+        subprocess.run(["xdotool", "click", "1"], env=env, timeout=5)
+        log.info(f"  Blind-Click bei ({target_x}, {target_y})")
+        return True
+    except Exception as e:
+        log.warning(f"  Blind-Click fehlgeschlagen: {e}")
+
     return False
 
 
