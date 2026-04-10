@@ -34,9 +34,9 @@ RESUME_FILE = BASE_DIR / "data" / "scrape_resume.json"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Timing
-FIRST_WAIT = 8
-MIN_DELAY = 10        # Cardmarket rate-limits aggressive scraping
-MAX_DELAY = 18
+FIRST_WAIT = 5
+MIN_DELAY = 4
+MAX_DELAY = 8
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "50"))
 
 # Logging
