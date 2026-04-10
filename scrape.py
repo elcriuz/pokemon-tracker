@@ -164,8 +164,8 @@ def extract_card_info(content):
         og_m = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', content)
     if og_m:
         img_url = og_m.group(1)
-        # Skip Cardmarket logo / placeholder images
-        if "cardmarket" not in img_url.lower() or "product-images" in img_url.lower():
+        # Only use product images from S3, skip logos/placeholders
+        if "product-images" in img_url.lower():
             info["image_url"] = img_url
     return info
 
