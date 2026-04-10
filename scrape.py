@@ -110,18 +110,51 @@ def is_cloudflare_challenge(content):
 
 
 def try_solve_turnstile(driver):
+    """Versucht Turnstile zu loesen: erst iframe-Position finden, dann OS-Level Click via xdotool."""
+    import subprocess
+
     try:
         frames = driver.find_elements("tag name", "iframe")
         for frame in frames:
             src = frame.get_attribute("src") or ""
             if "challenge" in src or "turnstile" in src:
-                driver.switch_to.frame(frame)
-                checkboxes = driver.find_elements("css selector", "input[type='checkbox'], .cb-lb, #challenge-stage")
-                if checkboxes:
-                    checkboxes[0].click()
-                    log.info("  Turnstile Checkbox geklickt")
-                driver.switch_to.default_content()
-                return True
+                # Get iframe position on screen
+                loc = frame.location
+                size = frame.size
+                # Checkbox is roughly centered in the iframe, slightly left
+                click_x = int(loc["x"]) + min(35, int(size["width"] // 2))
+                click_y = int(loc["y"]) + int(size["height"] // 2)
+
+                log.info(f"  Turnstile gefunden bei ({click_x}, {click_y}), versuche xdotool click...")
+
+                # Human-like: move mouse with slight randomness, pause, click
+                jitter_x = random.randint(-3, 3)
+                jitter_y = random.randint(-2, 2)
+                target_x = click_x + jitter_x
+                target_y = click_y + jitter_y
+
+                try:
+                    display = os.environ.get("DISPLAY", ":99")
+                    env = {**os.environ, "DISPLAY": display}
+                    # Move mouse in a curve (2 steps)
+                    mid_x = target_x + random.randint(-20, 20)
+                    mid_y = target_y + random.randint(-15, 15)
+                    subprocess.run(["xdotool", "mousemove", "--", str(mid_x), str(mid_y)], env=env, timeout=5)
+                    time.sleep(random.uniform(0.1, 0.3))
+                    subprocess.run(["xdotool", "mousemove", "--", str(target_x), str(target_y)], env=env, timeout=5)
+                    time.sleep(random.uniform(0.3, 0.7))
+                    subprocess.run(["xdotool", "click", "1"], env=env, timeout=5)
+                    log.info(f"  xdotool click bei ({target_x}, {target_y})")
+                    return True
+                except Exception as e:
+                    log.warning(f"  xdotool fehlgeschlagen: {e}, fallback auf Selenium click")
+                    # Fallback: Selenium click
+                    driver.switch_to.frame(frame)
+                    checkboxes = driver.find_elements("css selector", "input[type='checkbox'], .cb-lb, #challenge-stage")
+                    if checkboxes:
+                        checkboxes[0].click()
+                    driver.switch_to.default_content()
+                    return True
     except Exception:
         try:
             driver.switch_to.default_content()
