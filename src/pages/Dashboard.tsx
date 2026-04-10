@@ -308,10 +308,10 @@ export function Dashboard() {
                       {card.name}
                       {qty > 1 && <span className="flex-shrink-0 px-1 py-0.5 rounded bg-ring/20 text-ring text-[10px] font-bold">x{qty}</span>}
                     </div>
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
-                      {urlToFlag(card.url) && <span>{urlToFlag(card.url)}</span>}
-                      {card.set_name && <span>{card.set_name}</span>}
-                      {card.grade && <span className="px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-[10px] font-medium">{card.grade}</span>}
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground overflow-hidden">
+                      {urlToFlag(card.url) && <span className="flex-shrink-0">{urlToFlag(card.url)}</span>}
+                      {card.set_name && <span className="truncate">{card.set_name}</span>}
+                      {card.grade && <span className="flex-shrink-0 px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-[10px] font-medium">{card.grade}</span>}
                     </div>
                     <div className="font-bold tabular-nums text-base flex items-center gap-1.5">
                       {formatEUR(totalVal)}
