@@ -11,11 +11,18 @@ cardsRouter.get("/", (req, res) => {
     SELECT c.*, b.name as binder_name, b.color as binder_color,
            p.value, p.trend, p.avg7, p.avg30, p.avg1, p.from_price,
            p.available_items, p.psa10_low, p.psa9_low, p.cgc10_low, p.bgs10_low,
-           p.scraped_at, p.error
+           p.scraped_at, p.error,
+           prev.value as prev_value
     FROM cards c
     LEFT JOIN binders b ON b.id = c.binder_id
     LEFT JOIN prices p ON p.card_id = c.id
       AND p.scraped_at = (SELECT MAX(p2.scraped_at) FROM prices p2 WHERE p2.card_id = c.id AND p2.value IS NOT NULL)
+    LEFT JOIN prices prev ON prev.card_id = c.id
+      AND prev.scraped_at = (
+        SELECT MAX(p3.scraped_at) FROM prices p3
+        WHERE p3.card_id = c.id AND p3.value IS NOT NULL
+          AND p3.scraped_at < (SELECT MAX(p4.scraped_at) FROM prices p4 WHERE p4.card_id = c.id AND p4.value IS NOT NULL)
+      )
   `
   const params: any[] = []
   if (binderId) {

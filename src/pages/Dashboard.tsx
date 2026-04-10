@@ -295,7 +295,19 @@ export function Dashboard() {
                       {urlToFlag(card.url) && <span>{urlToFlag(card.url)}</span>}
                       {card.grade && <span className="px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-[10px] font-medium">{card.grade}</span>}
                     </div>
-                    <div className="font-bold tabular-nums text-base">{formatEUR(totalVal)}</div>
+                    <div className="font-bold tabular-nums text-base flex items-center gap-1.5">
+                      {formatEUR(totalVal)}
+                      {card.prev_value != null && card.value != null && card.value !== card.prev_value && (() => {
+                        const diff = card.value - card.prev_value
+                        const pct = (diff / card.prev_value) * 100
+                        const up = diff > 0
+                        return (
+                          <span className={`text-[10px] font-medium px-1 py-0.5 rounded ${up ? "bg-positive/20 text-positive" : "bg-negative/20 text-negative"}`}>
+                            {up ? "+" : ""}{pct.toFixed(1)}%
+                          </span>
+                        )
+                      })()}
+                    </div>
                     <div className="text-xs text-muted-foreground flex justify-between">
                       <span>
                         {qty > 1
