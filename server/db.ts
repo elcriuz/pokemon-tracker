@@ -91,6 +91,7 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE cards ADD COLUMN purchase_date TEXT") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN binder_id INTEGER REFERENCES binders(id) ON DELETE SET NULL") } catch {}
+  try { db.exec("ALTER TABLE cards ADD COLUMN set_name TEXT NOT NULL DEFAULT ''") } catch {}
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")

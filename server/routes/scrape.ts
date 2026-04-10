@@ -51,6 +51,7 @@ function importResults() {
     // Save image + name to card if scraped and missing
     if (r.image) updateImage.run(r.image, cardId)
     if (r.name && !r.name.toLowerCase().includes("just a moment") && !r.name.toLowerCase().includes("cloudflare")) updateName.run(r.name, cardId)
+    if (r.set_name) db.prepare("UPDATE cards SET set_name = ? WHERE id = ? AND (set_name = '' OR set_name IS NULL)").run(r.set_name, cardId)
   }
 }
 

@@ -138,6 +138,15 @@ def extract_prices(content):
     return prices
 
 
+def extract_set_from_url(url):
+    """Extrahiert den Set-Namen aus der Cardmarket-URL."""
+    # URL format: /Singles/Lost-Abyss/Giratina-V-V3-s11111
+    m = re.search(r"/Singles/([^/]+)/", url)
+    if m:
+        return m.group(1).replace("-", " ")
+    return None
+
+
 def extract_card_info(content):
     info = {}
     title_m = re.search(r"<title>(.*?)</title>", content)
@@ -325,6 +334,7 @@ def scrape_single_card(page, card, timestamp, is_first):
     result = {
         "url": card["url"],
         "name": card["name"] or info.get("page_title", ""),
+        "set_name": extract_set_from_url(card["url"]),
         "grade": grade,
         "value": value,
         "notes": card["notes"],
