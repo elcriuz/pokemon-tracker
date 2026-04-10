@@ -151,6 +151,23 @@ scrapeRouter.post("/stop", (_req, res) => {
     return res.status(400).json({ error: "No scrape running" })
   }
   currentProcess.kill("SIGTERM")
+  // Clean up Chrome crash state so next start doesn't show Google/restore page
+  setTimeout(() => {
+    try {
+      const profileDir = path.join(BASE, "data", "chrome-profile")
+      const defaultDir = path.join(profileDir, "Default")
+      const files = ["Preferences", "Secure Preferences"]
+      for (const f of files) {
+        const fp = path.join(defaultDir, f)
+        if (fs.existsSync(fp)) {
+          const content = fs.readFileSync(fp, "utf-8")
+          // Remove exit_type: Crashed so Chrome doesn't show restore bubble
+          const fixed = content.replace(/"exit_type"\s*:\s*"Crashed"/g, '"exit_type":"Normal"')
+          fs.writeFileSync(fp, fixed)
+        }
+      }
+    } catch {}
+  }, 2000)
   res.json({ ok: true, message: "Scrape stopping..." })
 })
 

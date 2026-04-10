@@ -418,6 +418,9 @@ def create_driver():
     options.add_argument("--window-position=0,0")
     options.add_argument(f"--user-data-dir={profile_dir}")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+    options.add_argument("--disable-session-crashed-bubble")
 
     driver = uc.Chrome(options=options, version_main=146)
     return driver
