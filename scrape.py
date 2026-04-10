@@ -174,46 +174,70 @@ def try_solve_turnstile(driver):
             pass
 
     # No iframe found — CF challenge page without iframe (newer version)
-    # Checkbox is at ~(280, 310) on the 1280x900 display
-    log.info("  Kein iframe — versuche xdotool Blind-Click...")
+    log.info("  Kein iframe — versuche xdotool Click auf Chrome-Fenster...")
     try:
         display = os.environ.get("DISPLAY", ":99")
         env = {**os.environ, "DISPLAY": display}
 
+        # Find Chrome window ID
+        result = subprocess.run(
+            ["xdotool", "search", "--onlyvisible", "--name", "Chromium"],
+            env=env, capture_output=True, text=True, timeout=5
+        )
+        window_ids = result.stdout.strip().split("\n")
+        if not window_ids or not window_ids[0]:
+            # Try alternative name
+            result = subprocess.run(
+                ["xdotool", "search", "--onlyvisible", "--name", "moment"],
+                env=env, capture_output=True, text=True, timeout=5
+            )
+            window_ids = result.stdout.strip().split("\n")
+
+        if not window_ids or not window_ids[0]:
+            log.warning("  Chrome-Fenster nicht gefunden")
+            return False
+
+        win_id = window_ids[0]
+        log.info(f"  Chrome Window ID: {win_id}")
+
         # Wait for checkbox to render
         time.sleep(3)
 
-        # Try clicking twice (first click might activate, second confirms)
+        # Focus the window first
+        subprocess.run(["xdotool", "windowactivate", "--sync", win_id], env=env, timeout=5)
+        subprocess.run(["xdotool", "windowfocus", "--sync", win_id], env=env, timeout=5)
+        time.sleep(0.5)
+
+        # Click relative to the Chrome window (not screen coordinates)
+        # CF checkbox is at roughly (280, 310) within the page
         for click_attempt in range(2):
             target_x = 280 + random.randint(-3, 3)
             target_y = 310 + random.randint(-3, 3)
 
-            # Human-like mouse movement from random start
-            start_x = random.randint(500, 900)
-            start_y = random.randint(50, 200)
-            subprocess.run(["xdotool", "mousemove", "--", str(start_x), str(start_y)], env=env, timeout=5)
-            time.sleep(random.uniform(0.4, 0.8))
+            # Move mouse with human-like pattern (relative to window)
+            start_x = random.randint(400, 700)
+            start_y = random.randint(80, 200)
+            subprocess.run(["xdotool", "mousemove", "--window", win_id, str(start_x), str(start_y)], env=env, timeout=5)
+            time.sleep(random.uniform(0.3, 0.6))
 
-            # Move in steps
             for step in range(4):
                 frac = (step + 1) / 5
                 sx = int(start_x + (target_x - start_x) * frac + random.randint(-6, 6))
                 sy = int(start_y + (target_y - start_y) * frac + random.randint(-4, 4))
-                subprocess.run(["xdotool", "mousemove", "--", str(sx), str(sy)], env=env, timeout=5)
+                subprocess.run(["xdotool", "mousemove", "--window", win_id, str(sx), str(sy)], env=env, timeout=5)
                 time.sleep(random.uniform(0.03, 0.1))
 
-            # Final position + click
-            subprocess.run(["xdotool", "mousemove", "--", str(target_x), str(target_y)], env=env, timeout=5)
+            subprocess.run(["xdotool", "mousemove", "--window", win_id, str(target_x), str(target_y)], env=env, timeout=5)
             time.sleep(random.uniform(0.2, 0.5))
-            subprocess.run(["xdotool", "click", "1"], env=env, timeout=5)
-            log.info(f"  Blind-Click {click_attempt+1}/2 bei ({target_x}, {target_y})")
+            subprocess.run(["xdotool", "click", "--window", win_id, "1"], env=env, timeout=5)
+            log.info(f"  Window-Click {click_attempt+1}/2 bei ({target_x}, {target_y}) auf Window {win_id}")
 
             if click_attempt == 0:
-                time.sleep(random.uniform(2, 4))  # Wait between clicks
+                time.sleep(random.uniform(2, 4))
 
         return True
     except Exception as e:
-        log.warning(f"  Blind-Click fehlgeschlagen: {e}")
+        log.warning(f"  Window-Click fehlgeschlagen: {e}")
 
     return False
 
