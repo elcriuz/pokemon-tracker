@@ -140,8 +140,13 @@ def extract_prices(content):
 
 def extract_set_from_url(url):
     """Extrahiert den Set-Namen aus der Cardmarket-URL."""
-    # URL format: /Singles/Lost-Abyss/Giratina-V-V3-s11111
+    # Singles: /Singles/Lost-Abyss/Giratina-V-V3-s11111
+    # Sealed: /Elite-Trainer-Boxes/Ascended-Heroes-Elite-Trainer-Box
     m = re.search(r"/Singles/([^/]+)/", url)
+    if m:
+        return m.group(1).replace("-", " ")
+    # Sealed products: extract from product name
+    m = re.search(r"/(?:Elite-Trainer-Boxes|Booster-Boxes|Booster-Packs|Tins|Collections|Special-Products)/([^/?]+)", url)
     if m:
         return m.group(1).replace("-", " ")
     return None
@@ -158,7 +163,10 @@ def extract_card_info(content):
     if not og_m:
         og_m = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', content)
     if og_m:
-        info["image_url"] = og_m.group(1)
+        img_url = og_m.group(1)
+        # Skip Cardmarket logo / placeholder images
+        if "cardmarket" not in img_url.lower() or "product-images" in img_url.lower():
+            info["image_url"] = img_url
     return info
 
 
