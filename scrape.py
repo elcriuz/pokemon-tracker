@@ -102,11 +102,16 @@ def send_telegram(message):
 # ─── Cloudflare Detection ───────────────────────────────────
 
 def is_cloudflare_challenge(content):
-    if len(content) > 10000:
-        return False
-    indicators = ["challenge", "just a moment", "checking your browser", "cloudflare"]
     lower = content.lower()
-    return any(ind in lower for ind in indicators)
+    # Short page with CF indicators = definite challenge
+    if len(content) < 10000:
+        indicators = ["challenge", "just a moment", "checking your browser"]
+        if any(ind in lower for ind in indicators):
+            return True
+    # Turnstile iframe can also appear on larger pages
+    if "challenges.cloudflare.com" in lower or "turnstile" in lower:
+        return True
+    return False
 
 
 def try_solve_turnstile(driver):
@@ -127,7 +132,6 @@ def try_solve_turnstile(driver):
 
                 log.info(f"  Turnstile gefunden bei ({click_x}, {click_y}), versuche xdotool click...")
 
-                # Human-like: move mouse with slight randomness, pause, click
                 jitter_x = random.randint(-3, 3)
                 jitter_y = random.randint(-2, 2)
                 target_x = click_x + jitter_x
@@ -136,10 +140,18 @@ def try_solve_turnstile(driver):
                 try:
                     display = os.environ.get("DISPLAY", ":99")
                     env = {**os.environ, "DISPLAY": display}
-                    # Move mouse in a curve (2 steps)
-                    mid_x = target_x + random.randint(-20, 20)
-                    mid_y = target_y + random.randint(-15, 15)
-                    subprocess.run(["xdotool", "mousemove", "--", str(mid_x), str(mid_y)], env=env, timeout=5)
+                    # Start far away, move in 3-4 steps like a human
+                    start_x = random.randint(200, 600)
+                    start_y = random.randint(100, 400)
+                    subprocess.run(["xdotool", "mousemove", "--", str(start_x), str(start_y)], env=env, timeout=5)
+                    time.sleep(random.uniform(0.2, 0.5))
+                    # Move towards target in steps
+                    for step in range(3):
+                        frac = (step + 1) / 4
+                        sx = int(start_x + (target_x - start_x) * frac + random.randint(-10, 10))
+                        sy = int(start_y + (target_y - start_y) * frac + random.randint(-8, 8))
+                        subprocess.run(["xdotool", "mousemove", "--", str(sx), str(sy)], env=env, timeout=5)
+                        time.sleep(random.uniform(0.05, 0.15))
                     time.sleep(random.uniform(0.1, 0.3))
                     subprocess.run(["xdotool", "mousemove", "--", str(target_x), str(target_y)], env=env, timeout=5)
                     time.sleep(random.uniform(0.3, 0.7))
@@ -402,7 +414,10 @@ def scrape_single_card(driver, card, timestamp, is_first):
         image_file = download_image(info["image_url"], card["url"], driver)
 
     if not prices or (not prices.get("trend") and not prices.get("from")):
-        log.warning(f"  WARNUNG: Keine Preise extrahiert!")
+        # Debug: warum keine Preise?
+        title = driver.title or "?"
+        has_cf = "challenge" in content.lower() or "turnstile" in content.lower()
+        log.warning(f"  WARNUNG: Keine Preise extrahiert! title=\"{title}\", len={len(content)}, CF={has_cf}")
         error = ERR_NO_PRICES
         status = "no_prices"
     else:
