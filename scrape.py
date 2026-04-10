@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Pokemon Card Portfolio Tracker - Cardmarket Scraper
-Scrapt Preise von Cardmarket via undetected_chromedriver (Cloudflare-Bypass).
+Scrapt Preise von Cardmarket via Patchright (Cloudflare-Bypass).
 
 Usage:
     python3 scrape.py                  # Scrapt alle Karten aus portfolio.csv
@@ -11,7 +11,6 @@ Usage:
 Env:
     TELEGRAM_BOT_TOKEN   - Telegram Bot Token fuer Alerts
     TELEGRAM_CHAT_ID     - Telegram Chat ID fuer Alerts
-    CF_WAIT_TIMEOUT      - Sekunden warten auf menschliche Hilfe bei CF (default: 300)
     BATCH_SIZE           - Chrome-Neustart alle N Karten (default: 50)
 """
 
@@ -23,7 +22,7 @@ import sys
 import time
 import random
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent
@@ -34,11 +33,10 @@ LOG_DIR = BASE_DIR / "data" / "logs"
 RESUME_FILE = BASE_DIR / "data" / "scrape_resume.json"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-# Timing — schneller nach dem ersten erfolgreichen Load
-FIRST_WAIT = 12       # Erste Seite (Cloudflare-Bypass)
-MIN_DELAY = 8         # Minimum zwischen Karten
-MAX_DELAY = 14        # Maximum zwischen Karten
-CF_WAIT_TIMEOUT = int(os.environ.get("CF_WAIT_TIMEOUT", "300"))
+# Timing
+FIRST_WAIT = 5        # Patchright bypasses CF — less waiting needed
+MIN_DELAY = 4
+MAX_DELAY = 8
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "50"))
 
 # Logging
@@ -57,8 +55,6 @@ log = logging.getLogger("scraper")
 ERR_CLOUDFLARE = "cloudflare_blocked"
 ERR_NO_PRICES = "no_prices_extracted"
 ERR_CRASH = "exception"
-ERR_TIMEOUT = "cloudflare_timeout"
-ERR_SKIPPED = "skipped_recent"
 STATUS_OK = "ok"
 
 
@@ -97,57 +93,6 @@ def send_telegram(message):
     except Exception as e:
         log.warning(f"Telegram-Fehler: {e}")
         return False
-
-
-# ─── Cloudflare Detection ───────────────────────────────────
-
-def is_cloudflare_challenge(content):
-    lower = content.lower()
-    # Short page with CF indicators = definite challenge
-    if len(content) < 10000:
-        indicators = ["challenge", "just a moment", "checking your browser"]
-        if any(ind in lower for ind in indicators):
-            return True
-    # Turnstile iframe can also appear on larger pages
-    if "challenges.cloudflare.com" in lower or "turnstile" in lower:
-        return True
-    return False
-
-
-def try_solve_turnstile(driver):
-    """Cloudflare Turnstile kann nicht automatisch geloest werden.
-    Wartet auf manuellen Click via noVNC Panel."""
-    log.info("  Warte auf manuellen Click via noVNC...")
-
-    return False
-
-
-def wait_for_cloudflare(driver, card_name):
-    content = driver.page_source
-    if not is_cloudflare_challenge(content):
-        return content, STATUS_OK
-
-    log.warning(f"  Cloudflare Challenge! Bitte im noVNC-Panel klicken. Warte {CF_WAIT_TIMEOUT}s...")
-    send_telegram(
-        f"\u26a0\ufe0f <b>Cloudflare Challenge</b>\n\n"
-        f"Karte: {card_name}\n"
-        f"Bitte via VNC/Browser eingreifen!\n"
-        f"Timeout in {CF_WAIT_TIMEOUT // 60} Minuten."
-    )
-
-    start = time.time()
-    while time.time() - start < CF_WAIT_TIMEOUT:
-        time.sleep(3)
-        content = driver.page_source
-        if not is_cloudflare_challenge(content):
-            elapsed = int(time.time() - start)
-            log.info(f"  Cloudflare geloest (nach {elapsed}s menschlicher Hilfe)")
-            send_telegram(f"\u2705 Cloudflare geloest! Scrape wird fortgesetzt.")
-            return content, STATUS_OK
-
-    log.error(f"  Cloudflare Timeout nach {CF_WAIT_TIMEOUT}s")
-    send_telegram(f"\u274c Cloudflare Timeout fuer: {card_name}. Karte wird uebersprungen.")
-    return content, ERR_TIMEOUT
 
 
 # ─── Price Extraction ────────────────────────────────────────
@@ -198,7 +143,6 @@ def extract_card_info(content):
     title_m = re.search(r"<title>(.*?)</title>", content)
     if title_m:
         title = title_m.group(1).replace(" | Cardmarket", "")
-        # Cloudflare-Titel ignorieren
         if not any(x in title.lower() for x in ["just a moment", "cloudflare", "checking"]):
             info["page_title"] = title
     og_m = re.search(r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', content)
@@ -211,7 +155,7 @@ def extract_card_info(content):
 
 # ─── Image Download ──────────────────────────────────────────
 
-def download_image(image_url, card_url, driver=None):
+def download_image(image_url, card_url, page=None):
     import hashlib
     images_dir = BASE_DIR / "data" / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
@@ -221,28 +165,26 @@ def download_image(image_url, card_url, driver=None):
 
     if filepath.exists():
         return url_hash + ext
-    if not driver:
+    if not page:
         return None
 
     try:
-        current_url = driver.current_url
-        driver.get(image_url)
-        time.sleep(2)
-        img_el = driver.find_element("tag name", "img")
-        if img_el:
-            img_el.screenshot(str(filepath))
+        current_url = page.url
+        page.goto(image_url, wait_until="load", timeout=15000)
+        time.sleep(1)
+        img = page.query_selector("img")
+        if img:
+            img.screenshot(path=str(filepath))
             log.info(f"  Bild gespeichert: {filepath.name}")
-            driver.get(current_url)
-            time.sleep(3)
+            page.goto(current_url, wait_until="domcontentloaded", timeout=15000)
+            time.sleep(2)
             return url_hash + ext
-        else:
-            driver.get(current_url)
-            time.sleep(3)
+        page.goto(current_url, wait_until="domcontentloaded", timeout=15000)
+        time.sleep(2)
     except Exception as e:
         log.warning(f"  Bild-Download fehlgeschlagen: {e}")
         try:
-            driver.get(current_url)
-            time.sleep(3)
+            page.goto(current_url, wait_until="domcontentloaded", timeout=15000)
         except Exception:
             pass
     return None
@@ -269,11 +211,9 @@ def load_portfolio():
 # ─── Resume Support ───────────────────────────────────────────
 
 def load_resume_state():
-    """Laedt den Resume-State vom letzten abgebrochenen Run."""
     if RESUME_FILE.exists():
         try:
             state = json.loads(RESUME_FILE.read_text())
-            # Nur wenn der letzte Run heute war
             if state.get("date") == datetime.now().strftime("%Y-%m-%d"):
                 return state
         except Exception:
@@ -282,7 +222,6 @@ def load_resume_state():
 
 
 def save_resume_state(completed_urls, results):
-    """Speichert den aktuellen Fortschritt fuer Resume."""
     state = {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "completed_urls": list(completed_urls),
@@ -293,54 +232,63 @@ def save_resume_state(completed_urls, results):
 
 
 def clear_resume_state():
-    """Loescht den Resume-State nach erfolgreichem Durchlauf."""
     if RESUME_FILE.exists():
         RESUME_FILE.unlink()
 
 
-# ─── Chrome Management ───────────────────────────────────────
+# ─── Browser Management (Patchright) ─────────────────────────
 
-def create_driver():
-    """Erstellt einen neuen Chrome-Driver mit persistentem Profil."""
-    import undetected_chromedriver as uc
-
-    profile_dir = BASE_DIR / "data" / "chrome-profile"
+def create_browser(playwright):
+    """Erstellt einen Patchright-Browser mit persistentem Profil und echtem Chrome."""
+    profile_dir = BASE_DIR / "data" / "patchright-profile"
     profile_dir.mkdir(parents=True, exist_ok=True)
 
-    options = uc.ChromeOptions()
-    options.add_argument("--window-size=1280,900")
-    options.add_argument("--window-position=0,0")
-    options.add_argument(f"--user-data-dir={profile_dir}")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-    options.add_argument("--disable-session-crashed-bubble")
-
-    driver = uc.Chrome(options=options, version_main=146)
-    return driver
+    context = playwright.chromium.launch_persistent_context(
+        user_data_dir=str(profile_dir),
+        channel="chrome",
+        headless=False,
+        no_viewport=True,
+        args=[
+            "--window-size=1280,900",
+            "--window-position=0,0",
+            "--no-first-run",
+            "--disable-session-crashed-bubble",
+            "--disable-dev-shm-usage",
+        ],
+    )
+    return context
 
 
 # ─── Main Scraper ─────────────────────────────────────────────
 
-def scrape_single_card(driver, card, timestamp, is_first):
-    """Scrapt eine einzelne Karte. Returns (result_dict, status_str)."""
+def scrape_single_card(page, card, timestamp, is_first):
+    """Scrapt eine einzelne Karte via Patchright."""
     card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
 
-    driver.get(card["url"])
+    page.goto(card["url"], wait_until="domcontentloaded", timeout=30000)
     wait = FIRST_WAIT if is_first else random.uniform(MIN_DELAY, MAX_DELAY)
     log.info(f"  Warte {wait:.0f}s...")
     time.sleep(wait)
 
-    content, cf_status = wait_for_cloudflare(driver, card_name)
+    # Check if CF challenge (Patchright should bypass it automatically)
+    title = page.title()
+    if "moment" in title.lower() or "challenge" in title.lower():
+        log.info("  CF erkannt, warte auf automatischen Bypass...")
+        # Patchright usually resolves CF within a few seconds
+        for _ in range(10):
+            time.sleep(3)
+            title = page.title()
+            if "moment" not in title.lower() and "challenge" not in title.lower():
+                log.info("  CF automatisch geloest!")
+                break
+        else:
+            log.warning(f"  CF nicht geloest nach 30s: {title}")
+            return {
+                "url": card["url"], "name": card["name"], "notes": card["notes"],
+                "timestamp": timestamp, "error": ERR_CLOUDFLARE,
+            }, "cloudflare"
 
-    if cf_status in (ERR_CLOUDFLARE, ERR_TIMEOUT):
-        log.error(f"  UEBERSPRUNGEN: Cloudflare nicht geloest")
-        return {
-            "url": card["url"], "name": card["name"], "notes": card["notes"],
-            "timestamp": timestamp, "error": cf_status,
-            "error_detail": "Cloudflare Challenge konnte nicht geloest werden",
-        }, "cloudflare"
-
+    content = page.content()
     prices = extract_prices(content)
     info = extract_card_info(content)
 
@@ -349,15 +297,14 @@ def scrape_single_card(driver, card, timestamp, is_first):
     grade_key = grade_map.get(grade.replace(" ", ""))
     grade_value = prices.get(grade_key) if grade_key else None
 
+    # Bild herunterladen (einmalig)
     image_file = None
     if info.get("image_url"):
-        image_file = download_image(info["image_url"], card["url"], driver)
+        image_file = download_image(info["image_url"], card["url"], page)
 
     if not prices or (not prices.get("trend") and not prices.get("from")):
-        # Debug: warum keine Preise?
-        title = driver.title or "?"
-        has_cf = "challenge" in content.lower() or "turnstile" in content.lower()
-        log.warning(f"  WARNUNG: Keine Preise extrahiert! title=\"{title}\", len={len(content)}, CF={has_cf}")
+        title = page.title()
+        log.warning(f"  WARNUNG: Keine Preise extrahiert! title=\"{title}\", len={len(content)}")
         error = ERR_NO_PRICES
         status = "no_prices"
     else:
@@ -368,10 +315,6 @@ def scrape_single_card(driver, card, timestamp, is_first):
         else:
             log.info(f"  Low: EUR {prices.get('from')}, Trend: EUR {prices.get('trend')}")
 
-    # Value-Bestimmung:
-    # - Graded: guenstigster Preis fuer das jeweilige Grading
-    # - Ungraded: "from" (guenstigster NM-Preis, gefiltert nach Sprache/Condition aus URL)
-    # - Fallback: trend (falls from nicht verfuegbar)
     value = grade_value or prices.get("from") or prices.get("trend")
 
     result = {
@@ -389,13 +332,15 @@ def scrape_single_card(driver, card, timestamp, is_first):
 
 
 def scrape_cards(cards):
-    """Scrapt Preise fuer alle Karten mit Batch-Support und Resume."""
+    """Scrapt Preise fuer alle Karten mit Patchright, Batch-Support und Resume."""
+    from patchright.sync_api import sync_playwright
+
     results = []
     stats = {"ok": 0, "cloudflare": 0, "no_prices": 0, "errors": 0, "skipped": 0}
     total = len(cards)
     timestamp = datetime.now().isoformat()
 
-    # Resume: bereits gescrapte Karten ueberspringen
+    # Resume
     resume_state = load_resume_state()
     completed_urls = set()
     if resume_state:
@@ -403,73 +348,65 @@ def scrape_cards(cards):
         if completed_urls:
             log.info(f"Resume: {len(completed_urls)} Karten vom letzten Run ueberspringen")
 
-    # Karten filtern
-    remaining_cards = []
-    for card in cards:
-        if card["url"] in completed_urls:
-            stats["skipped"] += 1
-            continue
-        remaining_cards.append(card)
-
+    remaining_cards = [c for c in cards if c["url"] not in completed_urls]
     if not remaining_cards:
         log.info("Alle Karten bereits gescrapt (Resume). Nichts zu tun.")
         return results, stats
 
-    log.info(f"{len(remaining_cards)} Karten zu scrapen (von {total} gesamt, {stats['skipped']} uebersprungen)")
+    log.info(f"{len(remaining_cards)} Karten zu scrapen (von {total} gesamt)")
 
-    # Batches verarbeiten
-    driver = None
-    batch_num = 0
+    with sync_playwright() as playwright:
+        context = None
+        page = None
+        batch_num = 0
 
-    try:
-        for i, card in enumerate(remaining_cards):
-            # Neuen Chrome starten bei Batch-Grenze oder am Anfang
-            if driver is None or (BATCH_SIZE > 0 and i > 0 and i % BATCH_SIZE == 0):
-                if driver:
-                    log.info(f"\n--- Batch {batch_num} abgeschlossen, Chrome neustarten ---")
-                    driver.quit()
-                    time.sleep(5)  # Kurze Pause zwischen Batches
-                batch_num += 1
-                log.info(f"Chrome starten (Batch {batch_num}, persistentes Profil)...")
-                driver = create_driver()
+        try:
+            for i, card in enumerate(remaining_cards):
+                # Neuen Browser bei Batch-Grenze oder am Anfang
+                if context is None or (BATCH_SIZE > 0 and i > 0 and i % BATCH_SIZE == 0):
+                    if context:
+                        log.info(f"\n--- Batch {batch_num} abgeschlossen, Browser neustarten ---")
+                        context.close()
+                        time.sleep(3)
+                    batch_num += 1
+                    log.info(f"Chrome starten (Batch {batch_num}, Patchright)...")
+                    context = create_browser(playwright)
+                    page = context.pages[0] if context.pages else context.new_page()
 
-            card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
-            log.info(f"\n[{i + stats['skipped'] + 1}/{total}] {card_name}")
+                card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
+                log.info(f"\n[{i + stats['skipped'] + 1}/{total}] {card_name}")
 
-            try:
-                result, status = scrape_single_card(driver, card, timestamp, is_first=(i == 0 and batch_num == 1))
-                results.append(result)
-                stats[status if status in stats else "errors"] += 1
-                completed_urls.add(card["url"])
-
-                # Resume-State + latest.json nach jeder Karte speichern (live updates)
-                save_resume_state(completed_urls, results)
-                PRICES_DIR.mkdir(exist_ok=True)
-                with open(LATEST_FILE, "w", encoding="utf-8") as f:
-                    json.dump(results, f, indent=2, ensure_ascii=False)
-
-            except Exception as e:
-                log.error(f"  FEHLER: {e}", exc_info=True)
-                stats["errors"] += 1
-                results.append({
-                    "url": card["url"], "name": card["name"], "notes": card["notes"],
-                    "timestamp": timestamp, "error": ERR_CRASH, "error_detail": str(e),
-                })
-                # Bei Crash: Chrome neustarten
                 try:
-                    driver.quit()
-                except Exception:
-                    pass
-                driver = None
-                log.info("  Chrome wird nach Fehler neugestartet...")
+                    result, status = scrape_single_card(page, card, timestamp, is_first=(i == 0 and batch_num == 1))
+                    results.append(result)
+                    stats[status if status in stats else "errors"] += 1
+                    completed_urls.add(card["url"])
 
-    finally:
-        if driver:
-            driver.quit()
+                    save_resume_state(completed_urls, results)
+                    PRICES_DIR.mkdir(exist_ok=True)
+                    with open(LATEST_FILE, "w", encoding="utf-8") as f:
+                        json.dump(results, f, indent=2, ensure_ascii=False)
 
-    # Erfolgreich durchgelaufen: Resume-State loeschen
+                except Exception as e:
+                    log.error(f"  FEHLER: {e}", exc_info=True)
+                    stats["errors"] += 1
+                    results.append({
+                        "url": card["url"], "name": card["name"], "notes": card["notes"],
+                        "timestamp": timestamp, "error": ERR_CRASH, "error_detail": str(e),
+                    })
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
+                    context = None
+                    page = None
+                    log.info("  Browser wird nach Fehler neugestartet...")
+
+        finally:
+            if context:
+                context.close()
+
     clear_resume_state()
-
     return results, stats
 
 
@@ -493,10 +430,8 @@ def save_results(results, stats):
     log.info(f"JSON gespeichert: {LATEST_FILE}")
 
     total_value = sum(r.get("value", 0) or 0 for r in results)
-    counted = sum(1 for r in results if r.get("value"))
     graded = sum(1 for r in results if r.get("grade"))
 
-    est_time = (stats["ok"] + stats["no_prices"]) * 12
     summary = f"""
 {'='*50}
 SCRAPE ZUSAMMENFASSUNG ({now.strftime('%d.%m.%Y %H:%M')})
@@ -507,7 +442,6 @@ Karten gesamt:   {len(results)} (+ {stats['skipped']} uebersprungen)
   Cloudflare:    {stats['cloudflare']}
   Fehler:        {stats['errors']}
   Graded:        {graded}
-Dauer:           ~{est_time // 60}m {est_time % 60}s
 Portfolio-Wert:  EUR {total_value:,.2f}
 Log-Datei:       {log_file}
 {'='*50}"""
@@ -544,8 +478,8 @@ def main():
         print(f"{len(cards)} Karten in portfolio.csv:")
         for c in cards:
             print(f"  - {c['name'] or c['url']}")
-        est_min = len(cards) * 12 / 60
-        print(f"\nGeschaetzte Dauer: ~{est_min:.0f} Minuten ({BATCH_SIZE}er Batches)")
+        est_min = len(cards) * 6 / 60
+        print(f"\nGeschaetzte Dauer: ~{est_min:.0f} Minuten (Patchright, {BATCH_SIZE}er Batches)")
         return
 
     if "--single" in args:
@@ -561,9 +495,9 @@ def main():
             print("Keine Karten in portfolio.csv!")
             sys.exit(1)
 
-    log.info(f"\n{len(cards)} Karten zu scrapen...")
-    log.info(f"Geschaetzte Dauer: ~{len(cards) * 12 / 60:.0f} Minuten")
-    log.info(f"Batch-Groesse: {BATCH_SIZE} | CF-Timeout: {CF_WAIT_TIMEOUT}s")
+    log.info(f"\n{len(cards)} Karten zu scrapen (Patchright + Chrome)...")
+    log.info(f"Geschaetzte Dauer: ~{len(cards) * 6 / 60:.0f} Minuten")
+    log.info(f"Batch-Groesse: {BATCH_SIZE}")
 
     results, stats = scrape_cards(cards)
     save_results(results, stats)
