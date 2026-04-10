@@ -174,29 +174,43 @@ def try_solve_turnstile(driver):
             pass
 
     # No iframe found — CF challenge page without iframe (newer version)
-    # Click in the center area where the checkbox typically appears
-    log.info("  Kein iframe — versuche Blind-Click auf CF Checkbox Position...")
+    # Checkbox is at ~(280, 310) on the 1280x900 display
+    log.info("  Kein iframe — versuche xdotool Blind-Click...")
     try:
         display = os.environ.get("DISPLAY", ":99")
         env = {**os.environ, "DISPLAY": display}
-        # CF checkbox is typically around (280, 310) on a 1280x900 challenge page
-        target_x = 280 + random.randint(-5, 5)
-        target_y = 310 + random.randint(-5, 5)
-        # Human-like approach
-        start_x = random.randint(400, 800)
-        start_y = random.randint(100, 250)
-        subprocess.run(["xdotool", "mousemove", "--", str(start_x), str(start_y)], env=env, timeout=5)
-        time.sleep(random.uniform(0.3, 0.6))
-        for step in range(3):
-            frac = (step + 1) / 4
-            sx = int(start_x + (target_x - start_x) * frac + random.randint(-8, 8))
-            sy = int(start_y + (target_y - start_y) * frac + random.randint(-6, 6))
-            subprocess.run(["xdotool", "mousemove", "--", str(sx), str(sy)], env=env, timeout=5)
-            time.sleep(random.uniform(0.05, 0.12))
-        subprocess.run(["xdotool", "mousemove", "--", str(target_x), str(target_y)], env=env, timeout=5)
-        time.sleep(random.uniform(0.4, 0.8))
-        subprocess.run(["xdotool", "click", "1"], env=env, timeout=5)
-        log.info(f"  Blind-Click bei ({target_x}, {target_y})")
+
+        # Wait for checkbox to render
+        time.sleep(3)
+
+        # Try clicking twice (first click might activate, second confirms)
+        for click_attempt in range(2):
+            target_x = 280 + random.randint(-3, 3)
+            target_y = 310 + random.randint(-3, 3)
+
+            # Human-like mouse movement from random start
+            start_x = random.randint(500, 900)
+            start_y = random.randint(50, 200)
+            subprocess.run(["xdotool", "mousemove", "--", str(start_x), str(start_y)], env=env, timeout=5)
+            time.sleep(random.uniform(0.4, 0.8))
+
+            # Move in steps
+            for step in range(4):
+                frac = (step + 1) / 5
+                sx = int(start_x + (target_x - start_x) * frac + random.randint(-6, 6))
+                sy = int(start_y + (target_y - start_y) * frac + random.randint(-4, 4))
+                subprocess.run(["xdotool", "mousemove", "--", str(sx), str(sy)], env=env, timeout=5)
+                time.sleep(random.uniform(0.03, 0.1))
+
+            # Final position + click
+            subprocess.run(["xdotool", "mousemove", "--", str(target_x), str(target_y)], env=env, timeout=5)
+            time.sleep(random.uniform(0.2, 0.5))
+            subprocess.run(["xdotool", "click", "1"], env=env, timeout=5)
+            log.info(f"  Blind-Click {click_attempt+1}/2 bei ({target_x}, {target_y})")
+
+            if click_attempt == 0:
+                time.sleep(random.uniform(2, 4))  # Wait between clicks
+
         return True
     except Exception as e:
         log.warning(f"  Blind-Click fehlgeschlagen: {e}")
