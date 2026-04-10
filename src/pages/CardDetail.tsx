@@ -78,6 +78,7 @@ export function CardDetail() {
           <div>
             <h1 className="text-2xl font-bold">{card.name}</h1>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              {card.set_name && <span className="px-1.5 py-0.5 rounded text-xs bg-secondary">{card.set_name}</span>}
               {card.grade && <span className="px-1.5 py-0.5 rounded text-xs bg-yellow-500/20 text-yellow-400">{card.grade}</span>}
               {(card.quantity || 1) > 1 && <span className="px-1.5 py-0.5 rounded text-xs bg-ring/20 text-ring">x{card.quantity}</span>}
               {card.binder_name && (
