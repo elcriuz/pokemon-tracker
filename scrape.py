@@ -194,6 +194,8 @@ def download_image(image_url, card_url, page=None):
             return url_hash + ext
 
         # Strategy 2: Navigate to the S3 image URL directly
+        if not image_url:
+            return None
         current_url = page.url
         page.goto(image_url, wait_until="load", timeout=15000)
         time.sleep(1)
@@ -327,10 +329,8 @@ def scrape_single_card(page, card, timestamp, is_first):
     grade_key = grade_map.get(grade.replace(" ", ""))
     grade_value = prices.get(grade_key) if grade_key else None
 
-    # Bild herunterladen (einmalig)
-    image_file = None
-    if info.get("image_url"):
-        image_file = download_image(info["image_url"], card["url"], page)
+    # Bild herunterladen (einmalig) — auch ohne og:image (Strategy 1 nutzt Seitenbild)
+    image_file = download_image(info.get("image_url", ""), card["url"], page)
 
     if not prices or (not prices.get("trend") and not prices.get("from")):
         title = page.title()
