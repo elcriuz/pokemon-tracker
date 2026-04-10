@@ -117,7 +117,14 @@ export function Dashboard() {
         <div>
           <h1 className="text-2xl font-bold">Portfolio</h1>
           <p className="text-sm text-muted-foreground">
-            Letzte Aktualisierung: {d.lastScrapeAt ? new Date(d.lastScrapeAt).toLocaleString("de-DE") : "\u2014"}
+            {isAnyScraping ? (
+              <span className="flex items-center gap-2">
+                <RefreshCw className="w-3 h-3 animate-spin" />
+                Scraping... {scrapeStatus?.progress || 0}/{scrapeStatus?.total || "?"} Karten
+              </span>
+            ) : (
+              <>Letzte Aktualisierung: {d.lastScrapeAt ? new Date(d.lastScrapeAt).toLocaleString("de-DE") : "\u2014"}</>
+            )}
           </p>
         </div>
         <div className="flex gap-2">

@@ -120,14 +120,18 @@ scrapeRouter.post("/cards", (req, res) => {
   let stderr = ""
   proc.stderr.on("data", (d) => (stderr += d.toString()))
 
+  const liveImport = setInterval(() => {
+    try { importResults(); db.pragma("wal_checkpoint(TRUNCATE)") } catch {}
+  }, 10_000)
+
   proc.on("close", (code) => {
+    clearInterval(liveImport)
     const status = code === 0 ? "completed" : "failed"
     try { importResults() } catch (e) { console.error("Import error:", e) }
     db.pragma("wal_checkpoint(TRUNCATE)")
     db.prepare(
       "UPDATE scrape_runs SET finished_at = datetime('now'), status = ?, duration_s = (julianday(datetime('now')) - julianday(started_at)) * 86400, error = ? WHERE id = ?"
     ).run(status, code !== 0 ? stderr.slice(0, 500) : null, currentRunId)
-    // Restore full portfolio.csv
     regeneratePortfolioCsv()
     isRunning = false
     currentRunId = null
@@ -139,8 +143,19 @@ scrapeRouter.post("/cards", (req, res) => {
 // GET /api/scrape/status
 scrapeRouter.get("/status", (_req, res) => {
   const db = getDb()
-  const latest = db.prepare("SELECT * FROM scrape_runs ORDER BY id DESC LIMIT 1").get()
-  res.json({ isRunning, currentRunId, latest })
+  const latest = db.prepare("SELECT * FROM scrape_runs ORDER BY id DESC LIMIT 1").get() as any
+
+  // Progress: count results in latest.json while scraping
+  let progress = 0
+  if (isRunning) {
+    try {
+      const latestPath = path.join(BASE, "prices", "latest.json")
+      const data = JSON.parse(fs.readFileSync(latestPath, "utf-8"))
+      progress = Array.isArray(data) ? data.length : 0
+    } catch {}
+  }
+
+  res.json({ isRunning, currentRunId, latest, progress, total: latest?.card_count || 0 })
 })
 
 // GET /api/scrape/history
