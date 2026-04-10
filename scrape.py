@@ -270,19 +270,24 @@ def scrape_single_card(page, card, timestamp, is_first):
     log.info(f"  Warte {wait:.0f}s...")
     time.sleep(wait)
 
-    # Check if CF challenge (Patchright should bypass it automatically)
+    # Check if CF challenge
     title = page.title()
     if "moment" in title.lower() or "challenge" in title.lower():
-        log.info("  CF erkannt, warte auf automatischen Bypass...")
-        # Patchright usually resolves CF within a few seconds
-        for _ in range(10):
+        log.warning(f"  Cloudflare Challenge! Warte auf manuellen Click via noVNC...")
+        send_telegram(
+            f"\u26a0\ufe0f <b>Cloudflare Challenge</b>\n"
+            f"Karte: {card_name}\n"
+            f"Bitte im noVNC-Panel klicken!"
+        )
+        # Wait up to 5 min for manual resolution, poll every 3s
+        for _ in range(100):
             time.sleep(3)
             title = page.title()
             if "moment" not in title.lower() and "challenge" not in title.lower():
-                log.info("  CF automatisch geloest!")
+                log.info("  Cloudflare geloest!")
                 break
         else:
-            log.warning(f"  CF nicht geloest nach 30s: {title}")
+            log.warning(f"  CF Timeout: {title}")
             return {
                 "url": card["url"], "name": card["name"], "notes": card["notes"],
                 "timestamp": timestamp, "error": ERR_CLOUDFLARE,
