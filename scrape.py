@@ -115,129 +115,54 @@ def is_cloudflare_challenge(content):
 
 
 def try_solve_turnstile(driver):
-    """Versucht Turnstile zu loesen: erst iframe-Position finden, dann OS-Level Click via xdotool."""
-    import subprocess
-
+    """Versucht Turnstile via CDP Input.dispatchMouseEvent zu klicken (trusted events)."""
     try:
-        frames = driver.find_elements("tag name", "iframe")
-        for frame in frames:
-            src = frame.get_attribute("src") or ""
-            if "challenge" in src or "turnstile" in src or "cloudflare" in src:
-                # Get iframe position on screen
-                loc = frame.location
-                size = frame.size
-                # Checkbox is roughly centered in the iframe, slightly left
-                click_x = int(loc["x"]) + min(35, int(size["width"] // 2))
-                click_y = int(loc["y"]) + int(size["height"] // 2)
+        # From screenshot: checkbox is at ~(505, 395) on the CF challenge page
+        # These are viewport coordinates (relative to page content, not window chrome)
+        # Checkbox position: center of the "Verify you are human" box
+        target_x = 505 + random.randint(-5, 5)
+        target_y = 395 + random.randint(-5, 5)
 
-                log.info(f"  Turnstile gefunden bei ({click_x}, {click_y}), versuche xdotool click...")
-
-                jitter_x = random.randint(-3, 3)
-                jitter_y = random.randint(-2, 2)
-                target_x = click_x + jitter_x
-                target_y = click_y + jitter_y
-
-                try:
-                    display = os.environ.get("DISPLAY", ":99")
-                    env = {**os.environ, "DISPLAY": display}
-                    # Start far away, move in 3-4 steps like a human
-                    start_x = random.randint(200, 600)
-                    start_y = random.randint(100, 400)
-                    subprocess.run(["xdotool", "mousemove", "--", str(start_x), str(start_y)], env=env, timeout=5)
-                    time.sleep(random.uniform(0.2, 0.5))
-                    # Move towards target in steps
-                    for step in range(3):
-                        frac = (step + 1) / 4
-                        sx = int(start_x + (target_x - start_x) * frac + random.randint(-10, 10))
-                        sy = int(start_y + (target_y - start_y) * frac + random.randint(-8, 8))
-                        subprocess.run(["xdotool", "mousemove", "--", str(sx), str(sy)], env=env, timeout=5)
-                        time.sleep(random.uniform(0.05, 0.15))
-                    time.sleep(random.uniform(0.1, 0.3))
-                    subprocess.run(["xdotool", "mousemove", "--", str(target_x), str(target_y)], env=env, timeout=5)
-                    time.sleep(random.uniform(0.3, 0.7))
-                    subprocess.run(["xdotool", "click", "1"], env=env, timeout=5)
-                    log.info(f"  xdotool click bei ({target_x}, {target_y})")
-                    return True
-                except Exception as e:
-                    log.warning(f"  xdotool fehlgeschlagen: {e}, fallback auf Selenium click")
-                    # Fallback: Selenium click
-                    driver.switch_to.frame(frame)
-                    checkboxes = driver.find_elements("css selector", "input[type='checkbox'], .cb-lb, #challenge-stage")
-                    if checkboxes:
-                        checkboxes[0].click()
-                    driver.switch_to.default_content()
-                    return True
-    except Exception:
-        try:
-            driver.switch_to.default_content()
-        except Exception:
-            pass
-
-    # No iframe found — CF challenge page without iframe (newer version)
-    log.info("  Kein iframe — versuche xdotool Click auf Chrome-Fenster...")
-    try:
-        display = os.environ.get("DISPLAY", ":99")
-        env = {**os.environ, "DISPLAY": display}
-
-        # Find Chrome window ID
-        result = subprocess.run(
-            ["xdotool", "search", "--onlyvisible", "--name", "Chromium"],
-            env=env, capture_output=True, text=True, timeout=5
-        )
-        window_ids = result.stdout.strip().split("\n")
-        if not window_ids or not window_ids[0]:
-            # Try alternative name
-            result = subprocess.run(
-                ["xdotool", "search", "--onlyvisible", "--name", "moment"],
-                env=env, capture_output=True, text=True, timeout=5
-            )
-            window_ids = result.stdout.strip().split("\n")
-
-        if not window_ids or not window_ids[0]:
-            log.warning("  Chrome-Fenster nicht gefunden")
-            return False
-
-        win_id = window_ids[0]
-        log.info(f"  Chrome Window ID: {win_id}")
+        log.info(f"  CDP Click auf ({target_x}, {target_y})...")
 
         # Wait for checkbox to render
-        time.sleep(3)
+        time.sleep(2)
 
-        # Focus the window first
-        subprocess.run(["xdotool", "windowactivate", "--sync", win_id], env=env, timeout=5)
-        subprocess.run(["xdotool", "windowfocus", "--sync", win_id], env=env, timeout=5)
-        time.sleep(0.5)
+        # Use CDP to dispatch trusted mouse events
+        # Move mouse (generates mousemove events that CF tracks)
+        steps = 8
+        start_x, start_y = random.randint(600, 800), random.randint(100, 250)
+        for i in range(steps):
+            frac = (i + 1) / steps
+            mx = int(start_x + (target_x - start_x) * frac + random.randint(-3, 3))
+            my = int(start_y + (target_y - start_y) * frac + random.randint(-2, 2))
+            driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
+                "type": "mouseMoved", "x": mx, "y": my,
+            })
+            time.sleep(random.uniform(0.02, 0.08))
 
-        # Click relative to the Chrome window (not screen coordinates)
-        # CF checkbox is at roughly (280, 310) within the page
-        for click_attempt in range(2):
-            target_x = 280 + random.randint(-3, 3)
-            target_y = 310 + random.randint(-3, 3)
+        # Hover on target
+        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
+            "type": "mouseMoved", "x": target_x, "y": target_y,
+        })
+        time.sleep(random.uniform(0.3, 0.6))
 
-            # Move mouse with human-like pattern (relative to window)
-            start_x = random.randint(400, 700)
-            start_y = random.randint(80, 200)
-            subprocess.run(["xdotool", "mousemove", "--window", win_id, str(start_x), str(start_y)], env=env, timeout=5)
-            time.sleep(random.uniform(0.3, 0.6))
+        # Click: mousePressed + mouseReleased
+        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
+            "type": "mousePressed", "x": target_x, "y": target_y,
+            "button": "left", "clickCount": 1,
+        })
+        time.sleep(random.uniform(0.05, 0.15))
+        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
+            "type": "mouseReleased", "x": target_x, "y": target_y,
+            "button": "left", "clickCount": 1,
+        })
 
-            for step in range(4):
-                frac = (step + 1) / 5
-                sx = int(start_x + (target_x - start_x) * frac + random.randint(-6, 6))
-                sy = int(start_y + (target_y - start_y) * frac + random.randint(-4, 4))
-                subprocess.run(["xdotool", "mousemove", "--window", win_id, str(sx), str(sy)], env=env, timeout=5)
-                time.sleep(random.uniform(0.03, 0.1))
-
-            subprocess.run(["xdotool", "mousemove", "--window", win_id, str(target_x), str(target_y)], env=env, timeout=5)
-            time.sleep(random.uniform(0.2, 0.5))
-            subprocess.run(["xdotool", "click", "--window", win_id, "1"], env=env, timeout=5)
-            log.info(f"  Window-Click {click_attempt+1}/2 bei ({target_x}, {target_y}) auf Window {win_id}")
-
-            if click_attempt == 0:
-                time.sleep(random.uniform(2, 4))
-
+        log.info(f"  CDP Click gesendet bei ({target_x}, {target_y})")
         return True
+
     except Exception as e:
-        log.warning(f"  Window-Click fehlgeschlagen: {e}")
+        log.warning(f"  CDP Click fehlgeschlagen: {e}")
 
     return False
 
