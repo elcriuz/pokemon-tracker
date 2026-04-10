@@ -28,6 +28,7 @@ export const api = {
   triggerScrape: () => fetchJSON<any>("/scrape", { method: "POST" }),
   scrapeCards: (cardIds: number[]) =>
     fetchJSON<any>("/scrape/cards", { method: "POST", body: JSON.stringify({ cardIds }) }),
+  stopScrape: () => fetchJSON<any>("/scrape/stop", { method: "POST" }),
   getScrapeStatus: () => fetchJSON<any>("/scrape/status"),
   getPortfolioHistory: () => fetchJSON<any[]>("/portfolio/history"),
   getSettings: () => fetchJSON<Record<string, string>>("/settings"),

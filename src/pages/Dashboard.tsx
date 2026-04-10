@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { api } from "@/lib/api"
 import { formatEUR, urlToFlag, timeAgo } from "@/lib/utils"
-import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Filter } from "lucide-react"
+import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Filter, Square } from "lucide-react"
 import { useMemo, useState } from "react"
 import { AddCardDialog } from "@/components/cards/AddCardDialog"
 import { ScrapeFilter } from "@/components/scrape/ScrapeFilter"
@@ -64,6 +64,10 @@ export function Dashboard() {
       setSelected(new Set())
     },
   })
+  const stopMutation = useMutation({
+    mutationFn: api.stopScrape,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["scrapeStatus"] }),
+  })
   const [showAdd, setShowAdd] = useState(false)
   const [showScrapeFilter, setShowScrapeFilter] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -121,6 +125,12 @@ export function Dashboard() {
               <span className="flex items-center gap-2">
                 <RefreshCw className="w-3 h-3 animate-spin" />
                 Scraping... {scrapeStatus?.progress || 0}/{scrapeStatus?.total || "?"} Karten
+                <button
+                  onClick={() => stopMutation.mutate()}
+                  className="ml-1 px-1.5 py-0.5 rounded bg-negative/20 text-negative text-xs hover:bg-negative/30 flex items-center gap-1"
+                >
+                  <Square className="w-2.5 h-2.5 fill-current" /> Stop
+                </button>
               </span>
             ) : (
               <>Letzte Aktualisierung: {d.lastScrapeAt ? new Date(d.lastScrapeAt).toLocaleString("de-DE") : "\u2014"}</>

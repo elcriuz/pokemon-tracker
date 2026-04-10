@@ -12,6 +12,7 @@ const __dirname = path.dirname(__filename)
 const BASE = path.join(__dirname, "../..")
 let isRunning = false
 let currentRunId: number | null = null
+let currentProcess: ReturnType<typeof spawn> | null = null
 
 function regeneratePortfolioCsv() {
   const db = getDb()
@@ -67,24 +68,26 @@ scrapeRouter.post("/", (_req, res) => {
   isRunning = true
 
   const proc = spawn("python3", ["scrape.py"], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, DISPLAY: ":99" } })
+  currentProcess = proc
 
   let stderr = ""
   proc.stderr.on("data", (d) => (stderr += d.toString()))
 
-  // Import partial results every 10s while scraping
   const liveImport = setInterval(() => {
     try { importResults(); db.pragma("wal_checkpoint(TRUNCATE)") } catch {}
   }, 10_000)
 
   proc.on("close", (code) => {
     clearInterval(liveImport)
-    const status = code === 0 ? "completed" : "failed"
+    const wasStopped = code === null || code === 137 || code === 15
+    const status = wasStopped ? "stopped" : code === 0 ? "completed" : "failed"
     try { importResults() } catch (e) { console.error("Import error:", e) }
     db.pragma("wal_checkpoint(TRUNCATE)")
     db.prepare(
       "UPDATE scrape_runs SET finished_at = datetime('now'), status = ?, duration_s = (julianday(datetime('now')) - julianday(started_at)) * 86400, error = ? WHERE id = ?"
-    ).run(status, code !== 0 ? stderr.slice(0, 500) : null, currentRunId)
+    ).run(status, wasStopped ? "Manually stopped" : code !== 0 ? stderr.slice(0, 500) : null, currentRunId)
     isRunning = false
+    currentProcess = null
     currentRunId = null
   })
 
@@ -116,6 +119,7 @@ scrapeRouter.post("/cards", (req, res) => {
   isRunning = true
 
   const proc = spawn("python3", ["scrape.py"], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, DISPLAY: ":99" } })
+  currentProcess = proc
 
   let stderr = ""
   proc.stderr.on("data", (d) => (stderr += d.toString()))
@@ -141,6 +145,15 @@ scrapeRouter.post("/cards", (req, res) => {
 })
 
 // GET /api/scrape/status
+// POST /api/scrape/stop - stop running scrape
+scrapeRouter.post("/stop", (_req, res) => {
+  if (!isRunning || !currentProcess) {
+    return res.status(400).json({ error: "No scrape running" })
+  }
+  currentProcess.kill("SIGTERM")
+  res.json({ ok: true, message: "Scrape stopping..." })
+})
+
 scrapeRouter.get("/status", (_req, res) => {
   const db = getDb()
   const latest = db.prepare("SELECT * FROM scrape_runs ORDER BY id DESC LIMIT 1").get() as any
