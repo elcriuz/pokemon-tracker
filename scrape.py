@@ -186,6 +186,14 @@ def download_image(image_url, card_url, page=None):
         return None
 
     try:
+        # Strategy 1: Screenshot the product image on the current page (no navigation)
+        product_img = page.query_selector("img[src*='product-images']")
+        if product_img:
+            product_img.screenshot(path=str(filepath))
+            log.info(f"  Bild von Seite gespeichert: {filepath.name}")
+            return url_hash + ext
+
+        # Strategy 2: Navigate to the S3 image URL directly
         current_url = page.url
         page.goto(image_url, wait_until="load", timeout=15000)
         time.sleep(1)
