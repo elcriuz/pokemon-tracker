@@ -49,7 +49,7 @@ function importResults() {
     )
     // Save image + name to card if scraped and missing
     if (r.image) updateImage.run(r.image, cardId)
-    if (r.name) updateName.run(r.name, cardId)
+    if (r.name && !r.name.toLowerCase().includes("just a moment") && !r.name.toLowerCase().includes("cloudflare")) updateName.run(r.name, cardId)
   }
 }
 

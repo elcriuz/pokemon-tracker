@@ -215,7 +215,10 @@ def extract_card_info(content):
     info = {}
     title_m = re.search(r"<title>(.*?)</title>", content)
     if title_m:
-        info["page_title"] = title_m.group(1).replace(" | Cardmarket", "")
+        title = title_m.group(1).replace(" | Cardmarket", "")
+        # Cloudflare-Titel ignorieren
+        if not any(x in title.lower() for x in ["just a moment", "cloudflare", "checking"]):
+            info["page_title"] = title
     og_m = re.search(r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', content)
     if not og_m:
         og_m = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', content)

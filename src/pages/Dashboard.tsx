@@ -5,6 +5,7 @@ import { formatEUR, urlToFlag, timeAgo } from "@/lib/utils"
 import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown } from "lucide-react"
 import { useMemo, useState } from "react"
 import { AddCardDialog } from "@/components/cards/AddCardDialog"
+import { ScrapeFilter } from "@/components/scrape/ScrapeFilter"
 
 type SortKey = "name" | "value" | "trend" | "from_price" | "avg7" | "avg30" | "created_at" | "scraped_at"
 type SortDir = "asc" | "desc"
@@ -119,32 +120,23 @@ export function Dashboard() {
           </p>
         </div>
         <div className="flex gap-2">
-          {selected.size > 0 ? (
-            <button
-              onClick={() => scrapeCardsMutation.mutate([...selected])}
-              disabled={isAnyScraping}
-              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-ring text-primary-foreground hover:bg-ring/80 disabled:opacity-50 transition-colors"
-            >
-              <RefreshCw className={`w-4 h-4 ${isAnyScraping ? "animate-spin" : ""}`} />
-              {isAnyScraping ? "Scraping..." : `${selected.size} Karten scrapen`}
-            </button>
-          ) : (
-            <button
-              onClick={() => scrapeMutation.mutate()}
-              disabled={isAnyScraping}
-              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-secondary hover:bg-secondary/80 disabled:opacity-50 transition-colors"
-            >
-              <RefreshCw className={`w-4 h-4 ${isAnyScraping ? "animate-spin" : ""}`} />
-              {isAnyScraping ? "Scraping..." : "Alle aktualisieren"}
-            </button>
-          )}
           {selected.size > 0 && (
-            <button
-              onClick={() => setSelected(new Set())}
-              className="px-3 py-2 text-sm rounded-lg bg-secondary hover:bg-secondary/80 transition-colors"
-            >
-              Auswahl aufheben
-            </button>
+            <>
+              <button
+                onClick={() => scrapeCardsMutation.mutate([...selected])}
+                disabled={isAnyScraping}
+                className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-ring text-primary-foreground hover:bg-ring/80 disabled:opacity-50 transition-colors"
+              >
+                <RefreshCw className={`w-4 h-4 ${isAnyScraping ? "animate-spin" : ""}`} />
+                {isAnyScraping ? "Scraping..." : `${selected.size} scrapen`}
+              </button>
+              <button
+                onClick={() => setSelected(new Set())}
+                className="px-3 py-2 text-sm rounded-lg bg-secondary hover:bg-secondary/80 transition-colors"
+              >
+                Aufheben
+              </button>
+            </>
           )}
           <button
             onClick={() => setShowAdd(true)}
@@ -191,6 +183,16 @@ export function Dashboard() {
         </div>
       )}
 
+      {/* Smart Scrape Filter */}
+      <ScrapeFilter
+        cards={cards || []}
+        binders={binders || []}
+        selected={selected}
+        setSelected={setSelected}
+        isAnyScraping={!!isAnyScraping}
+        onScrape={(ids) => scrapeCardsMutation.mutate(ids)}
+      />
+
       {/* Card Gallery Grid */}
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -231,12 +233,6 @@ export function Dashboard() {
                   {selected.has(card.id) && <Check className="w-4 h-4" />}
                 </button>
 
-                {/* Quantity Badge */}
-                {qty > 1 && (
-                  <span className="absolute top-2 right-9 z-10 px-1.5 py-0.5 rounded-md bg-ring text-primary-foreground text-xs font-bold group-hover:right-10">
-                    x{qty}
-                  </span>
-                )}
 
                 {/* Cardmarket Link */}
                 <a
@@ -279,7 +275,10 @@ export function Dashboard() {
                   </div>
                   {/* Info */}
                   <div className="p-3 space-y-1">
-                    <div className="font-medium text-sm leading-tight truncate" title={card.name}>{card.name}</div>
+                    <div className="font-medium text-sm leading-tight truncate flex items-center gap-1" title={card.name}>
+                      {card.name}
+                      {qty > 1 && <span className="flex-shrink-0 px-1 py-0.5 rounded bg-ring/20 text-ring text-[10px] font-bold">x{qty}</span>}
+                    </div>
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       {urlToFlag(card.url) && <span>{urlToFlag(card.url)}</span>}
                       {card.grade && <span className="px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-[10px] font-medium">{card.grade}</span>}
