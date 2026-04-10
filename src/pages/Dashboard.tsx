@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { api } from "@/lib/api"
 import { formatEUR, urlToFlag, timeAgo } from "@/lib/utils"
-import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown } from "lucide-react"
+import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Filter } from "lucide-react"
 import { useMemo, useState } from "react"
 import { AddCardDialog } from "@/components/cards/AddCardDialog"
 import { ScrapeFilter } from "@/components/scrape/ScrapeFilter"
@@ -65,6 +65,7 @@ export function Dashboard() {
     },
   })
   const [showAdd, setShowAdd] = useState(false)
+  const [showScrapeFilter, setShowScrapeFilter] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [sortKey, setSortKey] = useState<SortKey>("value")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
@@ -139,6 +140,15 @@ export function Dashboard() {
             </>
           )}
           <button
+            onClick={() => setShowScrapeFilter((v) => !v)}
+            className={`flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors ${
+              showScrapeFilter ? "bg-yellow-500/20 text-yellow-400" : "bg-secondary hover:bg-secondary/80"
+            }`}
+          >
+            <Filter className="w-4 h-4" />
+            Smart Scrape
+          </button>
+          <button
             onClick={() => setShowAdd(true)}
             className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-ring text-primary-foreground hover:bg-ring/80 transition-colors"
           >
@@ -185,6 +195,8 @@ export function Dashboard() {
 
       {/* Smart Scrape Filter */}
       <ScrapeFilter
+        open={showScrapeFilter}
+        onClose={() => setShowScrapeFilter(false)}
         cards={cards || []}
         binders={binders || []}
         selected={selected}

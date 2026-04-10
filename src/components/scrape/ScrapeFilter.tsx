@@ -1,8 +1,7 @@
 import { useMemo, useState } from "react"
-import { Filter, RefreshCw, CheckSquare, Square, Clock, Euro, Layers } from "lucide-react"
-import { timeAgo } from "@/lib/utils"
+import { Filter, RefreshCw, CheckSquare, Clock, Euro, Layers } from "lucide-react"
 
-type FilterMode = "age" | "value" | "binder" | "all"
+type FilterMode = "age" | "value" | "binder"
 
 const AGE_OPTIONS = [
   { label: "Nie gescrapt", hours: -1 },
@@ -22,6 +21,8 @@ const VALUE_OPTIONS = [
 ]
 
 export function ScrapeFilter({
+  open,
+  onClose,
   cards,
   binders,
   selected,
@@ -29,6 +30,8 @@ export function ScrapeFilter({
   isAnyScraping,
   onScrape,
 }: {
+  open: boolean
+  onClose: () => void
   cards: any[]
   binders: any[]
   selected: Set<number>
@@ -36,7 +39,6 @@ export function ScrapeFilter({
   isAnyScraping: boolean
   onScrape: (ids: number[]) => void
 }) {
-  const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<FilterMode>("age")
   const [ageHours, setAgeHours] = useState(24)
   const [minValue, setMinValue] = useState(0)
@@ -45,24 +47,17 @@ export function ScrapeFilter({
   const filtered = useMemo(() => {
     if (!cards) return []
     return cards.filter((c) => {
-      // Age filter
-      if (mode === "age" || mode === "all") {
-        if (ageHours === -1) {
-          if (c.scraped_at) return mode !== "age"
-        } else {
-          const scraped = c.scraped_at ? new Date(c.scraped_at.endsWith("Z") ? c.scraped_at : c.scraped_at + "Z").getTime() : 0
-          const hoursAgo = (Date.now() - scraped) / 3600000
-          if (mode === "age" && hoursAgo < ageHours && c.scraped_at) return false
-        }
+      if (mode === "age") {
+        if (ageHours === -1) return !c.scraped_at
+        const scraped = c.scraped_at ? new Date(c.scraped_at.endsWith("Z") ? c.scraped_at : c.scraped_at + "Z").getTime() : 0
+        const hoursAgo = (Date.now() - scraped) / 3600000
+        if (hoursAgo < ageHours && c.scraped_at) return false
       }
-      // Value filter
-      if (mode === "value" || mode === "all") {
+      if (mode === "value") {
         const val = c.value || 0
-        if (minValue === -50) {
-          if (mode === "value" && val >= 50) return false
-        } else if (mode === "value" && val < minValue) return false
+        if (minValue === -50) { if (val >= 50) return false }
+        else if (val < minValue) return false
       }
-      // Binder filter
       if (mode === "binder" && filterBinder) {
         if (filterBinder === "none" && c.binder_id != null) return false
         if (filterBinder !== "none" && String(c.binder_id) !== filterBinder) return false
@@ -75,30 +70,16 @@ export function ScrapeFilter({
     setSelected(new Set(filtered.map((c) => c.id)))
   }
 
-  function selectAll() {
-    setSelected(new Set(cards.map((c: any) => c.id)))
-  }
-
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-secondary hover:bg-secondary/80 transition-colors"
-      >
-        <Filter className="w-4 h-4" />
-        Smart Scrape
-      </button>
-    )
-  }
+  if (!open) return null
 
   return (
     <div className="p-4 rounded-lg bg-card border border-border space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold flex items-center gap-2">
           <Filter className="w-4 h-4" />
-          Smart Scrape Filter
+          Smart Scrape
         </h3>
-        <button onClick={() => { setOpen(false); setSelected(new Set()) }} className="text-xs text-muted-foreground hover:text-foreground">
+        <button onClick={() => { onClose(); setSelected(new Set()) }} className="text-xs text-muted-foreground hover:text-foreground">
           Schliessen
         </button>
       </div>
@@ -151,9 +132,7 @@ export function ScrapeFilter({
           <>
             <button
               onClick={() => setFilterBinder("")}
-              className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
-                !filterBinder ? "bg-ring text-primary-foreground" : "bg-secondary/50 text-muted-foreground"
-              }`}
+              className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${!filterBinder ? "bg-ring text-primary-foreground" : "bg-secondary/50 text-muted-foreground"}`}
             >
               Alle
             </button>
@@ -172,9 +151,7 @@ export function ScrapeFilter({
             ))}
             <button
               onClick={() => setFilterBinder("none")}
-              className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
-                filterBinder === "none" ? "bg-ring text-primary-foreground" : "bg-secondary/50 text-muted-foreground"
-              }`}
+              className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${filterBinder === "none" ? "bg-ring text-primary-foreground" : "bg-secondary/50 text-muted-foreground"}`}
             >
               Unsortiert
             </button>
@@ -186,9 +163,6 @@ export function ScrapeFilter({
       <div className="flex items-center justify-between pt-2 border-t border-border">
         <div className="text-sm text-muted-foreground">
           <span className="text-foreground font-medium">{filtered.length}</span> von {cards.length} Karten
-          {selected.size > 0 && selected.size !== filtered.length && (
-            <span> ({selected.size} ausgewaehlt)</span>
-          )}
         </div>
         <div className="flex gap-2">
           <button
@@ -199,8 +173,8 @@ export function ScrapeFilter({
             {filtered.length} auswaehlen
           </button>
           <button
-            onClick={selectAll}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-secondary hover:bg-secondary/80 transition-colors"
+            onClick={() => setSelected(new Set(cards.map((c: any) => c.id)))}
+            className="px-3 py-1.5 text-xs rounded-lg bg-secondary hover:bg-secondary/80 transition-colors"
           >
             Alle
           </button>
