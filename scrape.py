@@ -120,10 +120,8 @@ def try_solve_turnstile(driver):
 
     try:
         frames = driver.find_elements("tag name", "iframe")
-        log.info(f"  {len(frames)} iframes gefunden")
         for frame in frames:
             src = frame.get_attribute("src") or ""
-            log.info(f"  iframe src: {src[:100]}")
             if "challenge" in src or "turnstile" in src or "cloudflare" in src:
                 # Get iframe position on screen
                 loc = frame.location
