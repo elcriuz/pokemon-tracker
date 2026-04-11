@@ -2,10 +2,13 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } f
 import { formatEUR } from "@/lib/utils"
 
 export function PriceHistoryChart({ data }: { data: any[] }) {
-  const formatted = data.map((d) => ({
-    ...d,
-    date: new Date(d.scraped_at).toLocaleDateString("de-DE"),
-  }))
+  const formatted = data.map((d) => {
+    const dt = new Date(d.scraped_at.endsWith("Z") ? d.scraped_at : d.scraped_at + "Z")
+    return {
+      ...d,
+      date: dt.toLocaleDateString("de-DE") + " " + dt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }),
+    }
+  })
 
   return (
     <div className="p-4 rounded-lg bg-card border border-border">
