@@ -1,5 +1,11 @@
 import { Router } from "express"
+import fs from "fs"
+import path from "path"
+import { fileURLToPath } from "url"
 import { getDb } from "../db"
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 export const cardsRouter = Router()
 
@@ -111,28 +117,17 @@ cardsRouter.put("/:id", (req, res) => {
   res.json(card)
 })
 
-// POST /api/cards/reset-images - delete images for selected cards so they get re-scraped
-cardsRouter.post("/reset-images", (req, res) => {
+// DELETE /api/cards/:id/image - delete image so it gets re-scraped
+cardsRouter.delete("/:id/image", (req, res) => {
   const db = getDb()
-  const { cardIds } = req.body as { cardIds: number[] }
-  if (!cardIds?.length) return res.status(400).json({ error: "cardIds required" })
-
-  const fs = require("fs")
-  const path = require("path")
-  const { fileURLToPath } = require("url")
-  const __dirname2 = path.dirname(fileURLToPath(import.meta.url))
-  const imagesDir = path.join(__dirname2, "../..", "data", "images")
-
-  let deleted = 0
-  for (const id of cardIds) {
-    const card = db.prepare("SELECT image FROM cards WHERE id = ?").get(id) as any
-    if (card?.image) {
-      try { fs.unlinkSync(path.join(imagesDir, card.image)) } catch {}
-      db.prepare("UPDATE cards SET image = '' WHERE id = ?").run(id)
-      deleted++
-    }
+  const card = db.prepare("SELECT image FROM cards WHERE id = ?").get(req.params.id) as any
+  if (!card) return res.status(404).json({ error: "Card not found" })
+  if (card.image) {
+    const imagesDir = path.join(__dirname, "../..", "data", "images")
+    try { fs.unlinkSync(path.join(imagesDir, card.image)) } catch {}
+    db.prepare("UPDATE cards SET image = '' WHERE id = ?").run(req.params.id)
   }
-  res.json({ ok: true, deleted })
+  res.json({ ok: true })
 })
 
 // DELETE /api/cards/:id

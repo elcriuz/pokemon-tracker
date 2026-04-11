@@ -25,8 +25,8 @@ export const api = {
     fetchJSON<any>(`/cards/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteCard: (id: number) =>
     fetchJSON<any>(`/cards/${id}`, { method: "DELETE" }),
-  resetImages: (cardIds: number[]) =>
-    fetchJSON<any>("/cards/reset-images", { method: "POST", body: JSON.stringify({ cardIds }) }),
+  deleteImage: (id: number) =>
+    fetchJSON<any>(`/cards/${id}/image`, { method: "DELETE" }),
   triggerScrape: () => fetchJSON<any>("/scrape", { method: "POST" }),
   scrapeCards: (cardIds: number[]) =>
     fetchJSON<any>("/scrape/cards", { method: "POST", body: JSON.stringify({ cardIds }) }),

@@ -170,21 +170,6 @@ export function Dashboard() {
                 {isAnyScraping ? "Scraping..." : `${selected.size} scrapen`}
               </button>
               <button
-                onClick={() => {
-                  if (confirm(`Bilder fuer ${selected.size} Karten neu laden?`)) {
-                    api.resetImages([...selected]).then(() => {
-                      queryClient.invalidateQueries({ queryKey: ["cards"] })
-                      scrapeCardsMutation.mutate([...selected])
-                    })
-                  }
-                }}
-                disabled={isAnyScraping}
-                className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-secondary hover:bg-secondary/80 disabled:opacity-50 transition-colors"
-              >
-                <ImageOff className="w-4 h-4" />
-                Bilder neu
-              </button>
-              <button
                 onClick={() => setSelected(new Set())}
                 className="px-3 py-2 text-sm rounded-lg bg-secondary hover:bg-secondary/80 transition-colors"
               >

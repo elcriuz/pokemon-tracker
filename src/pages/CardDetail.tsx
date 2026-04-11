@@ -2,7 +2,7 @@ import { useParams, useNavigate, Link } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { formatEUR, urlToFlag } from "@/lib/utils"
-import { ArrowLeft, Pencil, Trash2, ExternalLink, RefreshCw } from "lucide-react"
+import { ArrowLeft, Pencil, Trash2, ExternalLink, RefreshCw, ImageOff } from "lucide-react"
 import { PriceHistoryChart } from "@/components/charts/PriceHistoryChart"
 import { useState } from "react"
 import { EditCardDialog } from "@/components/cards/EditCardDialog"
@@ -111,6 +111,12 @@ export function CardDetail() {
           >
             <ExternalLink className="w-4 h-4" /> Cardmarket
           </a>
+          {card.image && (
+            <button
+              onClick={() => { api.deleteImage(cardId).then(() => queryClient.invalidateQueries({ queryKey: ["card", cardId] })) }}
+              className="p-2 rounded-lg hover:bg-secondary" title="Bild loeschen (wird beim naechsten Scrape neu geholt)"
+            ><ImageOff className="w-4 h-4" /></button>
+          )}
           <button onClick={() => setShowEdit(true)} className="p-2 rounded-lg hover:bg-secondary" title="Bearbeiten"><Pencil className="w-4 h-4" /></button>
           <button
             onClick={() => { if (confirm("Karte wirklich loeschen?")) deleteMutation.mutate() }}
