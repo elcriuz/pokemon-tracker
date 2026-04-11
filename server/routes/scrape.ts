@@ -61,6 +61,8 @@ scrapeRouter.post("/", (_req, res) => {
 
   const db = getDb()
   regeneratePortfolioCsv()
+  // Clear resume state so scraper doesn't skip cards
+  try { fs.unlinkSync(path.join(BASE, "data", "scrape_resume.json")) } catch {}
 
   const run = db.prepare(
     "INSERT INTO scrape_runs (started_at, status, card_count) VALUES (datetime('now'), 'running', (SELECT COUNT(*) FROM cards))"
