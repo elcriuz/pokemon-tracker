@@ -186,43 +186,40 @@ def download_image(image_url, card_url, page=None):
         return None
 
     try:
-        # Strategy 1: Screenshot the largest product image on the current page
-        product_imgs = page.query_selector_all("img[src*='product-images']")
-        if product_imgs:
-            # Pick the largest image (by rendered size)
-            best = None
-            best_area = 0
-            for img in product_imgs:
-                box = img.bounding_box()
-                if box:
-                    area = box["width"] * box["height"]
-                    if area > best_area:
-                        best_area = area
-                        best = img
-            if best and best_area > 5000:  # At least ~70x70px
-                best.screenshot(path=str(filepath))
-                log.info(f"  Bild von Seite gespeichert: {filepath.name} ({int(best_area)}px)")
+        if image_url:
+            # Strategy 1: Navigate to S3 image URL directly (best quality)
+            current_url = page.url
+            page.goto(image_url, wait_until="load", timeout=15000)
+            time.sleep(1)
+            img = page.query_selector("img")
+            if img:
+                img.screenshot(path=str(filepath))
+                log.info(f"  Bild gespeichert: {filepath.name}")
+                page.goto(current_url, wait_until="domcontentloaded", timeout=15000)
+                time.sleep(2)
                 return url_hash + ext
-
-        # Strategy 2: Navigate to the S3 image URL directly
-        if not image_url:
-            return None
-        current_url = page.url
-        page.goto(image_url, wait_until="load", timeout=15000)
-        time.sleep(1)
-        img = page.query_selector("img")
-        if img:
-            img.screenshot(path=str(filepath))
-            log.info(f"  Bild gespeichert: {filepath.name}")
             page.goto(current_url, wait_until="domcontentloaded", timeout=15000)
             time.sleep(2)
-            return url_hash + ext
-        page.goto(current_url, wait_until="domcontentloaded", timeout=15000)
-        time.sleep(2)
+        else:
+            # Strategy 2: No og:image (sealed products) — screenshot largest image on page
+            product_imgs = page.query_selector_all("img[src*='product-images']")
+            if product_imgs:
+                best, best_area = None, 0
+                for img in product_imgs:
+                    box = img.bounding_box()
+                    if box:
+                        area = box["width"] * box["height"]
+                        if area > best_area:
+                            best_area = area
+                            best = img
+                if best and best_area > 5000:
+                    best.screenshot(path=str(filepath))
+                    log.info(f"  Bild von Seite gespeichert: {filepath.name}")
+                    return url_hash + ext
     except Exception as e:
         log.warning(f"  Bild-Download fehlgeschlagen: {e}")
         try:
-            page.goto(current_url, wait_until="domcontentloaded", timeout=15000)
+            page.goto(page.url, wait_until="domcontentloaded", timeout=15000)
         except Exception:
             pass
     return None
