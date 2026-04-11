@@ -73,6 +73,7 @@ export function Dashboard() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [sortKey, setSortKey] = useState<SortKey>("value")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
+  const [lastSelectedId, setLastSelectedId] = useState<number | null>(null)
 
   const sortedCards = useMemo(() => {
     if (!cards) return []
@@ -94,8 +95,6 @@ export function Dashboard() {
   const d = dashboard!
   const isUp = d.changePercent >= 0
   const isAnyScraping = scrapeStatus?.isRunning
-
-  const [lastSelectedId, setLastSelectedId] = useState<number | null>(null)
 
   function toggleSelect(e: React.MouseEvent, cardId: number) {
     e.preventDefault()
