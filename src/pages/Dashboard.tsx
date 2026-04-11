@@ -95,14 +95,36 @@ export function Dashboard() {
   const isUp = d.changePercent >= 0
   const isAnyScraping = scrapeStatus?.isRunning
 
+  const [lastSelectedId, setLastSelectedId] = useState<number | null>(null)
+
   function toggleSelect(e: React.MouseEvent, cardId: number) {
     e.preventDefault()
     e.stopPropagation()
+
+    if (e.shiftKey && lastSelectedId != null && sortedCards.length > 0) {
+      // Shift+Click: select range
+      const ids = sortedCards.map((c: any) => c.id)
+      const fromIdx = ids.indexOf(lastSelectedId)
+      const toIdx = ids.indexOf(cardId)
+      if (fromIdx !== -1 && toIdx !== -1) {
+        const start = Math.min(fromIdx, toIdx)
+        const end = Math.max(fromIdx, toIdx)
+        setSelected((prev) => {
+          const next = new Set(prev)
+          for (let i = start; i <= end; i++) next.add(ids[i])
+          return next
+        })
+        setLastSelectedId(cardId)
+        return
+      }
+    }
+
     setSelected((prev) => {
       const next = new Set(prev)
       next.has(cardId) ? next.delete(cardId) : next.add(cardId)
       return next
     })
+    setLastSelectedId(cardId)
   }
 
   function toggleSort(key: SortKey) {
