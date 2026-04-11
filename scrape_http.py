@@ -36,8 +36,8 @@ LOG_DIR = BASE_DIR / "data" / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "50"))
-REQUEST_DELAY_MIN = 0.5
-REQUEST_DELAY_MAX = 1.5
+REQUEST_DELAY_MIN = 2
+REQUEST_DELAY_MAX = 4
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
 
 log_file = LOG_DIR / f"scrape_http_{datetime.now().strftime('%Y-%m-%d_%H%M')}.log"
@@ -214,24 +214,20 @@ def scrape_all(cards, cookies):
         try:
             html = fetch_page(card["url"], cookies)
 
-            # CF check
+            # CF/403 check — refresh cookies and retry
             if "Just a moment" in html or len(html) < 5000:
-                log.warning(f"  CF blockiert! Cookies abgelaufen?")
+                log.warning(f"  CF blockiert — erneuere Cookies...")
                 stats["cf"] += 1
-                # Try refreshing cookies once
-                if stats["cf"] == 1:
-                    log.info("  Versuche Cookies zu erneuern...")
-                    new_cookies = refresh_cookies()
-                    if new_cookies:
-                        cookies = new_cookies
+                new_cookies = refresh_cookies()
+                if new_cookies:
+                    cookies = new_cookies
+                    time.sleep(2)
+                    try:
                         html = fetch_page(card["url"], cookies)
-                        if "Just a moment" in html:
-                            results.append({"url": card["url"], "name": card["name"], "timestamp": timestamp, "error": "cloudflare"})
-                            continue
-                    else:
-                        results.append({"url": card["url"], "name": card["name"], "timestamp": timestamp, "error": "cloudflare"})
-                        continue
-                else:
+                    except Exception:
+                        html = ""
+                if "Just a moment" in html or len(html) < 5000:
+                    log.warning(f"  Immer noch blockiert, ueberspringe")
                     results.append({"url": card["url"], "name": card["name"], "timestamp": timestamp, "error": "cloudflare"})
                     continue
 
@@ -279,15 +275,32 @@ def scrape_all(cards, cookies):
 
         except HTTPError as e:
             if e.code == 403:
-                log.warning(f"  403 Forbidden — Cookies abgelaufen")
+                log.warning(f"  403 — erneuere Cookies...")
                 stats["cf"] += 1
-                if stats["cf"] == 1:
-                    cookies = refresh_cookies()
-                    if cookies: continue
+                new_cookies = refresh_cookies()
+                if new_cookies:
+                    cookies = new_cookies
+                    # Retry this card
+                    try:
+                        time.sleep(2)
+                        html = fetch_page(card["url"], cookies)
+                        if "Just a moment" not in html and len(html) > 5000:
+                            # Success after refresh — process normally
+                            prices = extract_prices(html)
+                            info = extract_card_info(html)
+                            stats["ok"] += 1
+                            value = prices.get("from") or prices.get("trend")
+                            results.append({"url": card["url"], "name": card["name"] or info.get("page_title", ""),
+                                "set_name": extract_set_from_url(card["url"]), "grade": card.get("grade", ""),
+                                "value": value, "notes": card["notes"], "timestamp": timestamp, "error": None, **prices})
+                            continue
+                    except Exception:
+                        pass
+                results.append({"url": card["url"], "name": card["name"], "timestamp": timestamp, "error": "cloudflare"})
             else:
                 log.error(f"  HTTP {e.code}: {e.reason}")
                 stats["errors"] += 1
-            results.append({"url": card["url"], "name": card["name"], "timestamp": timestamp, "error": str(e)})
+                results.append({"url": card["url"], "name": card["name"], "timestamp": timestamp, "error": str(e)})
         except Exception as e:
             log.error(f"  FEHLER: {e}")
             stats["errors"] += 1
