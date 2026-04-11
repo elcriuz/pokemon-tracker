@@ -359,7 +359,21 @@ def scrape_single_card(page, card, timestamp, is_first):
         else:
             log.info(f"  Low: EUR {prices.get('from')}, Trend: EUR {prices.get('trend')}")
 
-    value = grade_value or prices.get("from") or prices.get("trend")
+    # Value-Bestimmung
+    if grade_value:
+        value = grade_value
+    elif prices.get("from"):
+        from_price = prices["from"]
+        # Wenn ungraded Karte aber from == psa10/psa9 low → nur graded verfuegbar
+        # In dem Fall trend nehmen (basiert auf historischen Verkaeufen)
+        psa_prices = [p for p in [prices.get("psa10_low"), prices.get("psa9_low")] if p]
+        if not grade and psa_prices and from_price >= min(psa_prices):
+            log.info(f"  Nur graded Angebote (from={from_price} >= PSA low={min(psa_prices)}), nutze Trend")
+            value = prices.get("trend") or from_price
+        else:
+            value = from_price
+    else:
+        value = prices.get("trend")
 
     result = {
         "url": card["url"],
