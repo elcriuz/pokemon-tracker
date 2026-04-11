@@ -297,7 +297,7 @@ def scrape_single_card(page, card, timestamp, is_first):
     log.info(f"  Warte {wait:.0f}s...")
     time.sleep(wait)
 
-    # Check if CF challenge
+    # Check if CF challenge — wait for it to either auto-resolve or manual click
     title = page.title()
     if "moment" in title.lower() or "challenge" in title.lower():
         log.warning(f"  Cloudflare Challenge! Warte auf manuellen Click via noVNC...")
@@ -306,15 +306,21 @@ def scrape_single_card(page, card, timestamp, is_first):
             f"Karte: {card_name}\n"
             f"Bitte im noVNC-Panel klicken!"
         )
-        # Wait up to 5 min for manual resolution, poll every 3s
-        for _ in range(100):
+        # Wait up to 10 min for manual resolution, poll every 3s
+        resolved = False
+        for _ in range(200):
             time.sleep(3)
-            title = page.title()
+            try:
+                title = page.title()
+            except Exception:
+                break
             if "moment" not in title.lower() and "challenge" not in title.lower():
                 log.info("  Cloudflare geloest!")
+                resolved = True
+                time.sleep(2)  # Extra wait after CF resolve
                 break
-        else:
-            log.warning(f"  CF Timeout: {title}")
+        if not resolved:
+            log.warning(f"  CF Timeout nach 10min")
             return {
                 "url": card["url"], "name": card["name"], "notes": card["notes"],
                 "timestamp": timestamp, "error": ERR_CLOUDFLARE,
