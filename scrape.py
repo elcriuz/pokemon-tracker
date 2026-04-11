@@ -186,12 +186,23 @@ def download_image(image_url, card_url, page=None):
         return None
 
     try:
-        # Strategy 1: Screenshot the product image on the current page (no navigation)
-        product_img = page.query_selector("img[src*='product-images']")
-        if product_img:
-            product_img.screenshot(path=str(filepath))
-            log.info(f"  Bild von Seite gespeichert: {filepath.name}")
-            return url_hash + ext
+        # Strategy 1: Screenshot the largest product image on the current page
+        product_imgs = page.query_selector_all("img[src*='product-images']")
+        if product_imgs:
+            # Pick the largest image (by rendered size)
+            best = None
+            best_area = 0
+            for img in product_imgs:
+                box = img.bounding_box()
+                if box:
+                    area = box["width"] * box["height"]
+                    if area > best_area:
+                        best_area = area
+                        best = img
+            if best and best_area > 5000:  # At least ~70x70px
+                best.screenshot(path=str(filepath))
+                log.info(f"  Bild von Seite gespeichert: {filepath.name} ({int(best_area)}px)")
+                return url_hash + ext
 
         # Strategy 2: Navigate to the S3 image URL directly
         if not image_url:
