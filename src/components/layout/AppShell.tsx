@@ -24,17 +24,20 @@ export function AppShell({ children }: { children: ReactNode }) {
   const isLocal = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
   const hasVnc = !isLocal
 
-  // Auto-open when scraping starts, auto-close when done (only with VNC)
+  // Auto-open when scraping starts, only close when explicitly done (not on transient status changes)
   useEffect(() => {
     if (!hasVnc) return
     if (scrapeStatus?.isRunning && !manualClose) {
       setShowVnc(true)
     }
-    if (!scrapeStatus?.isRunning) {
-      setShowVnc(false)
-      setManualClose(false)
+    // Only close when latest run is explicitly completed/failed/stopped (not just isRunning=false)
+    const latestStatus = scrapeStatus?.latest?.status
+    if (!scrapeStatus?.isRunning && latestStatus && latestStatus !== "running" && showVnc && !manualClose) {
+      // Delay close to avoid flicker on transient states
+      const timer = setTimeout(() => setShowVnc(false), 3000)
+      return () => clearTimeout(timer)
     }
-  }, [scrapeStatus?.isRunning])
+  }, [scrapeStatus?.isRunning, scrapeStatus?.latest?.status])
 
   const vncUrl = typeof window !== "undefined"
     ? `http://${window.location.hostname}:6080/vnc.html?autoconnect=true&resize=scale`
