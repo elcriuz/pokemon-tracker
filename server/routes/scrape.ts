@@ -110,6 +110,9 @@ scrapeRouter.post("/cards", (req, res) => {
 
   if (!cards.length) return res.status(404).json({ error: "No cards found" })
 
+  // Clear resume state
+  try { fs.unlinkSync(path.join(BASE, "data", "scrape_resume.json")) } catch {}
+
   // Write a temp CSV with just the selected cards
   const header = "url,name,grade,notes\n"
   const rows = cards.map((c) => `${c.url},${c.name},${c.grade},${c.notes}`).join("\n")
