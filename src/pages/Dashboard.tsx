@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { api } from "@/lib/api"
 import { formatEUR, urlToFlag, timeAgo } from "@/lib/utils"
-import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Filter, Square } from "lucide-react"
+import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Filter, Square, ImageOff } from "lucide-react"
 import { useMemo, useState } from "react"
 import { AddCardDialog } from "@/components/cards/AddCardDialog"
 import { ScrapeFilter } from "@/components/scrape/ScrapeFilter"
@@ -168,6 +168,21 @@ export function Dashboard() {
               >
                 <RefreshCw className={`w-4 h-4 ${isAnyScraping ? "animate-spin" : ""}`} />
                 {isAnyScraping ? "Scraping..." : `${selected.size} scrapen`}
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm(`Bilder fuer ${selected.size} Karten neu laden?`)) {
+                    api.resetImages([...selected]).then(() => {
+                      queryClient.invalidateQueries({ queryKey: ["cards"] })
+                      scrapeCardsMutation.mutate([...selected])
+                    })
+                  }
+                }}
+                disabled={isAnyScraping}
+                className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-secondary hover:bg-secondary/80 disabled:opacity-50 transition-colors"
+              >
+                <ImageOff className="w-4 h-4" />
+                Bilder neu
               </button>
               <button
                 onClick={() => setSelected(new Set())}

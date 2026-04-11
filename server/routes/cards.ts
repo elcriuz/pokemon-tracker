@@ -111,6 +111,30 @@ cardsRouter.put("/:id", (req, res) => {
   res.json(card)
 })
 
+// POST /api/cards/reset-images - delete images for selected cards so they get re-scraped
+cardsRouter.post("/reset-images", (req, res) => {
+  const db = getDb()
+  const { cardIds } = req.body as { cardIds: number[] }
+  if (!cardIds?.length) return res.status(400).json({ error: "cardIds required" })
+
+  const fs = require("fs")
+  const path = require("path")
+  const { fileURLToPath } = require("url")
+  const __dirname2 = path.dirname(fileURLToPath(import.meta.url))
+  const imagesDir = path.join(__dirname2, "../..", "data", "images")
+
+  let deleted = 0
+  for (const id of cardIds) {
+    const card = db.prepare("SELECT image FROM cards WHERE id = ?").get(id) as any
+    if (card?.image) {
+      try { fs.unlinkSync(path.join(imagesDir, card.image)) } catch {}
+      db.prepare("UPDATE cards SET image = '' WHERE id = ?").run(id)
+      deleted++
+    }
+  }
+  res.json({ ok: true, deleted })
+})
+
 // DELETE /api/cards/:id
 cardsRouter.delete("/:id", (req, res) => {
   const db = getDb()
