@@ -503,11 +503,13 @@ async def _process_photo(msg, context):
         log.info(f"[{check_id}] VERDICT: shop={shop_eur}EUR market={market_eur}EUR verdict={verdict} diff={diff_pct}% total={total_ms}ms")
 
         # 6. Build reply
+        total_sec = round(time.time() - t0)
         reply = f"{header}{shop_line}{cm_line}{psa_line}{ebay_line}{verdict_line}"
 
         link_url = cm_full_url or cm_url
         if link_url:
             reply += f'\n\n<a href="{link_url}">Cardmarket</a>'
+        reply += f"  <i>({total_sec}s)</i>"
 
         await msg.reply_text(reply, parse_mode="HTML", disable_web_page_preview=True, reply_to_message_id=msg.message_id)
 
