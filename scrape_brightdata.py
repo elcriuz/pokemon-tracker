@@ -214,6 +214,21 @@ def download_image(image_url, card_url):
 # ─── Portfolio & Resume ──────────────────────────────────────
 
 def load_portfolio():
+    """Laedt Karten aus DB (bevorzugt) oder portfolio.csv als Fallback."""
+    db_path = BASE_DIR / "data" / "tracker.db"
+    if db_path.exists():
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT url, name, grade, notes FROM cards").fetchall()
+            conn.close()
+            if rows:
+                log.info(f"  {len(rows)} Karten aus DB geladen")
+                return [{"url": r["url"], "name": r["name"] or "", "grade": (r["grade"] or "").upper(), "notes": r["notes"] or ""} for r in rows]
+        except Exception as e:
+            log.warning(f"  DB-Ladevorgang fehlgeschlagen, Fallback auf CSV: {e}")
+
     cards = []
     with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -501,6 +516,40 @@ Log-Datei:       {log_file}
     return csv_file
 
 
+def import_to_db(results):
+    """Importiert Ergebnisse direkt in die DB (fuer Cron-Jobs ohne Express-Server)."""
+    db_path = BASE_DIR / "data" / "tracker.db"
+    if not db_path.exists():
+        return
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(db_path))
+        # Build URL → card_id lookup
+        card_rows = conn.execute("SELECT id, url FROM cards").fetchall()
+        url_to_id = {r[1]: r[0] for r in card_rows}
+
+        for r in results:
+            card_id = url_to_id.get(r.get("url"))
+            if not card_id:
+                continue
+            conn.execute(
+                "INSERT OR IGNORE INTO prices (card_id, scraped_at, value, trend, avg7, avg30, avg1, from_price, available_items, psa10_low, psa9_low, cgc10_low, bgs10_low, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (card_id, r.get("timestamp", ""), r.get("value"), r.get("trend"), r.get("avg7"), r.get("avg30"), r.get("avg1"), r.get("from"), r.get("available_items"), r.get("psa10_low"), r.get("psa9_low"), r.get("cgc10_low"), r.get("bgs10_low"), r.get("error"))
+            )
+            if r.get("image"):
+                conn.execute("UPDATE cards SET image = ? WHERE id = ? AND (image = '' OR image IS NULL)", (r["image"], card_id))
+            name = r.get("name", "")
+            if name and "just a moment" not in name.lower() and "cloudflare" not in name.lower():
+                conn.execute("UPDATE cards SET name = ? WHERE id = ? AND (name = '' OR name IS NULL)", (name, card_id))
+            if r.get("set_name"):
+                conn.execute("UPDATE cards SET set_name = ? WHERE id = ? AND (set_name = '' OR set_name IS NULL)", (r["set_name"], card_id))
+        conn.commit()
+        conn.close()
+        log.info(f"DB-Import: {len(results)} Ergebnisse importiert")
+    except Exception as e:
+        log.error(f"DB-Import fehlgeschlagen: {e}")
+
+
 def main():
     args = sys.argv[1:]
 
@@ -536,6 +585,7 @@ def main():
 
     results, stats = scrape_cards(cards, api_key, zone)
     save_results(results, stats)
+    import_to_db(results)
 
     if stats["ok"] == 0 and len(cards) > 0:
         sys.exit(2)
