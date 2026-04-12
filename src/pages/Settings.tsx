@@ -13,7 +13,7 @@ export function Settings() {
   const { data: scrapeHistory } = useQuery({ queryKey: ["scrapeHistory"], queryFn: () => api.getScrapeStatus() })
   const queryClient = useQueryClient()
 
-  const [form, setForm] = useState({ alert_threshold_pct: "5", telegram_bot_token: "", telegram_chat_id: "", brightdata_api_key: "", brightdata_zone: "cardmarket" })
+  const [form, setForm] = useState({ alert_threshold_pct: "10", alert_threshold_eur: "35", telegram_bot_token: "", telegram_chat_id: "", brightdata_api_key: "", brightdata_zone: "cardmarket" })
   const [saved, setSaved] = useState(false)
   const [testResult, setTestResult] = useState<boolean | null>(null)
   const [newBinder, setNewBinder] = useState("")
@@ -133,25 +133,9 @@ export function Settings() {
         </div>
       </section>
 
-      {/* Alert Settings */}
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Preis-Alerts</h2>
-        <div className="p-4 rounded-lg bg-card border border-border space-y-3">
-          <label className="block">
-            <span className="text-sm text-muted-foreground">Schwellenwert fuer Alert (%)</span>
-            <input
-              type="number"
-              value={form.alert_threshold_pct}
-              onChange={(e) => setForm({ ...form, alert_threshold_pct: e.target.value })}
-              className="mt-1 w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground"
-            />
-          </label>
-        </div>
-      </section>
-
       {/* Telegram Settings */}
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Telegram</h2>
+        <h2 className="text-lg font-semibold">Telegram Alerts</h2>
         <div className="p-4 rounded-lg bg-card border border-border space-y-3">
           <label className="block">
             <span className="text-sm text-muted-foreground">Bot Token</span>
@@ -173,6 +157,29 @@ export function Settings() {
               className="mt-1 w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground"
             />
           </label>
+          <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border">
+            <label className="block">
+              <span className="text-sm text-muted-foreground">Alert ab Aenderung (%)</span>
+              <input
+                type="number"
+                value={form.alert_threshold_pct}
+                onChange={(e) => setForm({ ...form, alert_threshold_pct: e.target.value })}
+                className="mt-1 w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground"
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm text-muted-foreground">Alert ab Aenderung (EUR)</span>
+              <input
+                type="number"
+                value={form.alert_threshold_eur}
+                onChange={(e) => setForm({ ...form, alert_threshold_eur: e.target.value })}
+                className="mt-1 w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground"
+              />
+            </label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Karten werden im Report angezeigt wenn sich der Wert um mehr als X% ODER mehr als X EUR aendert
+          </p>
           <button
             onClick={() => testMutation.mutate()}
             disabled={!form.telegram_bot_token || !form.telegram_chat_id}

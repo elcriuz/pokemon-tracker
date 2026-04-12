@@ -495,7 +495,8 @@ Log-Datei:       {log_file}
 
     # Load previous prices from DB for change detection
     prev_prices = {}
-    alert_pct = 10  # default
+    alert_pct = 10.0
+    alert_eur = 35.0
     try:
         db_path = BASE_DIR / "data" / "tracker.db"
         if db_path.exists():
@@ -509,16 +510,17 @@ Log-Datei:       {log_file}
                   AND p.scraped_at = (SELECT MAX(p2.scraped_at) FROM prices p2 WHERE p2.card_id = c.id AND p2.value IS NOT NULL)
             """).fetchall()
             prev_prices = {r[0]: r[1] for r in rows}
-            # Get alert threshold from settings
-            row = conn.execute("SELECT value FROM settings WHERE key = 'alert_threshold_pct'").fetchone()
-            if row:
-                alert_pct = float(row[0])
+            # Get alert thresholds from settings
+            thresh = dict(conn.execute("SELECT key, value FROM settings WHERE key IN ('alert_threshold_pct','alert_threshold_eur')").fetchall())
+            if thresh.get("alert_threshold_pct"):
+                alert_pct = float(thresh["alert_threshold_pct"])
+            if thresh.get("alert_threshold_eur"):
+                alert_eur = float(thresh["alert_threshold_eur"])
             conn.close()
     except Exception as e:
         log.warning(f"Vorherige Preise laden fehlgeschlagen: {e}")
 
-    # Detect significant movers: >35 EUR change OR >alert_pct% change
-    ABS_THRESHOLD = 35.0
+    log.info(f"Alert-Schwellen: >{alert_eur:.0f} EUR oder >{alert_pct:.0f}%")
     movers = []
     for r in results:
         if r.get("error") or not r.get("value"):
@@ -530,7 +532,7 @@ Log-Datei:       {log_file}
             continue
         diff = new_val - old_val
         pct = (diff / old_val) * 100
-        if abs(diff) >= ABS_THRESHOLD or abs(pct) >= alert_pct:
+        if abs(diff) >= alert_eur or abs(pct) >= alert_pct:
             arrow = "\U0001f4c8" if diff > 0 else "\U0001f4c9"
             name = r.get("name") or r["url"].split("/")[-1].split("?")[0]
             sign = "+" if diff > 0 else ""

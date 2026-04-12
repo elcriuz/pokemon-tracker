@@ -96,7 +96,8 @@ function initSchema(db: Database.Database) {
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
-  insert.run("alert_threshold_pct", "5")
+  insert.run("alert_threshold_pct", "10")
+  insert.run("alert_threshold_eur", "35")
   insert.run("telegram_chat_id", "")
   insert.run("telegram_bot_token", "")
   insert.run("brightdata_api_key", "")
