@@ -1,0 +1,465 @@
+#!/usr/bin/env python3
+"""
+Pokemon Card Check Bot — Foto schicken, sofort Preischeck bekommen.
+Laeuft als Telegram Bot, nutzt GPT Vision + Bright Data + Cardmarket/eBay.
+"""
+
+import asyncio
+import json
+import logging
+import re
+import time
+from io import BytesIO
+
+import requests
+from openai import AsyncOpenAI
+from telegram import Update
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
+
+# ─── Config ──────────────────────────────────────────────────
+
+ALLOWED_USERS = [8416445370]
+DB_PATH = "/opt/pokemon-tracker/data/tracker.db"
+
+def load_config():
+    """Laedt Credentials aus DB settings."""
+    import sqlite3, os
+    db = os.environ.get("CARDCHECK_DB", DB_PATH)
+    cfg = {}
+    try:
+        conn = sqlite3.connect(db)
+        rows = conn.execute("SELECT key, value FROM settings WHERE key IN ('telegram_bot_token','telegram_chat_id','openai_api_key','brightdata_api_key','brightdata_zone')").fetchall()
+        cfg = dict(rows)
+        conn.close()
+    except Exception:
+        pass
+    return {
+        "telegram_token": cfg.get("telegram_bot_token", os.environ.get("TELEGRAM_BOT_TOKEN", "")),
+        "openai_key": cfg.get("openai_api_key", os.environ.get("OPENAI_API_KEY", "")),
+        "bd_key": cfg.get("brightdata_api_key", os.environ.get("BRIGHTDATA_API_KEY", "")),
+        "bd_zone": cfg.get("brightdata_zone", os.environ.get("BRIGHTDATA_ZONE", "cardmarket")),
+    }
+
+CONFIG = load_config()
+TELEGRAM_TOKEN = CONFIG["telegram_token"]
+BD_KEY = CONFIG["bd_key"]
+BD_ZONE = CONFIG["bd_zone"]
+
+LANG_MAP = {"jp": 7, "en": 1, "de": 3, "fr": 2, "es": 4, "it": 5, "kr": 9, "cn": 10}
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("cardcheck")
+
+openai_client = AsyncOpenAI(api_key=CONFIG["openai_key"])
+
+# ─── Currency ────────────────────────────────────────────────
+
+_eur_rates = {"ts": 0, "rates": {}}
+
+def get_eur_rate(currency="JPY"):
+    if time.time() - _eur_rates["ts"] > 3600:
+        try:
+            resp = requests.get("https://api.exchangerate.host/latest?base=EUR", timeout=10)
+            data = resp.json()
+            if data.get("success") or data.get("rates"):
+                _eur_rates["rates"] = data["rates"]
+                _eur_rates["ts"] = time.time()
+        except Exception as e:
+            log.warning(f"Exchange rate fetch failed: {e}")
+    rate = _eur_rates["rates"].get(currency, 163.0 if currency == "JPY" else 1.1)
+    return rate
+
+def to_eur(amount, currency="JPY"):
+    if currency == "EUR":
+        return amount
+    rate = get_eur_rate(currency)
+    return round(amount / rate, 2)
+
+def fmt_eur(val):
+    if val is None:
+        return "-"
+    if val >= 1000:
+        return f"{val:,.0f}\u20ac".replace(",", ".")
+    return f"{val:.2f}\u20ac"
+
+# ─── Vision: Card Identification ─────────────────────────────
+
+VISION_PROMPT = """Identifiziere diese Pokemon-Karte EXAKT aus dem Foto.
+
+Antworte NUR als JSON (kein Markdown, kein Text drumrum):
+{
+  "name": "Kartenname (englisch)",
+  "name_jp": "Japanischer Name (falls lesbar)",
+  "set": "Set-Name (englisch)",
+  "set_code": "Set-Code (z.B. sv8a, sm9, sv-p)",
+  "number": "Kartennummer (z.B. 217/187)",
+  "language": "jp|en|de|kr|cn",
+  "version": "regular|holo|FA|SAR|SR|UR|AR|IR",
+  "grade": "raw|PSA10|PSA9|PSA8|CGC10|CGC9.5|BGS10",
+  "shop_price": 130000,
+  "shop_currency": "JPY|EUR|USD"
+}
+
+REGELN:
+- name: englischer offizieller Name (z.B. "Umbreon ex", "Latias & Latios GX", "Greninja ex")
+- WICHTIG: Lies den TATSAECHLICHEN Kartennamen von der Karte oder dem PSA-Label! Rate NICHT anhand des Artworks.
+- number: EXAKT wie auf der Karte gedruckt (z.B. "217/187", "105/095", "120/083")
+- Kartennummer > Setgroesse (z.B. 217/187, 120/083) = Secret Rare, SAR oder UR
+- Artwork das ueber den Kartenrahmen hinausgeht = SAR oder Illustration Rare
+- Goldener Rand / komplett goldene Karte = UR (Ultra Rare / Gold)
+- PSA/CGC/BGS Slab = graded Karte, Grade vom PSA-Label lesen (GEM MT 10 = PSA10, MINT 9 = PSA9)
+- Bei PSA Slabs: OBEN auf dem Label steht der exakte Kartenname, Set und Nummer — lies diese IMMER ab!
+- Preistag: Suche nach Preisetiketten, Stickern oder Preisschildern IM ODER NEBEN dem Foto
+- shop_price: Die GROESSTE sichtbare Zahl auf dem Preistag (ACHTUNG: ¥130.000 = 130000, nicht 30000! Punkte sind Tausendertrennzeichen!)
+- Japanische Preise nutzen ¥ Symbol oder sind in der Naehe von "税込" (inkl. MwSt)
+- shop_price null wenn KEIN Preis sichtbar
+- Japanische Karten haben japanischen Text auf der Karte"""
+
+async def identify_card(photo_bytes):
+    import base64
+    b64 = base64.b64encode(photo_bytes).decode()
+
+    resp = await openai_client.chat.completions.create(
+        model="gpt-5.4-mini",
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": VISION_PROMPT},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
+            ]
+        }],
+        max_completion_tokens=500,
+        temperature=0,
+    )
+
+    text = resp.choices[0].message.content.strip()
+    # Strip markdown fences if present
+    text = re.sub(r"^```json?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+
+    return json.loads(text)
+
+# ─── Bright Data Scraping ────────────────────────────────────
+
+def bd_scrape(url):
+    resp = requests.post("https://api.brightdata.com/request",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {BD_KEY}"},
+        json={"zone": BD_ZONE, "url": url, "format": "raw", "country": "de"},
+        timeout=90)
+    if resp.status_code != 200:
+        return None
+    return resp.text
+
+def parse_de_price(s):
+    if not s:
+        return None
+    return float(s.replace(".", "").replace(",", "."))
+
+def extract_prices(html):
+    p = {}
+    for key, pat in [
+        ("from", r"(?:From|ab)[^€]*?([\d.,]+)\s*€"),
+        ("trend", r"(?:Price Trend|Preis-Trend)[^€]*?([\d.,]+)\s*€"),
+        ("avg7", r"(?:7-days|7-Tages)[^€]*?([\d.,]+)\s*€"),
+        ("avg30", r"(?:30-days|30-Tages)[^€]*?([\d.,]+)\s*€"),
+        ("psa10", r"PSA\s*10[^€]*?([\d.,]+)\s*€"),
+        ("psa9", r"PSA\s*9(?!\d)[^€]*?([\d.,]+)\s*€"),
+        ("cgc10", r"CGC\s*10[^€]*?([\d.,]+)\s*€"),
+        ("bgs10", r"BGS\s*10[^€]*?([\d.,]+)\s*€"),
+    ]:
+        m = re.search(pat, html, re.I)
+        if m:
+            p[key] = parse_de_price(m.group(1))
+    items = re.search(r"(\d+)\s*(?:items|Artikel)", html)
+    if items:
+        p["items"] = int(items.group(1))
+    title = re.search(r"<title>(.*?)</title>", html)
+    if title:
+        p["title"] = title.group(1).replace(" | Cardmarket", "")
+    return p
+
+# ─── Cardmarket Search + Scrape ──────────────────────────────
+
+def search_cardmarket(query):
+    url = f"https://www.cardmarket.com/en/Pokemon/Products/Search?searchString={requests.utils.quote(query)}"
+    html = bd_scrape(url)
+    if not html:
+        return []
+    links = re.findall(r'href="(/en/Pokemon/Products/Singles/[^"?]+)"', html)
+    seen = []
+    seen_set = set()
+    for link in links:
+        path = link.split("?")[0]
+        if path in seen_set:
+            continue
+        seen_set.add(path)
+        seen.append("https://www.cardmarket.com" + path)
+    return seen
+
+def find_cardmarket_url(card_info):
+    """Findet die richtige Cardmarket-URL fuer eine Karte."""
+    name = card_info.get("name", "")
+    set_name = card_info.get("set", "")
+    number = card_info.get("number", "").split("/")[0]
+
+    results = search_cardmarket(f"{name} {set_name}")
+    if not results:
+        # Fallback: nur Kartenname
+        results = search_cardmarket(name)
+
+    if not results:
+        return None
+
+    # Match by card number in URL
+    if number:
+        for url in results:
+            if number in url:
+                return url
+
+    # Match by version suffix (V3/V4 for SAR/SR/UR)
+    version = card_info.get("version", "regular")
+    if version in ("SAR", "SR", "UR", "IR"):
+        for url in results:
+            if any(f"V{n}" in url for n in ["3", "4", "5"]):
+                return url
+    elif version == "FA":
+        for url in results:
+            if "V2" in url:
+                return url
+
+    return results[0]
+
+def scrape_cardmarket_prices(card_info):
+    """Scrapt Cardmarket Preise fuer eine Karte."""
+    url = find_cardmarket_url(card_info)
+    if not url:
+        return None, None
+
+    lang_code = LANG_MAP.get(card_info.get("language", "jp"), 7)
+    separator = "&" if "?" in url else "?"
+    full_url = f"{url}{separator}language={lang_code}"
+
+    log.info(f"  Scraping: {full_url}")
+    html = bd_scrape(full_url)
+    if not html:
+        return url, None
+
+    prices = extract_prices(html)
+    return url, prices
+
+# ─── eBay Fallback ───────────────────────────────────────────
+
+def scrape_ebay_sold(query):
+    """Scrapt eBay Sold Listings und berechnet Median."""
+    terms = re.sub(r"[^\w\s]", " ", query).strip().replace(" ", "+")
+    url = f"https://www.ebay.com/sch/i.html?_nkw={terms}+-psa+-cgc+-bgs+-graded&LH_Complete=1&LH_Sold=1&_sop=13"
+    html = bd_scrape(url)
+    if not html:
+        return None
+
+    card_starts = [m.start() for m in re.finditer(r'class="s-card__link', html)]
+    prices = []
+    for i in range(len(card_starts)):
+        start = card_starts[i]
+        end = card_starts[i + 1] if i + 1 < len(card_starts) else start + 5000
+        block = html[start:end]
+        if "Shop on eBay" in block:
+            continue
+        price_m = re.search(r'\$([\d,]+\.\d{2})', block)
+        if not price_m:
+            continue
+        price = float(price_m.group(1).replace(",", ""))
+        if price >= 10:
+            prices.append(price)
+
+    if not prices:
+        return None
+
+    prices.sort()
+    median = prices[len(prices) // 2]
+    # Filter outliers
+    filtered = [p for p in prices if median / 4 < p < median * 4]
+    if not filtered:
+        return None
+
+    f_median = filtered[len(filtered) // 2]
+    f_avg = sum(filtered) / len(filtered)
+
+    return {
+        "count": len(filtered),
+        "median_usd": f_median,
+        "avg_usd": round(f_avg, 2),
+        "min_usd": min(filtered),
+        "max_usd": max(filtered),
+    }
+
+# ─── Verdict ─────────────────────────────────────────────────
+
+def calculate_verdict(shop_eur, market_eur):
+    """Berechnet DEAL/FAIR/SKIP."""
+    if shop_eur is None or market_eur is None or market_eur == 0:
+        return None, None
+    diff_pct = ((shop_eur - market_eur) / market_eur) * 100
+    if diff_pct < -20:
+        return "DEAL \u2705", diff_pct
+    elif diff_pct <= 10:
+        return "FAIR \U0001f7e1", diff_pct
+    else:
+        return "SKIP \u274c", diff_pct
+
+# ─── Main Handler ────────────────────────────────────────────
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ALLOWED_USERS:
+        return
+
+    msg = update.message
+    if not msg or not msg.photo:
+        return
+
+    # Send "typing" indicator
+    await msg.reply_text("\U0001f50d Analysiere Karte...")
+
+    try:
+        # 1. Download photo
+        photo = msg.photo[-1]  # highest resolution
+        file = await context.bot.get_file(photo.file_id)
+        bio = BytesIO()
+        await file.download_to_memory(bio)
+        photo_bytes = bio.getvalue()
+
+        # 2. Identify card via Vision
+        log.info("Vision: identifying card...")
+        card = await identify_card(photo_bytes)
+        log.info(f"Vision result: {json.dumps(card, ensure_ascii=False)}")
+
+        name = card.get("name", "?")
+        version = card.get("version", "")
+        set_name = card.get("set", "?")
+        number = card.get("number", "")
+        language = card.get("language", "jp")
+        grade = card.get("grade", "raw")
+        shop_price = card.get("shop_price")
+        shop_currency = card.get("shop_currency", "JPY")
+
+        # Version label
+        ver_label = f" {version.upper()}" if version and version != "regular" else ""
+        grade_label = f" {grade.upper()}" if grade and grade != "raw" else ""
+        lang_label = language.upper()
+
+        header = f"<b>{name}{ver_label}</b> ({set_name}) {lang_label}{grade_label}"
+        if number:
+            header += f"\n#{number}"
+
+        # Shop price in EUR
+        shop_eur = None
+        shop_line = ""
+        if shop_price:
+            shop_eur = to_eur(shop_price, shop_currency)
+            if shop_currency != "EUR":
+                shop_line = f"\nShop: {shop_currency} {shop_price:,.0f} ({fmt_eur(shop_eur)})"
+            else:
+                shop_line = f"\nShop: {fmt_eur(shop_eur)}"
+
+        # 3. Scrape Cardmarket
+        log.info("Scraping Cardmarket...")
+        cm_url, prices = scrape_cardmarket_prices(card)
+
+        cm_line = ""
+        market_eur = None
+        psa_line = ""
+
+        if prices and (prices.get("from") or prices.get("trend")):
+            from_p = prices.get("from")
+            trend_p = prices.get("trend")
+            cm_parts = []
+            if from_p is not None:
+                cm_parts.append(f"ab {fmt_eur(from_p)}")
+            if trend_p is not None:
+                cm_parts.append(f"Trend {fmt_eur(trend_p)}")
+            cm_line = f"\nCM: {' | '.join(cm_parts)}"
+
+            # PSA prices
+            psa_parts = []
+            if prices.get("psa10"):
+                psa_parts.append(f"PSA10: {fmt_eur(prices['psa10'])}")
+            if prices.get("psa9"):
+                psa_parts.append(f"PSA9: {fmt_eur(prices['psa9'])}")
+            if prices.get("cgc10"):
+                psa_parts.append(f"CGC10: {fmt_eur(prices['cgc10'])}")
+            if psa_parts:
+                psa_line = f"\n{' | '.join(psa_parts)}"
+
+            # Determine market price for verdict
+            if grade in ("PSA10",) and prices.get("psa10"):
+                market_eur = prices["psa10"]
+            elif grade in ("PSA9",) and prices.get("psa9"):
+                market_eur = prices["psa9"]
+            elif grade in ("CGC10",) and prices.get("cgc10"):
+                market_eur = prices["cgc10"]
+            elif grade in ("BGS10",) and prices.get("bgs10"):
+                market_eur = prices["bgs10"]
+            elif from_p is not None:
+                market_eur = from_p
+            elif trend_p is not None:
+                market_eur = trend_p
+
+        # 4. eBay fallback if no CM prices
+        ebay_line = ""
+        if not prices or (not prices.get("from") and not prices.get("trend")):
+            log.info("No CM prices, trying eBay fallback...")
+            ebay_query = f"{name} {number} {set_name} japanese"
+            ebay = scrape_ebay_sold(ebay_query)
+            if ebay:
+                median_eur = to_eur(ebay["median_usd"], "USD")
+                ebay_line = f"\neBay Sold ({ebay['count']}x): Median ${ebay['median_usd']:,.0f} ({fmt_eur(median_eur)})"
+                if market_eur is None:
+                    market_eur = median_eur
+                cm_line = "\nCM: keine Daten fuer {lang_label}".format(lang_label=lang_label)
+            else:
+                cm_line = f"\nCM: keine Daten | eBay: keine Daten"
+
+        # 5. Verdict
+        verdict_line = ""
+        verdict, diff_pct = calculate_verdict(shop_eur, market_eur)
+        if verdict and shop_eur:
+            sign = "+" if diff_pct > 0 else ""
+            verdict_line = f"\n\u2192 <b>{verdict}</b> ({sign}{diff_pct:.0f}%)"
+        elif not shop_price:
+            if market_eur:
+                verdict_line = f"\n\u2192 Marktpreis: {fmt_eur(market_eur)}"
+
+        # 6. Build reply
+        reply = f"{header}{shop_line}{cm_line}{psa_line}{ebay_line}{verdict_line}"
+
+        if cm_url:
+            reply += f'\n\n<a href="{cm_url}">Cardmarket</a>'
+
+        await msg.reply_text(reply, parse_mode="HTML", disable_web_page_preview=True)
+
+    except Exception as e:
+        log.error(f"Error: {e}", exc_info=True)
+        await msg.reply_text(f"\u274c Fehler: {e}")
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle text messages — just acknowledge."""
+    user_id = update.effective_user.id
+    if user_id not in ALLOWED_USERS:
+        return
+    text = (update.message.text or "").strip().lower()
+    if text in ("hi", "hallo", "ping"):
+        await update.message.reply_text("\U0001f4f8 Schick mir ein Kartenfoto fuer einen Preischeck!")
+
+# ─── Main ────────────────────────────────────────────────────
+
+def main():
+    log.info("Starting Card Check Bot...")
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    log.info("Bot ready. Waiting for photos...")
+    app.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()

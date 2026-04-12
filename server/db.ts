@@ -102,4 +102,5 @@ function initSchema(db: Database.Database) {
   insert.run("telegram_bot_token", "")
   insert.run("brightdata_api_key", "")
   insert.run("brightdata_zone", "cardmarket")
+  insert.run("openai_api_key", "")
 }
