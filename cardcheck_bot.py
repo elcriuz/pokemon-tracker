@@ -203,11 +203,17 @@ def find_cardmarket_url(card_info):
     number = card_info.get("number", "").split("/")[0]  # "173" from "173/086"
     set_code = card_info.get("set_code", "").lower()
 
-    results = search_cardmarket(f"{name} {set_name}")
+    query = f"{name} {set_name}"
+    log.info(f"  URL_SEARCH: query='{query}' number={number} set_code={set_code}")
+    results = search_cardmarket(query)
     if not results:
+        log.info(f"  URL_SEARCH: no results, trying name only '{name}'")
         results = search_cardmarket(name)
 
+    log.info(f"  URL_SEARCH: {len(results)} results: {[u.split('/')[-1] for u in results[:8]]}")
+
     if not results:
+        log.warning(f"  URL_SEARCH: FAILED — no results at all")
         return None
 
     # 1. Best match: card number in URL (e.g. "WHT173" or "sv8a217")
@@ -355,18 +361,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_process_photo(msg, context))
 
 async def _process_photo(msg, context):
+    check_id = f"CHK-{int(time.time())}-{msg.message_id}"
     try:
         # 1. Download photo
-        photo = msg.photo[-1]  # highest resolution
+        photo = msg.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         bio = BytesIO()
         await file.download_to_memory(bio)
         photo_bytes = bio.getvalue()
+        log.info(f"[{check_id}] Photo received ({len(photo_bytes)} bytes, {photo.width}x{photo.height})")
 
         # 2. Identify card via Vision
-        log.info("Vision: identifying card...")
+        t0 = time.time()
         card = await identify_card(photo_bytes)
-        log.info(f"Vision result: {json.dumps(card, ensure_ascii=False)}")
+        vision_ms = int((time.time() - t0) * 1000)
+        log.info(f"[{check_id}] VISION ({vision_ms}ms): {json.dumps(card, ensure_ascii=False)}")
 
         name = card.get("name", "?")
         version = card.get("version", "")
@@ -376,6 +385,9 @@ async def _process_photo(msg, context):
         grade = card.get("grade", "raw")
         shop_price = card.get("shop_price")
         shop_currency = card.get("shop_currency", "JPY")
+        set_code = card.get("set_code", "")
+
+        log.info(f"[{check_id}] CARD: {name} {version} ({set_name}/{set_code}) #{number} {language} {grade} shop={shop_price}{shop_currency}")
 
         # Version label
         ver_label = f" {version.upper()}" if version and version != "regular" else ""
@@ -397,8 +409,10 @@ async def _process_photo(msg, context):
                 shop_line = f"\nShop: {fmt_eur(shop_eur)}"
 
         # 3. Scrape Cardmarket
-        log.info("Scraping Cardmarket...")
+        t1 = time.time()
         cm_url, prices, cm_full_url = scrape_cardmarket_prices(card)
+        scrape_ms = int((time.time() - t1) * 1000)
+        log.info(f"[{check_id}] SCRAPE ({scrape_ms}ms): url={cm_full_url} prices={json.dumps({k:v for k,v in (prices or {}).items() if k != 'title'})}")
 
         cm_line = ""
         market_eur = None
@@ -442,8 +456,9 @@ async def _process_photo(msg, context):
         # 4. eBay fallback if no CM prices
         ebay_line = ""
         if not prices or (not prices.get("from") and not prices.get("trend")):
-            log.info("No CM prices, trying eBay fallback...")
+            log.info(f"[{check_id}] EBAY_FALLBACK: no CM prices, searching eBay...")
             ebay_query = f"{name} {number} {set_name} japanese"
+            log.info(f"[{check_id}] EBAY_QUERY: {ebay_query}")
             ebay = scrape_ebay_sold(ebay_query)
             if ebay:
                 median_eur = to_eur(ebay["median_usd"], "USD")
@@ -451,8 +466,10 @@ async def _process_photo(msg, context):
                 if market_eur is None:
                     market_eur = median_eur
                 cm_line = "\nCM: keine Daten fuer {lang_label}".format(lang_label=lang_label)
+                log.info(f"[{check_id}] EBAY_RESULT: {ebay['count']} sold, median=${ebay['median_usd']}")
             else:
                 cm_line = f"\nCM: keine Daten | eBay: keine Daten"
+                log.info(f"[{check_id}] EBAY_RESULT: nothing found")
 
         # 5. Verdict
         verdict_line = ""
@@ -464,6 +481,9 @@ async def _process_photo(msg, context):
             if market_eur:
                 verdict_line = f"\n\u2192 Marktpreis: {fmt_eur(market_eur)}"
 
+        total_ms = int((time.time() - t0) * 1000)
+        log.info(f"[{check_id}] VERDICT: shop={shop_eur}EUR market={market_eur}EUR verdict={verdict} diff={diff_pct}% total={total_ms}ms")
+
         # 6. Build reply
         reply = f"{header}{shop_line}{cm_line}{psa_line}{ebay_line}{verdict_line}"
 
@@ -474,7 +494,7 @@ async def _process_photo(msg, context):
         await msg.reply_text(reply, parse_mode="HTML", disable_web_page_preview=True)
 
     except Exception as e:
-        log.error(f"Error: {e}", exc_info=True)
+        log.error(f"[{check_id}] ERROR: {e}", exc_info=True)
         await msg.reply_text(f"\u274c Fehler: {e}")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
