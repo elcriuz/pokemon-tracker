@@ -133,16 +133,20 @@ def search_tcg_api(pokemon_name):
         log.warning(f"  TCG API failed: {e}")
     return []
 
-OCR_PROMPT = """Lies NUR den Text UNTEN LINKS auf dieser Pokemon-Karte.
-Dort steht ein Set-Code und eine Kartennummer, z.B. "PRE 161/131" oder "sv8a 217/187" oder "sm9 103/095" oder "sv11B 171/086".
-Es ist oft klein gedruckt. Antworte NUR mit dem was du liest (z.B. "sv11B 171/086"). Nichts anderes."""
+MATCH_PROMPT = """Hier ist ein Foto einer Pokemon-Karte. Darunter {count} Kandidaten-Bilder aus der Datenbank.
+
+Welches Bild hat EXAKT dasselbe Artwork? Achte genau auf: Hintergrundfarbe, Pose, Stil, Rahmen.
+
+{candidates}
+
+Antworte NUR mit der Nummer."""
 
 async def identify_card(photo_bytes):
     import base64
     b64 = base64.b64encode(photo_bytes).decode()
 
-    # Step 1: General identification (name, grade, price) + focused OCR — in parallel
-    vision_coro = openai_client.chat.completions.create(
+    # Step 1: Quick Vision (name, grade, price) — gpt-5.4-mini
+    vision_resp = await openai_client.chat.completions.create(
         model="gpt-5.4-mini",
         messages=[{"role": "user", "content": [
             {"type": "text", "text": VISION_PROMPT},
@@ -150,57 +154,66 @@ async def identify_card(photo_bytes):
         ]}],
         max_completion_tokens=500, temperature=0,
     )
-    ocr_coro = openai_client.chat.completions.create(
-        model="gpt-5.4-mini",
-        messages=[{"role": "user", "content": [
-            {"type": "text", "text": OCR_PROMPT},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
-        ]}],
-        max_completion_tokens=50, temperature=0,
-    )
-
-    results = await asyncio.gather(asyncio.ensure_future(vision_coro), asyncio.ensure_future(ocr_coro))
-    vision_resp, ocr_resp = results[0], results[1]
 
     text = vision_resp.choices[0].message.content.strip()
     text = re.sub(r"^```json?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     card = json.loads(text)
 
-    ocr_text = ocr_resp.choices[0].message.content.strip()
-    log.info(f"  OCR: '{ocr_text}'")
+    # Step 2: TCG API lookup by Pokemon name
+    pokemon_name = card.get("name", "").split(" ex")[0].split(" EX")[0].split(" V")[0].split(" GX")[0].split(" VMAX")[0].split(" VSTAR")[0].strip()
+    if not pokemon_name:
+        return card
 
-    # Step 2: Parse OCR result and use it to correct/override set_code + number
-    ocr_match = re.match(r"([A-Za-z0-9]+)\s+(\d+/\d+)", ocr_text)
-    if ocr_match:
-        ocr_set_code = ocr_match.group(1)
-        ocr_number = ocr_match.group(2)
-        log.info(f"  OCR_PARSED: set_code={ocr_set_code} number={ocr_number}")
+    log.info(f"  TCG_API: searching '{pokemon_name}'...")
+    tcg_cards = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, pokemon_name)
+    if not tcg_cards:
+        log.info(f"  TCG_API: no results")
+        return card
 
-        # Override if different from vision
-        if ocr_set_code != card.get("set_code"):
-            log.info(f"  OCR_OVERRIDE: set_code {card.get('set_code')} -> {ocr_set_code}")
-            card["set_code"] = ocr_set_code
-        if ocr_number != card.get("number"):
-            log.info(f"  OCR_OVERRIDE: number {card.get('number')} -> {ocr_number}")
-            card["number"] = ocr_number
+    log.info(f"  TCG_API: {len(tcg_cards)} cards found")
 
-    # Step 3: TCG API lookup to get correct set name
-    pokemon_name = card.get("name", "").split(" ex")[0].split(" EX")[0].split(" V")[0].split(" GX")[0].split(" VMAX")[0].strip()
-    number_prefix = card.get("number", "").split("/")[0]
+    # Step 3: Visual match with gpt-4o
+    candidates = []
+    for i, c in enumerate(tcg_cards):
+        img = c.get("images", {}).get("large", c.get("images", {}).get("small", ""))
+        if img:
+            candidates.append({
+                "idx": i + 1, "id": c["id"], "name": c.get("name", ""),
+                "number": c.get("number", ""), "set_name": c["set"]["name"],
+                "set_id": c["set"]["id"], "rarity": c.get("rarity", ""), "img": img,
+            })
 
-    if pokemon_name and number_prefix:
-        log.info(f"  TCG_API: searching '{pokemon_name}' to match #{number_prefix}...")
-        tcg_cards = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, pokemon_name)
+    if not candidates:
+        return card
 
-        if tcg_cards:
-            for c in tcg_cards:
-                if c.get("number") == number_prefix or c.get("number") == card.get("number", "").split("/")[0]:
-                    s = c.get("set", {})
-                    log.info(f"  TCG_MATCH: {c['name']} #{c['number']} from {s.get('name')} ({s.get('id')})")
-                    card["set"] = s.get("name", card.get("set"))
-                    card["tcg_set_id"] = s.get("id", "")
-                    break
+    cand_text = "\n".join(f"{c['idx']}. {c['name']} #{c['number']} ({c['set_name']})" for c in candidates)
+    cand_images = [{"type": "image_url", "image_url": {"url": c["img"], "detail": "low"}} for c in candidates]
+
+    match_content = [
+        {"type": "text", "text": MATCH_PROMPT.format(count=len(candidates), candidates=cand_text)},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}},
+    ] + cand_images
+
+    log.info(f"  MATCH: sending {len(cand_images)} thumbnails to gpt-4o...")
+    match_resp = await openai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": match_content}],
+        max_completion_tokens=20, temperature=0,
+    )
+    answer = match_resp.choices[0].message.content.strip()
+    log.info(f"  MATCH: gpt-4o says '{answer}'")
+
+    num_match = re.search(r"\d+", answer)
+    if num_match:
+        idx = int(num_match.group()) - 1
+        if 0 <= idx < len(candidates):
+            matched = candidates[idx]
+            log.info(f"  MATCH_RESULT: {matched['name']} #{matched['number']} from {matched['set_name']} ({matched['set_id']})")
+            card["set"] = matched["set_name"]
+            card["set_code"] = matched["set_id"]
+            card["number"] = matched["number"]
+            card["tcg_id"] = matched["id"]
 
     return card
 
