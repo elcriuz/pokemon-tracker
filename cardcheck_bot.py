@@ -462,6 +462,10 @@ async def find_cardmarket_url(card_info):
             for url in results:
                 slug = url.split("/")[-1].lower()
                 if name_slug in slug and slug.endswith(tn):
+                    # Ensure it's an exact number match, not a suffix (e.g. "7" in "107")
+                    pos = len(slug) - len(tn)
+                    if pos > 0 and slug[pos - 1].isdigit():
+                        continue  # "MEW107" endswith "7" but it's actually 107
                     log.info(f"  CM_MATCH: '{name_slug}'+{tn} → {url.split('/')[-1]}")
                     return url
 
