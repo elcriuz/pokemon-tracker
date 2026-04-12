@@ -179,15 +179,16 @@ async def identify_card(photo_bytes):
     if not pokemon_name:
         return card
 
-    number = card.get("number", "").split("/")[0]
+    number = re.sub(r"[^\d]", "", card.get("number", "").split("/")[0])  # strip # and other non-digits
     full_name = card.get("name", "")
 
     # Try exact match: name + number (fast, 1 result)
-    if number and number.isdigit():
+    # Only trust if number > 50 (high numbers = special rares, less ambiguous)
+    if number and number.isdigit() and int(number) > 50:
         log.info(f"  TCG_API: exact lookup '{pokemon_name}' number:{number}...")
         exact = await asyncio.get_event_loop().run_in_executor(
             None, lambda: search_tcg_api_exact(pokemon_name, number))
-        if exact:
+        if len(exact) == 1:
             s = exact[0]["set"]
             log.info(f"  TCG_EXACT: {exact[0]['name']} #{exact[0]['number']} from {s['name']} ({s['id']})")
             card["set"] = s["name"]
@@ -196,6 +197,8 @@ async def identify_card(photo_bytes):
             card["tcg_set_id"] = s["id"]
             card["tcg_id"] = exact[0]["id"]
             return card
+        elif exact:
+            log.info(f"  TCG_EXACT: {len(exact)} results, ambiguous — falling through to visual match")
 
     # Fallback: full search + gpt-4o visual match
     log.info(f"  TCG_API: searching '{pokemon_name}' (full)...")
