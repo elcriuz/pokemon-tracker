@@ -88,9 +88,9 @@ VISION_PROMPT = """Identifiziere diese Pokemon-Karte EXAKT aus dem Foto.
 
 Antworte NUR als JSON (kein Markdown, kein Text drumrum):
 {
-  "name": "Kartenname (englisch)",
-  "name_jp": "Japanischer Name (falls lesbar)",
-  "set": "Set-Name (englisch)",
+  "name": "Kartenname IMMER auf ENGLISCH (z.B. Umbreon ex, nicht Nachtara ex!)",
+  "name_local": "Kartenname in der Sprache auf der Karte (z.B. Nachtara ex, ブラッキーex)",
+  "set": "Set-Name auf ENGLISCH (z.B. Prismatic Evolutions, nicht Prismatische Entwicklungen!)",
   "set_code": "Set-Code (z.B. sv8a, sm9, sv-p)",
   "number": "Kartennummer (z.B. 217/187)",
   "language": "jp|en|de|kr|cn",
@@ -206,19 +206,26 @@ def search_cardmarket(query):
 def find_cardmarket_url(card_info):
     """Findet die richtige Cardmarket-URL fuer eine Karte."""
     name = card_info.get("name", "")
+    name_local = card_info.get("name_local", card_info.get("name_jp", ""))
     set_name = card_info.get("set", "")
     number = card_info.get("number", "").split("/")[0]  # "173" from "173/086"
     set_code = card_info.get("set_code", "").lower()
 
     query = f"{name} {set_name}"
-    log.info(f"  URL_SEARCH: query='{query}' number={number} set_code={set_code}")
+    log.info(f"  URL_SEARCH: query='{query}' number={number} set_code={set_code} name_local='{name_local}'")
     results = search_cardmarket(query)
     if not results and set_code:
-        log.info(f"  URL_SEARCH: no results, trying with set_code '{name} {set_code}'")
+        log.info(f"  URL_SEARCH: trying with set_code '{name} {set_code}'")
         results = search_cardmarket(f"{name} {set_code}")
+    if not results and name_local and name_local != name:
+        log.info(f"  URL_SEARCH: trying local name '{name_local} {set_name}'")
+        results = search_cardmarket(f"{name_local} {set_name}")
     if not results:
-        log.info(f"  URL_SEARCH: no results, trying name only '{name}'")
+        log.info(f"  URL_SEARCH: trying name only '{name}'")
         results = search_cardmarket(name)
+    if not results and name_local and name_local != name:
+        log.info(f"  URL_SEARCH: trying local name only '{name_local}'")
+        results = search_cardmarket(name_local)
 
     log.info(f"  URL_SEARCH: {len(results)} results: {[u.split('/')[-1] for u in results[:8]]}")
 
@@ -467,7 +474,8 @@ async def _process_photo(msg, context):
         ebay_line = ""
         if not prices or (not prices.get("from") and not prices.get("trend")):
             log.info(f"[{check_id}] EBAY_FALLBACK: no CM prices, searching eBay...")
-            ebay_query = f"{name} {number} {set_name} japanese"
+            lang_word = {"jp": "japanese", "en": "english", "de": "german", "kr": "korean"}.get(language, "")
+            ebay_query = f"{name} {number} {set_name} {lang_word}".strip()
             log.info(f"[{check_id}] EBAY_QUERY: {ebay_query}")
             ebay = scrape_ebay_sold(ebay_query)
             if ebay:
