@@ -89,16 +89,19 @@ VISION_PROMPT = """Antworte NUR als JSON (kein Markdown):
 {
   "pokemon": "Pokemon-Spezies auf Englisch (z.B. Charizard, Umbreon, Giratina)",
   "set_code": "Set-Code von der Karte unten links oder PSA Label (z.B. PRE, WHT, BLK, s11, PFL, m2)",
-  "number": "Kartennummer von unten links (z.B. 161/131, 111/100) oder null",
+  "number": "Kartennummer von unten links (z.B. 161/131, 7/102, 94/97) oder null",
   "language": "jp|en|de",
   "grade": "raw|PSA10|PSA9|PSA8|CGC10|BGS10",
+  "is_first_edition": false,
   "shop_price": 130000,
   "shop_currency": "JPY|EUR|USD"
 }
 
 REGELN:
-- pokemon: NUR der Spezies-Name auf Englisch. Nachtara=Umbreon, Glurak=Charizard, Mega-Glurak=Mega Charizard
-- set_code: Steht unten links auf der Karte vor der Nummer (z.B. "PRE 161/131" → PRE) oder auf dem PSA Label. Wenn nicht lesbar: null
+- pokemon: LIES den Pokemon-Namen DIREKT von der Karte (steht oben). NICHT raten! Nockchan=Hitmonchan, Nachtara=Umbreon, Glurak=Charizard, Mega-Glurak=Mega Charizard, Latios=Latios, Latias=Latias. Bei alten Karten (1999-2007) steht der Name ebenfalls oben.
+- number: IMMER mit Total angeben falls lesbar (z.B. "7/102", "94/97", "161/131"). Steht unten rechts oder links auf der Karte.
+- set_code: Steht unten links auf der Karte vor der Nummer (z.B. "PRE 161/131" → PRE) oder auf dem PSA Label. Alte WotC/EX-era Karten (1999-2007) haben KEINEN Text-Code → null
+- is_first_edition: true wenn "1st Edition" oder "Edition 1" oder das Kreis-1-Symbol links am Kartenrand sichtbar ist
 - grade: PSA/CGC/BGS Label lesen. GEM MT 10=PSA10, MINT 9=PSA9. Kein Slab=raw
 - shop_price: Preistag lesen. Punkte=Tausender (¥130.000=130000). null wenn nicht sichtbar"""
 
@@ -125,6 +128,94 @@ Welches Bild hat EXAKT dasselbe Artwork? Achte genau auf: Hintergrundfarbe, Pose
 {candidates}
 
 Antworte NUR mit der Nummer."""
+
+async def _attempt_tcg_match(tcg_cards, card, b64, vision_number_raw):
+    """Try number+total match, then visual match. Modifies card in place. Returns True if matched."""
+    if not tcg_cards:
+        return False
+
+    # ─── Number+Total deterministic match ───
+    # e.g. "7/102" → only one set with 102 printed cards has this Pokemon as #7
+    if "/" in vision_number_raw:
+        parts = vision_number_raw.split("/")
+        num_str = re.sub(r"[^\d]", "", parts[0])
+        total_str = re.sub(r"[^\d]", "", parts[1])
+        if num_str and total_str:
+            total_int = int(total_str)
+            num_matches = [c for c in tcg_cards if c.get("number") == num_str and c["set"].get("printedTotal") == total_int]
+            if len(num_matches) == 1:
+                m = num_matches[0]
+                log.info(f"  NUMBER_MATCH: {m['name']} #{num_str}/{total_int} from {m['set']['name']}")
+                card["name"] = m.get("name", "")
+                card["set"] = m["set"]["name"]
+                card["set_code"] = m["set"]["id"]
+                card["number"] = m.get("number", "")
+                card["tcg_id"] = m["id"]
+                return True
+            elif num_matches:
+                log.info(f"  NUMBER_MATCH: {len(num_matches)} ambiguous for #{num_str}/{total_int} — narrowing candidates")
+                tcg_cards = num_matches
+
+    # ─── Pre-filter + gpt-4o visual match ───
+    special, regular = [], []
+    for c in tcg_cards:
+        img = c.get("images", {}).get("large", c.get("images", {}).get("small", ""))
+        if not img:
+            continue
+        entry = {
+            "id": c["id"], "name": c.get("name", ""), "number": c.get("number", ""),
+            "set_name": c["set"]["name"], "set_id": c["set"]["id"],
+            "rarity": c.get("rarity", ""), "img": img,
+        }
+        try:
+            num = int(re.match(r"\d+", c.get("number", "0")).group())
+        except (ValueError, AttributeError):
+            num = 0
+        total = c["set"].get("printedTotal", 999)
+        rarity = c.get("rarity", "").lower()
+        is_special = num > total or any(r in rarity for r in ["ultra", "rainbow", "illustration", "secret", "prism", "full art", "double", "black white", "hyper"])
+        (special if is_special else regular).append(entry)
+
+    candidates = special + regular[:max(5, 15 - len(special))]
+    for i, c in enumerate(candidates):
+        c["idx"] = i + 1
+
+    log.info(f"  CANDIDATES: {len(special)} special + {len(regular)} regular → {len(candidates)} for matching")
+
+    if not candidates:
+        return False
+
+    cand_text = "\n".join(f"{c['idx']}. {c['name']} #{c['number']} ({c['set_name']}) [{c['rarity']}]" for c in candidates)
+    cand_images = [{"type": "image_url", "image_url": {"url": c["img"], "detail": "low"}} for c in candidates]
+
+    log.info(f"  MATCH: sending {len(cand_images)} thumbnails to gpt-4o...")
+    match_resp = await openai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text": MATCH_PROMPT.format(count=len(candidates), candidates=cand_text)},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}},
+        ] + cand_images}],
+        max_completion_tokens=20, temperature=0,
+    )
+    answer = match_resp.choices[0].message.content.strip()
+    log.info(f"  MATCH: gpt-4o says '{answer}'")
+
+    num_match = re.search(r"\d+", answer)
+    if num_match:
+        idx = int(num_match.group()) - 1
+        if 0 <= idx < len(candidates):
+            matched = candidates[idx]
+            log.info(f"  IDENTIFIED: {matched['name']} #{matched['number']} from {matched['set_name']} ({matched['set_id']})")
+            card["name"] = matched["name"]
+            card["set"] = matched["set_name"]
+            card["set_code"] = matched["set_id"]
+            card["number"] = matched["number"]
+            card["tcg_id"] = matched["id"]
+            return True
+
+    log.warning(f"  MATCH: no valid match from gpt-4o: '{answer}'")
+    return False
+
 
 async def identify_card(photo_bytes):
     import base64
@@ -202,6 +293,7 @@ async def identify_card(photo_bytes):
                             return card
 
     # ─── Step 2: TCG API → all versions of this Pokemon ───
+    vision_number_raw = card.get("number", "")  # save original e.g. "7/102" before overwrites
     tcg_cards = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, pokemon_name)
 
     if not tcg_cards:
@@ -209,7 +301,7 @@ async def identify_card(photo_bytes):
         retry_resp = await openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": [
-                {"type": "text", "text": "What Pokemon species is shown on this card? Answer with ONLY the English name (e.g. Charizard, Giratina). Nothing else."},
+                {"type": "text", "text": "What Pokemon species is shown on this card? Answer with ONLY the English name (e.g. Charizard, Giratina, Latios, Hitmonchan). Nothing else."},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
             ]}],
             max_completion_tokens=20, temperature=0)
@@ -222,64 +314,28 @@ async def identify_card(photo_bytes):
         log.info(f"  TCG_API: still 0 results — giving up")
         return card
 
-    # ─── Step 3: Pre-filter + gpt-4o visual match ───
-    special, regular = [], []
-    for c in tcg_cards:
-        img = c.get("images", {}).get("large", c.get("images", {}).get("small", ""))
-        if not img:
-            continue
-        entry = {
-            "id": c["id"], "name": c.get("name", ""), "number": c.get("number", ""),
-            "set_name": c["set"]["name"], "set_id": c["set"]["id"],
-            "rarity": c.get("rarity", ""), "img": img,
-        }
-        try:
-            num = int(re.match(r"\d+", c.get("number", "0")).group())
-        except (ValueError, AttributeError):
-            num = 0
-        total = c["set"].get("printedTotal", 999)
-        rarity = c.get("rarity", "").lower()
-        is_special = num > total or any(r in rarity for r in ["ultra", "rainbow", "illustration", "secret", "prism", "full art", "double", "black white", "hyper"])
-        (special if is_special else regular).append(entry)
+    # ─── Step 3: Number+total match → visual match (with retry on failure) ───
+    matched = await _attempt_tcg_match(tcg_cards, card, b64, vision_number_raw)
 
-    candidates = special + regular[:max(5, 15 - len(special))]
-    for i, c in enumerate(candidates):
-        c["idx"] = i + 1
-
-    log.info(f"  CANDIDATES: {len(special)} special + {len(regular)} regular → {len(candidates)} for matching")
-
-    if not candidates:
-        return card
-
-    cand_text = "\n".join(f"{c['idx']}. {c['name']} #{c['number']} ({c['set_name']}) [{c['rarity']}]" for c in candidates)
-    cand_images = [{"type": "image_url", "image_url": {"url": c["img"], "detail": "low"}} for c in candidates]
-
-    log.info(f"  MATCH: sending {len(cand_images)} thumbnails to gpt-4o...")
-    match_resp = await openai_client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": [
-            {"type": "text", "text": MATCH_PROMPT.format(count=len(candidates), candidates=cand_text)},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}},
-        ] + cand_images}],
-        max_completion_tokens=20, temperature=0,
-    )
-    answer = match_resp.choices[0].message.content.strip()
-    log.info(f"  MATCH: gpt-4o says '{answer}'")
-
-    num_match = re.search(r"\d+", answer)
-    if num_match:
-        idx = int(num_match.group()) - 1
-        if 0 <= idx < len(candidates):
-            matched = candidates[idx]
-            log.info(f"  IDENTIFIED: {matched['name']} #{matched['number']} from {matched['set_name']} ({matched['set_id']})")
-            # TCG match is the source of truth for card identity
-            card["name"] = matched["name"]
-            card["set"] = matched["set_name"]
-            card["set_code"] = matched["set_id"]
-            card["number"] = matched["number"]
-            card["tcg_id"] = matched["id"]
-    else:
-        log.warning(f"  MATCH: no valid response from gpt-4o: '{answer}'")
+    # If match failed, try gpt-4o re-identification + full retry
+    if not matched:
+        log.info(f"  ALL_MATCH_FAILED for '{pokemon_name}' — trying gpt-4o re-identification...")
+        retry_resp = await openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": [
+                {"type": "text", "text": "What Pokemon species is on this card? Read the name printed on the card. English name only (e.g. Charizard, Latios, Hitmonchan). One word."},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
+            ]}],
+            max_completion_tokens=20, temperature=0)
+        reident_name = retry_resp.choices[0].message.content.strip().split()[0].strip(".,!\"'")
+        if reident_name.lower() != pokemon_name.lower():
+            log.info(f"  REIDENT_RETRY: '{reident_name}' (was '{pokemon_name}')")
+            card["pokemon"] = reident_name
+            retry_tcg = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, reident_name)
+            if retry_tcg:
+                await _attempt_tcg_match(retry_tcg, card, b64, vision_number_raw)
+        else:
+            log.info(f"  REIDENT: same name '{reident_name}' — no retry")
 
     return card
 
@@ -414,6 +470,8 @@ async def scrape_cardmarket_prices(card_info):
         params += "&minCondition=1&isGraded=Y"
     else:
         params += "&minCondition=2"
+    if card_info.get("is_first_edition"):
+        params += "&isFirstEd=Y"
 
     separator = "&" if "?" in url else "?"
     full_url = f"{url}{separator}{params}"
