@@ -328,9 +328,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg or not msg.photo:
         return
 
-    # Send "typing" indicator
-    await msg.reply_text("\U0001f50d Analysiere Karte...")
-
     try:
         # 1. Download photo
         photo = msg.photo[-1]  # highest resolution
