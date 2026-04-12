@@ -84,15 +84,15 @@ def fmt_eur(val):
 
 # ─── Vision: Card Identification ─────────────────────────────
 
-VISION_PROMPT = """Identifiziere diese Pokemon-Karte EXAKT aus dem Foto.
+VISION_PROMPT = """Identifiziere diese Pokemon-Karte EXAKT aus dem Foto. Lies ALLE Informationen direkt von der Karte oder dem PSA-Label ab.
 
 Antworte NUR als JSON (kein Markdown, kein Text drumrum):
 {
-  "name": "Kartenname IMMER auf ENGLISCH (z.B. Umbreon ex, nicht Nachtara ex!)",
-  "name_local": "Kartenname in der Sprache auf der Karte (z.B. Nachtara ex, ブラッキーex)",
-  "set": "Set-Name auf ENGLISCH (z.B. Prismatic Evolutions, nicht Prismatische Entwicklungen!)",
-  "set_code": "Set-Code (z.B. sv8a, sm9, sv-p)",
-  "number": "Kartennummer (z.B. 217/187)",
+  "name": "Kartenname auf ENGLISCH",
+  "name_local": "Kartenname wie auf der Karte gedruckt",
+  "set": "Set-Name auf ENGLISCH",
+  "set_code": "Set-Code EXAKT wie auf der Karte unten links",
+  "number": "Kartennummer EXAKT (z.B. 161/131)",
   "language": "jp|en|de|kr|cn",
   "version": "regular|holo|FA|SAR|SR|UR|AR|IR",
   "grade": "raw|PSA10|PSA9|PSA8|CGC10|CGC9.5|BGS10",
@@ -100,32 +100,22 @@ Antworte NUR als JSON (kein Markdown, kein Text drumrum):
   "shop_currency": "JPY|EUR|USD"
 }
 
+WO STEHT WAS:
+- UNTEN LINKS auf der Karte steht der Set-Code + Kartennummer, z.B. "PRE 161/131" oder "sv8a 217/187" oder "sm9 103/095"
+  → set_code = der Buchstabenteil (PRE, sv8a, sm9, WHT, BLK, etc.)
+  → number = die Nummer (161/131, 217/187, etc.)
+- name: Steht OBEN auf der Karte. Bei nicht-englischen Karten: uebersetze den Namen ins Englische (Nachtara = Umbreon, Bisaflor = Venusaur, etc.)
+- Bei PSA SLABS: OBEN auf dem Label steht alles — Set-Code, Kartenname, Nummer, Grade. Lies es von dort!
+
 REGELN:
-- name: englischer offizieller Name (z.B. "Umbreon ex", "Latias & Latios GX", "Greninja ex")
-- WICHTIG: Lies den TATSAECHLICHEN Kartennamen von der Karte oder dem PSA-Label! Rate NICHT anhand des Artworks.
-- number: EXAKT wie auf der Karte gedruckt (z.B. "217/187", "105/095", "120/083")
-- Kartennummer > Setgroesse (z.B. 217/187, 120/083) = Secret Rare, SAR oder UR
-- Artwork das ueber den Kartenrahmen hinausgeht = SAR oder Illustration Rare
-- Goldener Rand / komplett goldene Karte = UR (Ultra Rare / Gold)
-- PSA/CGC/BGS Slab = graded Karte, Grade vom PSA-Label lesen (GEM MT 10 = PSA10, MINT 9 = PSA9)
-- Bei PSA Slabs: OBEN auf dem Label steht der exakte Kartenname, Set, Nummer und Set-Code — lies ALLES ab!
-- PSA Label Format: "YYYY POKEMON [SET_CODE] [LANGUAGE]" dann "KARTENNAME" dann "SET_NAME" dann "#NNN" und "GEM MT 10" etc.
-- set_code: Lies den Set-Code EXAKT vom PSA-Label oder von der Karte unten links (z.B. PRE, WHT, sv8a, sm9)
-- ACHTUNG: Die Kartennummer steht unten links auf der Karte (z.B. "PRE 161/131" oder "sv8a 217/187")
-  Der Buchstabencode VOR der Nummer ist der set_code!
-- set: Uebersetze den Set-Code in den englischen Set-Namen:
-  PRE = Prismatic Evolutions, WHT = White Flare, BLK = Black Bolt,
-  sv8a = Terastal Festival ex, sm9 = Tag Bolt, sv2a = Pokemon Card 151,
-  PFL = Phantasmal Flames, MEW = Pokemon Card 151, SV-P = SV-P Promotional Cards,
-  sv8 = Surging Sparks, m2a = MEGA Dream ex, JTG = Journey Together,
-  SCR = Stellar Crown, TWM = Twilight Masquerade, OBF = Obsidian Flames
-- WICHTIG: PRE und sv8a sind VERSCHIEDENE Sets! PRE = Prismatic Evolutions, sv8a = Terastal Festival ex
-- WENN ein PSA-Label vorhanden ist: set und set_code MUESSEN vom Label kommen, NICHT geraten!
-- Preistag: Suche nach Preisetiketten, Stickern oder Preisschildern IM ODER NEBEN dem Foto
-- shop_price: Die GROESSTE sichtbare Zahl auf dem Preistag (ACHTUNG: ¥130.000 = 130000, nicht 30000! Punkte sind Tausendertrennzeichen!)
-- Japanische Preise nutzen ¥ Symbol oder sind in der Naehe von "税込" (inkl. MwSt)
-- shop_price null wenn KEIN Preis sichtbar
-- Japanische Karten haben japanischen Text auf der Karte"""
+- name IMMER englisch (Umbreon ex, nicht Nachtara ex)
+- set_code: ABSCHREIBEN, nicht raten! Steht auf der Karte oder dem PSA-Label.
+- Kartennummer > Setgroesse = Secret Rare/SAR/UR
+- Artwork ueber Rahmen = SAR/Illustration Rare
+- Goldene Karte = UR
+- PSA GEM MT 10 = PSA10, MINT 9 = PSA9
+- Preistag: GROESSTE Zahl auf Etikett/Sticker (Punkte = Tausender: ¥130.000 = 130000)
+- shop_price null wenn kein Preis sichtbar"""
 
 async def identify_card(photo_bytes):
     import base64
