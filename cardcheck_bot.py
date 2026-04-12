@@ -88,6 +88,7 @@ def fmt_eur(val):
 VISION_PROMPT = """Antworte NUR als JSON (kein Markdown):
 {
   "pokemon": "Pokemon-Spezies auf Englisch (z.B. Charizard, Umbreon, Giratina)",
+  "card_suffix": "ex|EX|V|GX|VMAX|VSTAR|VUNION|none",
   "set_code": "Set-Code von der Karte unten links oder PSA Label (z.B. PRE, WHT, BLK, s11, PFL, m2)",
   "number": "Kartennummer von unten links (z.B. 161/131, 7/102, 94/97) oder null",
   "language": "jp|en|de",
@@ -99,9 +100,10 @@ VISION_PROMPT = """Antworte NUR als JSON (kein Markdown):
 
 REGELN:
 - pokemon: LIES den Pokemon-Namen DIREKT von der Karte (steht oben). NICHT raten! Nockchan=Hitmonchan, Nachtara=Umbreon, Glurak=Charizard, Mega-Glurak=Mega Charizard, Latios=Latios, Latias=Latias. Bei alten Karten (1999-2007) steht der Name ebenfalls oben.
+- card_suffix: Steht "ex", "EX", "V", "GX", "VMAX", "VSTAR" im Kartennamen? Wenn ja → diesen Suffix. Wenn NICHT → "none". WICHTIG: "Victini" ohne Suffix = "none", "Victini ex" = "ex"
 - number: IMMER mit Total angeben falls lesbar (z.B. "7/102", "94/97", "161/131"). Steht unten rechts oder links auf der Karte.
 - set_code: Steht unten links auf der Karte vor der Nummer (z.B. "PRE 161/131" → PRE) oder auf dem PSA Label. Alte WotC/EX-era Karten (1999-2007) haben KEINEN Text-Code → null
-- is_first_edition: GENAU PRÜFEN! true wenn links unter dem Kartenbild ein kleines "1" in einem Kreis/schwarzen Punkt steht, oder "1st Edition", "Edition 1", "1. Edition" auf der Karte steht. Bei alten Karten (1999-2003) ist das 1st-Edition-Symbol ein kleiner schwarzer Kreis mit "1" darin, links neben dem Beschreibungstext.
+- is_first_edition: true wenn links unter dem Kartenbild ein "1" in einem Kreis steht, oder "1st Edition"/"1. Edition" auf der Karte steht
 - grade: PSA/CGC/BGS Label lesen. GEM MT 10=PSA10, MINT 9=PSA9. Kein Slab=raw
 - shop_price: Preistag lesen. Punkte=Tausender (¥130.000=130000). null wenn nicht sichtbar"""
 
@@ -124,12 +126,9 @@ def search_tcg_api(pokemon_name):
 MATCH_PROMPT = """Hier ist ein Foto einer Pokemon-Karte. Darunter {count} Kandidaten-Bilder.
 
 Welches Bild hat EXAKT dasselbe Artwork UND denselben Kartenrahmen?
-
-WICHTIGE REGELN:
-1. "Victini" und "Victini ex" sind KOMPLETT VERSCHIEDENE Karten! Lies den Namen auf dem Foto: steht "ex", "V", "GX", "VSTAR" drauf? Wenn NICHT → waehle eine Karte OHNE diesen Suffix.
-2. Alte Karten (1999-2007): silber/grauer Rahmen, WotC/EX-era Design
-3. Moderne Karten (2008+): schwarzer/farbiger Rahmen
-4. Illustration Rare (IR): Artwork bedeckt die GANZE Karte, kein normaler Rahmen — diagonale Linien oder spezielle Textur
+- Alte Karten (1999-2007): silber/grauer Rahmen, WotC/EX-era Design
+- Moderne Karten (2008+): schwarzer/farbiger Rahmen
+- Illustration Rare: Artwork bedeckt die GANZE Karte
 
 {candidates}
 
@@ -186,6 +185,26 @@ async def _attempt_tcg_match(tcg_cards, card, b64, vision_number_raw):
         (special if is_special else regular).append(entry)
 
     candidates = special + regular[:max(5, 15 - len(special))]
+
+    # ─── Filter by card_suffix from Vision (e.g. "none" → exclude "ex" cards) ───
+    vision_suffix = (card.get("card_suffix") or "none").lower()
+    if vision_suffix != "none" and len(candidates) > 3:
+        # Vision detected a suffix (ex, V, GX) → keep only cards with that suffix in name
+        suffix_map = {"ex": [" ex", "-EX"], "v": [" V", "-V"], "gx": [" GX", "-GX"],
+                       "vmax": ["VMAX"], "vstar": ["VSTAR"]}
+        patterns = suffix_map.get(vision_suffix, [vision_suffix])
+        filtered = [c for c in candidates if any(p.lower() in c["name"].lower() for p in patterns)]
+        if filtered:
+            log.info(f"  SUFFIX_FILTER: '{vision_suffix}' → {len(candidates)} → {len(filtered)} candidates")
+            candidates = filtered
+    elif vision_suffix == "none" and len(candidates) > 3:
+        # Vision says NO suffix → prefer cards without ex/V/GX in name
+        suffix_words = [" ex", "-EX", " V", "-V", " GX", "-GX", "VMAX", "VSTAR"]
+        no_suffix = [c for c in candidates if not any(s.lower() in c["name"].lower() for s in suffix_words)]
+        if no_suffix and len(no_suffix) >= 3:
+            log.info(f"  SUFFIX_FILTER: 'none' → {len(candidates)} → {len(no_suffix)} candidates (removed ex/V/GX)")
+            candidates = no_suffix
+
     for i, c in enumerate(candidates):
         c["idx"] = i + 1
 
