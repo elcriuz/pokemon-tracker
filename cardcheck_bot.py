@@ -176,7 +176,7 @@ async def identify_card(photo_bytes):
         retry_resp = await openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": [
-                {"type": "text", "text": "What Pokemon is on this card? Give the FULL English name including Mega/etc (e.g. 'Mega Charizard X', 'Giratina'). One line only."},
+                {"type": "text", "text": "What Pokemon is on this card? Give the FULL card name in English, including Mega, VSTAR, ex etc. Examples: 'Mega Charizard X ex', 'Giratina VSTAR', 'Umbreon ex'. This is a gold/UR Japanese Pokemon card. One line only."},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
             ]}],
             max_completion_tokens=20, temperature=0)
