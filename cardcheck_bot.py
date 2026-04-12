@@ -380,9 +380,9 @@ def scrape_cardmarket_prices(card_info):
 
     # Build URL with filters
     params = f"language={lang_code}"
-    # minCondition: 1=Mint (fuer graded), 2=Near Mint, 3=Excellent
-    if grade.startswith("PSA") or grade.startswith("CGC") or grade.startswith("BGS"):
-        params += "&minCondition=1"
+    is_graded = grade.startswith("PSA") or grade.startswith("CGC") or grade.startswith("BGS")
+    if is_graded:
+        params += "&minCondition=1&isGraded=Y"
     else:
         params += "&minCondition=2"
 
