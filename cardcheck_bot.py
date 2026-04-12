@@ -84,54 +84,24 @@ def fmt_eur(val):
 
 # ─── Vision: Card Identification ─────────────────────────────
 
-VISION_PROMPT = """Identifiziere diese Pokemon-Karte EXAKT aus dem Foto. Lies ALLE Informationen direkt von der Karte oder dem PSA-Label ab.
-
-Antworte NUR als JSON (kein Markdown, kein Text drumrum):
+VISION_PROMPT = """Antworte NUR als JSON (kein Markdown):
 {
-  "name": "Kartenname auf ENGLISCH",
-  "name_local": "Kartenname wie auf der Karte gedruckt",
-  "set": "Set-Name auf ENGLISCH",
-  "set_code": "Set-Code EXAKT wie auf der Karte unten links",
-  "number": "Kartennummer EXAKT (z.B. 161/131)",
-  "language": "jp|en|de|kr|cn",
-  "version": "regular|holo|FA|SAR|SR|UR|AR|IR",
-  "grade": "raw|PSA10|PSA9|PSA8|CGC10|CGC9.5|BGS10",
+  "pokemon": "Pokemon-Spezies auf Englisch (z.B. Charizard, Umbreon, Giratina)",
+  "set_code": "Set-Code von der Karte unten links oder PSA Label (z.B. PRE, WHT, BLK, s11, PFL, m2)",
+  "number": "Kartennummer von unten links (z.B. 161/131, 111/100) oder null",
+  "language": "jp|en|de",
+  "grade": "raw|PSA10|PSA9|PSA8|CGC10|BGS10",
   "shop_price": 130000,
   "shop_currency": "JPY|EUR|USD"
 }
 
-WO STEHT WAS:
-- UNTEN LINKS auf der Karte steht der Set-Code + Kartennummer, z.B. "PRE 161/131" oder "sv8a 217/187" oder "sm9 103/095"
-  → set_code = der Buchstabenteil (PRE, sv8a, sm9, WHT, BLK, etc.)
-  → number = die Nummer (161/131, 217/187, etc.)
-- name: Steht OBEN auf der Karte. Bei nicht-englischen Karten: uebersetze den Namen ins Englische (Nachtara = Umbreon, Bisaflor = Venusaur, etc.)
-- Bei PSA SLABS: OBEN auf dem Label steht alles — Set-Code, Kartenname, Nummer, Grade. Lies es von dort!
-
 REGELN:
-- name IMMER englisch (Umbreon ex, nicht Nachtara ex)
-- set_code: ABSCHREIBEN, nicht raten! Steht auf der Karte oder dem PSA-Label.
-- Kartennummer > Setgroesse = Secret Rare/SAR/UR
-- Artwork ueber Rahmen = SAR/Illustration Rare
-- Goldene Karte = UR
-- PSA GEM MT 10 = PSA10, MINT 9 = PSA9
-- Preistag: GROESSTE Zahl auf Etikett/Sticker (Punkte = Tausender: ¥130.000 = 130000)
-- shop_price null wenn kein Preis sichtbar"""
+- pokemon: NUR der Spezies-Name auf Englisch. Nachtara=Umbreon, Glurak=Charizard, Mega-Glurak=Mega Charizard
+- set_code: Steht unten links auf der Karte vor der Nummer (z.B. "PRE 161/131" → PRE) oder auf dem PSA Label. Wenn nicht lesbar: null
+- grade: PSA/CGC/BGS Label lesen. GEM MT 10=PSA10, MINT 9=PSA9. Kein Slab=raw
+- shop_price: Preistag lesen. Punkte=Tausender (¥130.000=130000). null wenn nicht sichtbar"""
 
 TCG_API = "https://api.pokemontcg.io/v2"
-
-def search_tcg_api_exact(pokemon_name, number):
-    """Sucht eine Karte per Name + exakte Nummer in der TCG API."""
-    try:
-        resp = requests.get(
-            f"{TCG_API}/cards",
-            params={"q": f"name:{pokemon_name} number:{number}", "select": "id,name,number,set,rarity", "pageSize": 5},
-            timeout=10
-        )
-        if resp.status_code == 200:
-            return resp.json().get("data", [])
-    except Exception as e:
-        log.warning(f"  TCG API exact failed: {e}")
-    return []
 
 def search_tcg_api(pokemon_name):
     """Sucht alle Karten eines Pokemon in der TCG API."""
@@ -149,7 +119,7 @@ def search_tcg_api(pokemon_name):
 
 MATCH_PROMPT = """Hier ist ein Foto einer Pokemon-Karte. Darunter {count} Kandidaten-Bilder aus der Datenbank.
 
-Welches Bild hat EXAKT dasselbe Artwork? Achte genau auf: Hintergrundfarbe, Pose, Stil, Rahmen.
+Welches Bild hat EXAKT dasselbe Artwork? Achte genau auf: Hintergrundfarbe, Pose, Stil, Rahmen, Kartentyp (gold, full-art, illustration).
 
 {candidates}
 
@@ -159,54 +129,72 @@ async def identify_card(photo_bytes):
     import base64
     b64 = base64.b64encode(photo_bytes).decode()
 
-    # Step 1: Quick Vision (name, grade, price) — gpt-5.4-mini
+    # ─── Step 1: Vision (gpt-5.4-mini) → Pokemon species, grade, shop price ───
     vision_resp = await openai_client.chat.completions.create(
         model="gpt-5.4-mini",
         messages=[{"role": "user", "content": [
             {"type": "text", "text": VISION_PROMPT},
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
         ]}],
-        max_completion_tokens=500, temperature=0,
+        max_completion_tokens=300, temperature=0,
     )
-
-    text = vision_resp.choices[0].message.content.strip()
-    text = re.sub(r"^```json?\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
+    text = re.sub(r"^```json?\s*|\s*```$", "", vision_resp.choices[0].message.content.strip())
     card = json.loads(text)
 
-    # Step 2: TCG API — try exact lookup by name + number first
-    pokemon_name = card.get("name", "").split(" ex")[0].split(" EX")[0].split(" V")[0].split(" GX")[0].split(" VMAX")[0].split(" VSTAR")[0].strip()
+    pokemon_name = card.get("pokemon", card.get("name", "")).strip()
+    # Save vision's set_code for CM search later (gpt-4o match will overwrite card["set_code"])
+    card["vision_set_code"] = card.get("set_code", "")
+    log.info(f"  VISION: pokemon='{pokemon_name}' set_code='{card.get('set_code','')}' lang={card.get('language')} grade={card.get('grade')} price={card.get('shop_price')}")
+
     if not pokemon_name:
         return card
 
-    number = re.sub(r"[^\d]", "", card.get("number", "").split("/")[0])  # strip # and other non-digits
-    full_name = card.get("name", "")
+    # ─── Step 1b: Quick CM check — if Vision read set_code, try direct CM search ───
+    # This handles JP-only sets not in TCG API (Lost Abyss s11, etc.)
+    vision_sc = card.get("vision_set_code", "")
+    vision_num = re.sub(r"[^\d]", "", card.get("number", "").split("/")[0]) if card.get("number") else ""
+    if vision_sc and vision_num and len(vision_sc) <= 6:
+        log.info(f"  QUICK_CM: trying '{pokemon_name} {vision_sc}' for #{vision_num}...")
+        quick_results = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: search_cardmarket(f"{pokemon_name} {vision_sc}"))
+        pslug = pokemon_name.lower().split()[0]
+        for tn in [vision_num, str(int(vision_num)-1), str(int(vision_num)+1)] if vision_num.isdigit() else [vision_num]:
+            for url in quick_results:
+                slug = url.split("/")[-1].lower()
+                if pslug in slug and tn in slug:
+                    log.info(f"  QUICK_CM: FOUND {url.split('/')[-1]} — skipping gpt-4o match")
+                    # Extract card name from URL slug
+                    card_slug = url.split("/")[-1]
+                    card["name"] = re.sub(r"-V\d.*", "", card_slug).replace("-", " ")
+                    card["number"] = vision_num
+                    card["cm_url_override"] = url
+                    return card
 
-    # Step 2a: TCG exact lookup (name + number) — run in parallel with full search
-    tcg_exact = []
-    if number and number.isdigit():
-        log.info(f"  TCG_API: exact lookup '{pokemon_name}' number:{number}...")
-        tcg_exact = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: search_tcg_api_exact(pokemon_name, number))
-        if len(tcg_exact) == 1:
-            s = tcg_exact[0]["set"]
-            log.info(f"  TCG_EXACT: {tcg_exact[0]['name']} #{tcg_exact[0]['number']} from {s['name']} ({s['id']})")
-            # Use exact match but still do visual match to confirm
-            card["tcg_exact_set"] = s["name"]
-            card["tcg_exact_id"] = s["id"]
-
-    # Fallback: full search + gpt-4o visual match
-    log.info(f"  TCG_API: searching '{pokemon_name}' (full)...")
+    # ─── Step 2: TCG API → all versions of this Pokemon ───
     tcg_cards = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, pokemon_name)
+
+    # If no results, gpt-5.4-mini probably got the species wrong (gold/dark cards)
+    # Retry with gpt-4o which is better at identifying Pokemon from artwork
     if not tcg_cards:
-        log.info(f"  TCG_API: no results")
+        log.info(f"  TCG_API: 0 results for '{pokemon_name}' — retrying identification with gpt-4o...")
+        retry_resp = await openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": [
+                {"type": "text", "text": "What Pokemon species is shown on this card? Answer with ONLY the English name (e.g. Charizard, Giratina). Nothing else."},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
+            ]}],
+            max_completion_tokens=20, temperature=0)
+        pokemon_name = retry_resp.choices[0].message.content.strip().split()[0]
+        log.info(f"  GPT4O_REIDENT: '{pokemon_name}'")
+        card["pokemon"] = pokemon_name
+        tcg_cards = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, pokemon_name)
+
+    if not tcg_cards:
+        log.info(f"  TCG_API: still 0 results — giving up")
         return card
 
-    log.info(f"  TCG_API: {len(tcg_cards)} cards found, filtering for visual match...")
-
-    # Step 3: Pre-filter candidates — special rares first
-    special = []
-    regular = []
+    # ─── Step 3: Pre-filter + gpt-4o visual match ───
+    special, regular = [], []
     for c in tcg_cards:
         img = c.get("images", {}).get("large", c.get("images", {}).get("small", ""))
         if not img:
@@ -216,24 +204,20 @@ async def identify_card(photo_bytes):
             "set_name": c["set"]["name"], "set_id": c["set"]["id"],
             "rarity": c.get("rarity", ""), "img": img,
         }
-        num_str = c.get("number", "0")
-        rarity = c.get("rarity", "").lower()
         try:
-            num = int(re.match(r"\d+", num_str).group())
+            num = int(re.match(r"\d+", c.get("number", "0")).group())
         except (ValueError, AttributeError):
             num = 0
         total = c["set"].get("printedTotal", 999)
-        is_special = num > total or any(r in rarity for r in ["ultra", "rainbow", "illustration", "secret", "prism", "full art", "double", "black white"])
-        if is_special:
-            special.append(entry)
-        else:
-            regular.append(entry)
+        rarity = c.get("rarity", "").lower()
+        is_special = num > total or any(r in rarity for r in ["ultra", "rainbow", "illustration", "secret", "prism", "full art", "double", "black white", "hyper"])
+        (special if is_special else regular).append(entry)
 
     candidates = special + regular[:max(5, 15 - len(special))]
     for i, c in enumerate(candidates):
         c["idx"] = i + 1
 
-    log.info(f"  MATCH_FILTER: {len(special)} special + {len(regular)} regular → {len(candidates)} candidates")
+    log.info(f"  CANDIDATES: {len(special)} special + {len(regular)} regular → {len(candidates)} for matching")
 
     if not candidates:
         return card
@@ -241,15 +225,13 @@ async def identify_card(photo_bytes):
     cand_text = "\n".join(f"{c['idx']}. {c['name']} #{c['number']} ({c['set_name']}) [{c['rarity']}]" for c in candidates)
     cand_images = [{"type": "image_url", "image_url": {"url": c["img"], "detail": "low"}} for c in candidates]
 
-    match_content = [
-        {"type": "text", "text": MATCH_PROMPT.format(count=len(candidates), candidates=cand_text)},
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}},
-    ] + cand_images
-
     log.info(f"  MATCH: sending {len(cand_images)} thumbnails to gpt-4o...")
     match_resp = await openai_client.chat.completions.create(
         model="gpt-4o",
-        messages=[{"role": "user", "content": match_content}],
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text": MATCH_PROMPT.format(count=len(candidates), candidates=cand_text)},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}},
+        ] + cand_images}],
         max_completion_tokens=20, temperature=0,
     )
     answer = match_resp.choices[0].message.content.strip()
@@ -260,16 +242,15 @@ async def identify_card(photo_bytes):
         idx = int(num_match.group()) - 1
         if 0 <= idx < len(candidates):
             matched = candidates[idx]
-            log.info(f"  MATCH_RESULT: {matched['name']} #{matched['number']} from {matched['set_name']} ({matched['set_id']})")
+            log.info(f"  IDENTIFIED: {matched['name']} #{matched['number']} from {matched['set_name']} ({matched['set_id']})")
+            # TCG match is the source of truth for card identity
+            card["name"] = matched["name"]
             card["set"] = matched["set_name"]
-            # Keep Vision's set_code if it's a short code from PSA label (e.g. WHT, BLK, PRE)
-            # Only override if Vision had no set_code or a long TCG API ID
-            vision_code = card.get("set_code", "")
-            if not vision_code or len(vision_code) > 6:
-                card["set_code"] = matched["set_id"]
-            card["tcg_set_id"] = matched["set_id"]
+            card["set_code"] = matched["set_id"]
             card["number"] = matched["number"]
             card["tcg_id"] = matched["id"]
+    else:
+        log.warning(f"  MATCH: no valid response from gpt-4o: '{answer}'")
 
     return card
 
@@ -331,86 +312,50 @@ def search_cardmarket(query):
     return seen
 
 def find_cardmarket_url(card_info):
-    """Findet die richtige Cardmarket-URL fuer eine Karte."""
+    """Findet die richtige Cardmarket-URL basierend auf TCG API Daten."""
+    if card_info.get("cm_url_override"):
+        return card_info["cm_url_override"]
     name = card_info.get("name", "")
-    name_local = card_info.get("name_local", card_info.get("name_jp", ""))
     set_name = card_info.get("set", "")
-    number = card_info.get("number", "").split("/")[0]  # "173" from "173/086"
-    set_code = card_info.get("set_code", "").lower()
+    number = card_info.get("number", "").split("/")[0]
+    pokemon = card_info.get("pokemon", name.split(" ex")[0].split(" V")[0].split(" GX")[0].strip())
 
-    # Search with targeted queries — set_code first (most precise)
+    # Search Cardmarket — use vision's set_code (e.g. PRE, WHT) which CM understands
+    vision_set_code = card_info.get("vision_set_code", "")
     queries = []
-    if set_code:
-        queries.append(f"{name} {set_code}")  # "Reshiram ex WHT" → finds WHT173 directly
-    queries.append(f"{name} {set_name}")
-    if number:
-        queries.append(f"{name} {number}")
-    queries.append(name)
-    if name_local and name_local != name:
-        queries.append(f"{name_local} {set_name}")
-
+    if vision_set_code:
+        queries.append(f"{name} {vision_set_code}")
+    queries += [f"{name} {set_name}", name, pokemon]
     results = []
     seen = set()
     for q in queries:
-        log.info(f"  URL_SEARCH: query='{q}'")
+        log.info(f"  CM_SEARCH: '{q}'")
         for url in search_cardmarket(q):
             if url not in seen:
                 seen.add(url)
                 results.append(url)
-        if len(results) >= 5 and number:
-            # Check if we already have a match before searching more
-            try_nums = [number, str(int(number)-1), str(int(number)+1)]
-            for tn in try_nums:
-                for url in results:
-                    if tn in url.split("/")[-1]:
-                        break
-                else:
-                    continue
-                break
-            else:
-                continue
-            break  # found a number match, stop searching
+        # Stop early if we found a number match
+        if number and any(number in url.split("/")[-1] for url in results):
+            break
 
-    log.info(f"  URL_SEARCH: {len(results)} results: {[u.split('/')[-1] for u in results[:8]]}")
+    log.info(f"  CM_RESULTS: {len(results)} — {[u.split('/')[-1] for u in results[:8]]}")
 
     if not results:
-        log.warning(f"  URL_SEARCH: FAILED — no results at all")
         return None
 
-    # 1. Best match: card number + name in URL — also try +/-2 for regional numbering
-    name_slug = name.split()[0].lower()  # "Reshiram" from "Reshiram ex"
+    # Match by card number + pokemon name in URL (try +/-2 for regional numbering)
+    name_slug = pokemon.lower().split()[0]
     if number:
-        try_numbers = [number]
-        n = int(number)
-        try_numbers += [str(n - 1), str(n + 1), str(n - 2), str(n + 2)]
-        # First pass: match number AND name
-        for try_num in try_numbers:
+        try_numbers = [number] + ([str(int(number)+d) for d in [-1,1,-2,2]] if number.isdigit() else [])
+        for tn in try_numbers:
             for url in results:
                 slug = url.split("/")[-1].lower()
-                if name_slug in slug and re.search(rf'(?:^|[a-z]){re.escape(try_num)}(?:\?|$)', slug):
-                    log.info(f"  URL_MATCH: name+number '{name_slug}'+{try_num} found in {url.split('/')[-1]}")
-                    return url
-        # Second pass: match number only (if name didn't match, e.g. different spelling)
-        for try_num in [number]:  # only exact number without name
-            for url in results:
-                slug = url.split("/")[-1]
-                if re.search(rf'(?:^|[A-Za-z]){re.escape(try_num)}(?:\?|$)', slug):
-                    log.info(f"  URL_MATCH: number {try_num} (no name match) in {slug}")
+                if name_slug in slug and tn in slug:
+                    log.info(f"  CM_MATCH: '{name_slug}'+{tn} → {url.split('/')[-1]}")
                     return url
 
-    # 2. Fallback: version-based guess from search results (no extra requests)
-    version = card_info.get("version", "regular")
-    if version in ("SAR", "SR", "UR", "IR"):
-        # Prefer higher V-numbers (V4, V5 are usually the rarer versions)
-        for vn in ["5", "4", "3"]:
-            for url in results:
-                if f"V{vn}" in url:
-                    return url
-    elif version == "FA":
-        for url in results:
-            if "V2" in url:
-                return url
-
+    # Fallback: first result
+    log.info(f"  CM_FALLBACK: using first result {results[0].split('/')[-1]}")
     return results[0]
 
 def scrape_cardmarket_prices(card_info):
