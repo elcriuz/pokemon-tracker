@@ -119,7 +119,7 @@ REGELN:
 
 TCG_API = "https://api.pokemontcg.io/v2"
 
-async def search_tcg_api(pokemon_name):
+def search_tcg_api(pokemon_name):
     """Sucht alle Karten eines Pokemon in der TCG API."""
     try:
         resp = requests.get(
