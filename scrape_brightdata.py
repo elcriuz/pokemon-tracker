@@ -39,6 +39,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 BD_BASE = "https://api.brightdata.com"
 POLL_INTERVAL = 5
 MAX_POLL_ATTEMPTS = 60  # 5s * 60 = 5min max
+MAX_PARALLEL = 50
 
 # Logging
 log_file = LOG_DIR / f"scrape_brightdata_{datetime.now().strftime('%Y-%m-%d_%H%M')}.log"
@@ -339,102 +340,105 @@ def scrape_cards(cards, api_key, zone):
 
     log.info(f"{len(remaining)} Karten zu scrapen (von {total} gesamt)")
 
-    # Phase 1: Submit all async requests
-    log.info(f"\n{'='*50}")
-    log.info(f"Phase 1: {len(remaining)} Requests async abschicken...")
-    log.info(f"{'='*50}")
+    # Process in batches of MAX_PARALLEL
+    batches = [remaining[i:i+MAX_PARALLEL] for i in range(0, len(remaining), MAX_PARALLEL)]
+    log.info(f"{len(batches)} Batch(es) a max. {MAX_PARALLEL} Karten")
 
-    pending = {}  # response_id → card
-    failed_submit = []
+    for batch_num, batch in enumerate(batches):
+        # Phase 1: Submit batch async
+        log.info(f"\n{'='*50}")
+        log.info(f"Batch {batch_num+1}/{len(batches)}: {len(batch)} Requests abschicken...")
+        log.info(f"{'='*50}")
 
-    for i, card in enumerate(remaining):
-        card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
-        try:
-            resp = requests.post(
-                f"{BD_BASE}/unblocker/req?zone={zone}",
-                headers=headers,
-                json={"url": card["url"], "country": "de"},
-                timeout=15
-            )
-            if resp.status_code == 200:
-                rid = resp.json().get("response_id", "")
-                pending[rid] = card
-                log.info(f"  [{i+1}/{len(remaining)}] {card_name} → {rid[:20]}...")
-            else:
-                log.error(f"  [{i+1}/{len(remaining)}] {card_name} → HTTP {resp.status_code}: {resp.text[:100]}")
-                failed_submit.append(card)
-        except Exception as e:
-            log.error(f"  [{i+1}/{len(remaining)}] {card_name} → Fehler: {e}")
-            failed_submit.append(card)
+        pending = {}  # response_id → card
 
-    log.info(f"\n{len(pending)} submitted, {len(failed_submit)} failed")
-
-    # Add failed submissions to results
-    for card in failed_submit:
-        results.append({
-            "url": card["url"], "name": card["name"], "notes": card["notes"],
-            "timestamp": timestamp, "error": ERR_API_ERROR,
-        })
-        stats["errors"] += 1
-
-    # Phase 2: Poll for results
-    log.info(f"\n{'='*50}")
-    log.info(f"Phase 2: Ergebnisse pollen ({POLL_INTERVAL}s Intervall)...")
-    log.info(f"{'='*50}")
-
-    done_ids = set()
-    for attempt in range(MAX_POLL_ATTEMPTS):
-        if not pending or len(done_ids) == len(pending):
-            break
-
-        time.sleep(POLL_INTERVAL)
-        still_pending = len(pending) - len(done_ids)
-        log.info(f"\n--- Poll #{attempt+1} | {len(done_ids)}/{len(pending)} fertig, {still_pending} ausstehend ---")
-
-        for rid, card in pending.items():
-            if rid in done_ids:
-                continue
+        for i, card in enumerate(batch):
+            card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
+            global_idx = batch_num * MAX_PARALLEL + i + stats["skipped"] + 1
             try:
-                resp = requests.get(
-                    f"{BD_BASE}/unblocker/get_result?zone={zone}&response_id={rid}",
-                    headers={"Authorization": f"Bearer {api_key}"},
+                resp = requests.post(
+                    f"{BD_BASE}/unblocker/req?zone={zone}",
+                    headers=headers,
+                    json={"url": card["url"], "country": "de"},
                     timeout=15
                 )
                 if resp.status_code == 200:
-                    card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
-                    content = resp.text
-                    result, status = process_result(content, card, timestamp)
-                    results.append(result)
-                    stats[status if status in stats else "errors"] += 1
-                    completed_urls.add(card["url"])
-                    done_ids.add(rid)
-                    log.info(f"  [{len(done_ids)}/{len(pending)}] {card_name} — {status}")
-
-                    # Live update
-                    save_resume_state(completed_urls, results)
-                    PRICES_DIR.mkdir(exist_ok=True)
-                    with open(LATEST_FILE, "w", encoding="utf-8") as f:
-                        json.dump(results, f, indent=2, ensure_ascii=False)
-
-                elif resp.status_code == 202:
-                    pass  # still processing
+                    rid = resp.json().get("response_id", "")
+                    pending[rid] = card
+                    log.info(f"  [{global_idx}/{total}] {card_name} → {rid[:20]}...")
                 else:
-                    card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
-                    log.warning(f"  {card_name}: HTTP {resp.status_code}")
-
+                    log.error(f"  [{global_idx}/{total}] {card_name} → HTTP {resp.status_code}: {resp.text[:100]}")
+                    results.append({
+                        "url": card["url"], "name": card["name"], "notes": card["notes"],
+                        "timestamp": timestamp, "error": ERR_API_ERROR,
+                    })
+                    stats["errors"] += 1
             except Exception as e:
-                log.warning(f"  Poll-Fehler fuer {rid[:20]}: {e}")
+                log.error(f"  [{global_idx}/{total}] {card_name} → Fehler: {e}")
+                results.append({
+                    "url": card["url"], "name": card["name"], "notes": card["notes"],
+                    "timestamp": timestamp, "error": ERR_CRASH, "error_detail": str(e),
+                })
+                stats["errors"] += 1
 
-    # Handle timed-out requests
-    for rid, card in pending.items():
-        if rid not in done_ids:
-            card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
-            log.warning(f"  TIMEOUT: {card_name}")
-            results.append({
-                "url": card["url"], "name": card["name"], "notes": card["notes"],
-                "timestamp": timestamp, "error": ERR_TIMEOUT,
-            })
-            stats["errors"] += 1
+        log.info(f"\n{len(pending)} submitted")
+
+        # Phase 2: Poll for batch results
+        log.info(f"Ergebnisse pollen ({POLL_INTERVAL}s Intervall)...")
+
+        done_ids = set()
+        for attempt in range(MAX_POLL_ATTEMPTS):
+            if not pending or len(done_ids) == len(pending):
+                break
+
+            time.sleep(POLL_INTERVAL)
+            still_pending = len(pending) - len(done_ids)
+            log.info(f"\n--- Poll #{attempt+1} | {len(done_ids)}/{len(pending)} fertig, {still_pending} ausstehend ---")
+
+            for rid, card in pending.items():
+                if rid in done_ids:
+                    continue
+                try:
+                    resp = requests.get(
+                        f"{BD_BASE}/unblocker/get_result?zone={zone}&response_id={rid}",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=15
+                    )
+                    if resp.status_code == 200:
+                        card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
+                        content = resp.text
+                        result, status = process_result(content, card, timestamp)
+                        results.append(result)
+                        stats[status if status in stats else "errors"] += 1
+                        completed_urls.add(card["url"])
+                        done_ids.add(rid)
+                        log.info(f"  [{len(results)}/{total}] {card_name} — {status}")
+
+                        # Live update
+                        save_resume_state(completed_urls, results)
+                        PRICES_DIR.mkdir(exist_ok=True)
+                        with open(LATEST_FILE, "w", encoding="utf-8") as f:
+                            json.dump(results, f, indent=2, ensure_ascii=False)
+
+                    elif resp.status_code == 202:
+                        pass  # still processing
+                    else:
+                        card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
+                        log.warning(f"  {card_name}: HTTP {resp.status_code}")
+
+                except Exception as e:
+                    log.warning(f"  Poll-Fehler fuer {rid[:20]}: {e}")
+
+        # Handle timed-out requests in this batch
+        for rid, card in pending.items():
+            if rid not in done_ids:
+                card_name = card["name"] or card["url"].split("/")[-1].split("?")[0]
+                log.warning(f"  TIMEOUT: {card_name}")
+                results.append({
+                    "url": card["url"], "name": card["name"], "notes": card["notes"],
+                    "timestamp": timestamp, "error": ERR_TIMEOUT,
+                })
+                stats["errors"] += 1
 
     clear_resume_state()
     return results, stats
