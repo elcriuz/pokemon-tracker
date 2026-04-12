@@ -119,6 +119,20 @@ REGELN:
 
 TCG_API = "https://api.pokemontcg.io/v2"
 
+def search_tcg_api_exact(pokemon_name, number):
+    """Sucht eine Karte per Name + exakte Nummer in der TCG API."""
+    try:
+        resp = requests.get(
+            f"{TCG_API}/cards",
+            params={"q": f"name:{pokemon_name} number:{number}", "select": "id,name,number,set,rarity", "pageSize": 5},
+            timeout=10
+        )
+        if resp.status_code == 200:
+            return resp.json().get("data", [])
+    except Exception as e:
+        log.warning(f"  TCG API exact failed: {e}")
+    return []
+
 def search_tcg_api(pokemon_name):
     """Sucht alle Karten eines Pokemon in der TCG API."""
     try:
@@ -160,20 +174,39 @@ async def identify_card(photo_bytes):
     text = re.sub(r"\s*```$", "", text)
     card = json.loads(text)
 
-    # Step 2: TCG API lookup by Pokemon name
+    # Step 2: TCG API — try exact lookup by name + number first
     pokemon_name = card.get("name", "").split(" ex")[0].split(" EX")[0].split(" V")[0].split(" GX")[0].split(" VMAX")[0].split(" VSTAR")[0].strip()
     if not pokemon_name:
         return card
 
-    log.info(f"  TCG_API: searching '{pokemon_name}'...")
+    number = card.get("number", "").split("/")[0]
+    full_name = card.get("name", "")
+
+    # Try exact match: name + number (fast, 1 result)
+    if number and number.isdigit():
+        log.info(f"  TCG_API: exact lookup '{pokemon_name}' number:{number}...")
+        exact = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: search_tcg_api_exact(pokemon_name, number))
+        if exact:
+            s = exact[0]["set"]
+            log.info(f"  TCG_EXACT: {exact[0]['name']} #{exact[0]['number']} from {s['name']} ({s['id']})")
+            card["set"] = s["name"]
+            if len(card.get("set_code", "")) > 6:
+                card["set_code"] = s["id"]
+            card["tcg_set_id"] = s["id"]
+            card["tcg_id"] = exact[0]["id"]
+            return card
+
+    # Fallback: full search + gpt-4o visual match
+    log.info(f"  TCG_API: searching '{pokemon_name}' (full)...")
     tcg_cards = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, pokemon_name)
     if not tcg_cards:
         log.info(f"  TCG_API: no results")
         return card
 
-    log.info(f"  TCG_API: {len(tcg_cards)} cards found")
+    log.info(f"  TCG_API: {len(tcg_cards)} cards found, filtering for visual match...")
 
-    # Step 3: Pre-filter candidates — special rares first, then a few regular as fallback
+    # Step 3: Pre-filter candidates — special rares first
     special = []
     regular = []
     for c in tcg_cards:
@@ -192,13 +225,12 @@ async def identify_card(photo_bytes):
         except (ValueError, AttributeError):
             num = 0
         total = c["set"].get("printedTotal", 999)
-        is_special = num > total or any(r in rarity for r in ["ultra", "rainbow", "illustration", "secret", "prism", "full art", "double"])
+        is_special = num > total or any(r in rarity for r in ["ultra", "rainbow", "illustration", "secret", "prism", "full art", "double", "black white"])
         if is_special:
             special.append(entry)
         else:
             regular.append(entry)
 
-    # Send special rares + a few regular as fallback (max ~15 images for reliable matching)
     candidates = special + regular[:max(5, 15 - len(special))]
     for i, c in enumerate(candidates):
         c["idx"] = i + 1
