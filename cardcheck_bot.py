@@ -29,7 +29,7 @@ def load_config():
     cfg = {}
     try:
         conn = sqlite3.connect(db)
-        rows = conn.execute("SELECT key, value FROM settings WHERE key IN ('telegram_bot_token','telegram_chat_id','openai_api_key','brightdata_api_key','brightdata_zone')").fetchall()
+        rows = conn.execute("SELECT key, value FROM settings WHERE key IN ('telegram_bot_token','telegram_chat_id','openai_api_key','brightdata_api_key','brightdata_zone','ximilar_api_key')").fetchall()
         cfg = dict(rows)
         conn.close()
     except Exception:
@@ -39,12 +39,14 @@ def load_config():
         "openai_key": cfg.get("openai_api_key", os.environ.get("OPENAI_API_KEY", "")),
         "bd_key": cfg.get("brightdata_api_key", os.environ.get("BRIGHTDATA_API_KEY", "")),
         "bd_zone": cfg.get("brightdata_zone", os.environ.get("BRIGHTDATA_ZONE", "cardmarket")),
+        "ximilar_key": cfg.get("ximilar_api_key", os.environ.get("XIMILAR_API_KEY", "")),
     }
 
 CONFIG = load_config()
 TELEGRAM_TOKEN = CONFIG["telegram_token"]
 BD_KEY = CONFIG["bd_key"]
 BD_ZONE = CONFIG["bd_zone"]
+XIMILAR_KEY = CONFIG["ximilar_key"]
 
 LANG_MAP = {"jp": 7, "en": 1, "de": 3, "fr": 2, "es": 4, "it": 5, "kr": 9, "cn": 10}
 
@@ -52,6 +54,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger("cardcheck")
 
 openai_client = AsyncOpenAI(api_key=CONFIG["openai_key"])
+
+# Ximilar toggle — remove ximilar_api_key from DB to disable (falls back to Vision+TCG+gpt-4o)
+if XIMILAR_KEY:
+    log.info("Ximilar enabled — hybrid identification (Vision + Ximilar)")
+else:
+    log.info("Ximilar disabled — using Vision + TCG API + gpt-4o pipeline")
 
 # ─── Currency ────────────────────────────────────────────────
 
@@ -246,60 +254,145 @@ async def _attempt_tcg_match(tcg_cards, card, b64, vision_number_raw):
     return False
 
 
+async def _ximilar_identify(b64, set_code_hint=""):
+    """Identify card via Ximilar API. Returns best match dict or None."""
+    if not XIMILAR_KEY:
+        return None
+    try:
+        body = {"records": [{"_base64": b64}], "lang": True, "slab_grade": True}
+        if set_code_hint:
+            body["records"][0]["set_code"] = set_code_hint
+        async with aiohttp.ClientSession() as session:
+            async with session.post("https://api.ximilar.com/collectibles/v2/tcg_id",
+                headers={"Content-Type": "application/json", "Authorization": f"Token {XIMILAR_KEY}"},
+                json=body, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    log.warning(f"  XIMILAR: HTTP {resp.status}")
+                    return None
+                data = await resp.json()
+        for rec in data.get("records", []):
+            for obj in rec.get("_objects", []):
+                ident = obj.get("_identification", {})
+                best = ident.get("best_match")
+                if best and best.get("name"):
+                    return {
+                        "best": best,
+                        "alternatives": ident.get("alternatives", []),
+                        "prob": obj.get("prob", 0),
+                        "tags": obj.get("_tags", {}),
+                        "cm_link": best.get("links", {}).get("cardmarket.com", ""),
+                    }
+    except Exception as e:
+        log.warning(f"  XIMILAR: {e}")
+    return None
+
+
 async def identify_card(photo_bytes):
     import base64
     b64 = base64.b64encode(photo_bytes).decode()
 
-    # ─── Step 1: Vision (gpt-5.4-mini) → Pokemon species, grade, shop price ───
-    vision_resp = await openai_client.chat.completions.create(
-        model="gpt-5.4-mini",
-        messages=[{"role": "user", "content": [
-            {"type": "text", "text": VISION_PROMPT},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
-        ]}],
-        max_completion_tokens=300, temperature=0,
-    )
-    text = re.sub(r"^```json?\s*|\s*```$", "", vision_resp.choices[0].message.content.strip())
-    card = json.loads(text)
+    # ─── Step 1: Vision + Ximilar in PARALLEL ───
+    async def _vision():
+        r = await openai_client.chat.completions.create(
+            model="gpt-5.4-mini",
+            messages=[{"role": "user", "content": [
+                {"type": "text", "text": VISION_PROMPT},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
+            ]}],
+            max_completion_tokens=300, temperature=0,
+        )
+        text = re.sub(r"^```json?\s*|\s*```$", "", r.choices[0].message.content.strip())
+        return json.loads(text)
+
+    # First Ximilar call without hint (parallel with Vision)
+    vision_task = asyncio.ensure_future(_vision())
+    ximilar_task = asyncio.ensure_future(_ximilar_identify(b64))
+    card, ximilar_result = await asyncio.gather(vision_task, ximilar_task)
 
     pokemon_name = card.get("pokemon", card.get("name", "")).strip()
-    # Save vision's set_code for CM search later (gpt-4o match will overwrite card["set_code"])
     card["vision_set_code"] = card.get("set_code", "")
-    log.info(f"  VISION: pokemon='{pokemon_name}' set_code='{card.get('set_code','')}' lang={card.get('language')} grade={card.get('grade')} price={card.get('shop_price')}")
+    vision_sc = card.get("vision_set_code") or ""
+    if vision_sc.lower() in ("none", "null", "basis", "basic", "stage", "stufe"):
+        vision_sc = ""
+        card["vision_set_code"] = ""
+    vision_num = re.sub(r"[^\d]", "", card.get("number", "").split("/")[0]) if card.get("number") else ""
+
+    log.info(f"  VISION: pokemon='{pokemon_name}' set_code='{vision_sc}' num='{vision_num}' lang={card.get('language')} grade={card.get('grade')}")
 
     if not pokemon_name:
         return card
 
-    # ─── Step 1b: Quick CM check — if Vision read set_code, try direct CM search ───
-    # This handles JP-only sets not in TCG API (Lost Abyss s11, etc.)
-    vision_sc = card.get("vision_set_code") or ""
-    if vision_sc.lower() in ("none", "null", "basis", "basic", "stage", "stufe"):
-        vision_sc = ""
-    vision_num = re.sub(r"[^\d]", "", card.get("number", "").split("/")[0]) if card.get("number") else ""
+    # ─── Step 2: If Vision has set_code → Quick CM (fastest path, handles JP sets) ───
     if vision_sc and vision_num and len(vision_sc) <= 6:
-        # Try with pokemon name first, then without (in case Vision got name wrong)
         for search_q in [f"{pokemon_name} {vision_sc}", f"{vision_sc}{vision_num}"]:
             log.info(f"  QUICK_CM: trying '{search_q}'...")
             quick_results = await search_cardmarket(search_q)
-            for tn in [vision_num]:  # exact match only
-                for url in quick_results:
-                    slug = url.split("/")[-1]
-                    # Number must be at END of slug (after set code prefix), not a substring
-                    if slug.endswith(tn):
-                        log.info(f"  QUICK_CM: FOUND {slug} — skipping gpt-4o match")
-                        card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
-                        card["set"] = url.split("/Singles/")[-1].split("/")[0].replace("-", " ") if "/Singles/" in url else ""
-                        card["number"] = vision_num
-                        card["cm_url_override"] = url
-                        return card
+            for url in quick_results:
+                slug = url.split("/")[-1]
+                # Match: slug ends with vision_num (exact match, no digit-predecessor check
+                # because set codes like "s11" + number "111" → "s11111" are valid)
+                if slug.endswith(vision_num):
+                    log.info(f"  QUICK_CM: FOUND {slug}")
+                    card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
+                    card["set"] = url.split("/Singles/")[-1].split("/")[0].replace("-", " ") if "/Singles/" in url else ""
+                    card["number"] = vision_num
+                    card["cm_url_override"] = url
+                    return card
 
-    # ─── Step 1c: If Quick CM failed and we have set_code, try gpt-4o to re-identify ───
+    # ─── Step 3: Ximilar result → use if available ───
+    # If Vision had a set_code, retry Ximilar with hint for better accuracy
+    if ximilar_result and vision_sc and ximilar_result["best"].get("set_code") != vision_sc:
+        log.info(f"  XIMILAR: retrying with set_code hint '{vision_sc}'...")
+        ximilar_result = await _ximilar_identify(b64, set_code_hint=vision_sc)
+
+    if ximilar_result and ximilar_result["prob"] > 0.75:
+        best = ximilar_result["best"]
+        log.info(f"  XIMILAR: {best.get('full_name')} prob={ximilar_result['prob']:.2f}")
+
+        # Cross-reference with Vision's number to pick right alternative
+        # Only if Vision read X/Y format AND the name matches (avoid picking wrong Pokemon)
+        vision_number_raw = card.get("number") or ""
+        picked = best
+        if "/" in vision_number_raw:
+            v_num = re.sub(r"[^\d]", "", vision_number_raw.split("/")[0])
+            best_name_lower = (best.get("name") or "").lower()
+            if v_num and str(best.get("card_number")) != v_num:
+                for alt in ximilar_result["alternatives"]:
+                    alt_name_lower = (alt.get("name") or "").lower()
+                    # Only pick alt if same Pokemon species AND number matches
+                    if str(alt.get("card_number")) == v_num and best_name_lower.split()[0] in alt_name_lower:
+                        log.info(f"  XIMILAR: alt match by number #{v_num}: {alt.get('full_name')}")
+                        picked = alt
+                        break
+
+        card["name"] = picked.get("name", "")
+        card["set"] = picked.get("set", "")
+        card["set_code"] = picked.get("set_code", "")
+        card["number"] = str(picked.get("card_number", ""))
+        card["ximilar_id"] = True
+        card["ptcgo_code"] = picked.get("set_code", "")
+        # Only use CM product URL for best_match (alt's product ID may point to wrong variant)
+        if picked is best:
+            cm_link = picked.get("links", {}).get("cardmarket.com", "")
+            if cm_link and "idProduct=" in cm_link:
+                card["cm_product_url"] = cm_link
+        # Save partner-set alternatives for CM search fallback (WHT/BLK etc.)
+        partner_alts = [a for a in ximilar_result["alternatives"]
+                        if a.get("name") == picked.get("name") and str(a.get("card_number")) == str(picked.get("card_number"))]
+        if partner_alts:
+            card["ximilar_partner_sets"] = [a.get("set_code", "") for a in partner_alts]
+            log.info(f"  XIMILAR: partner sets: {card['ximilar_partner_sets']}")
+        return card
+    else:
+        log.info(f"  XIMILAR: no result or low confidence — falling back to TCG API pipeline")
+
+    # ─── Step 4: Fallback — Quick CM with gpt-4o reident (for JP cards Ximilar missed) ───
     if vision_sc and vision_num:
-        log.info(f"  QUICK_CM failed — trying gpt-4o re-identification...")
+        log.info(f"  QUICK_CM failed + XIMILAR missed — trying gpt-4o re-identification...")
         retry_resp = await openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": [
-                {"type": "text", "text": "What Pokemon is on this card? Give the FULL card name in English, including Mega, VSTAR, ex etc. Examples: 'Mega Charizard X ex', 'Giratina VSTAR', 'Umbreon ex'. This is a gold/UR Japanese Pokemon card. One line only."},
+                {"type": "text", "text": "What Pokemon is on this card? Give the FULL card name in English, including Mega, VSTAR, ex etc. One line only."},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
             ]}],
             max_completion_tokens=20, temperature=0)
@@ -308,65 +401,40 @@ async def identify_card(photo_bytes):
         if new_name.lower() != pokemon_name.lower():
             pokemon_name = new_name
             card["pokemon"] = pokemon_name
-            # Retry Quick CM with corrected name
-            for search_q in [f"{pokemon_name} {vision_sc}", f"{pokemon_name} ex {vision_sc}"]:
-                log.info(f"  QUICK_CM retry: '{search_q}'...")
-                quick_results = await search_cardmarket(search_q)
-                for tn in [vision_num]:  # exact match only
-                    for url in quick_results:
-                        slug = url.split("/")[-1]
-                        if slug.endswith(tn):
-                            log.info(f"  QUICK_CM retry: FOUND {slug}")
-                            card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
-                            card["set"] = url.split("/Singles/")[-1].split("/")[0].replace("-", " ") if "/Singles/" in url else ""
-                            card["number"] = vision_num
-                            card["cm_url_override"] = url
-                            return card
+        for search_q in [f"{pokemon_name} {vision_sc}", f"{pokemon_name} ex {vision_sc}"]:
+            log.info(f"  QUICK_CM retry: '{search_q}'...")
+            quick_results = await search_cardmarket(search_q)
+            for url in quick_results:
+                slug = url.split("/")[-1]
+                if slug.endswith(vision_num):
+                    log.info(f"  QUICK_CM retry: FOUND {slug}")
+                    card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
+                    card["set"] = url.split("/Singles/")[-1].split("/")[0].replace("-", " ") if "/Singles/" in url else ""
+                    card["number"] = vision_num
+                    card["cm_url_override"] = url
+                    return card
 
-    # ─── Step 2: TCG API → all versions of this Pokemon ───
-    vision_number_raw = card.get("number") or ""  # save original e.g. "7/102" before overwrites
+    # ─── Step 5: Last resort — TCG API + Number/Visual match ───
+    vision_number_raw = card.get("number") or ""
     tcg_cards = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, pokemon_name)
-
-    if not tcg_cards:
-        log.info(f"  TCG_API: 0 results for '{pokemon_name}' — retrying identification with gpt-4o...")
-        retry_resp = await openai_client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": [
-                {"type": "text", "text": "What Pokemon species is shown on this card? Answer with ONLY the English name (e.g. Charizard, Giratina, Latios, Hitmonchan). Nothing else."},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
-            ]}],
-            max_completion_tokens=20, temperature=0)
-        pokemon_name = retry_resp.choices[0].message.content.strip().split("\n")[0].strip()
-        log.info(f"  GPT4O_REIDENT: '{pokemon_name}'")
-        card["pokemon"] = pokemon_name
-        tcg_cards = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, pokemon_name)
-
-    if not tcg_cards:
-        log.info(f"  TCG_API: still 0 results — giving up")
-        return card
-
-    # ─── Step 3: Number+total match → visual match (with retry on failure) ───
-    matched = await _attempt_tcg_match(tcg_cards, card, b64, vision_number_raw)
-
-    # If match failed, try gpt-4o re-identification + full retry
-    if not matched:
-        log.info(f"  ALL_MATCH_FAILED for '{pokemon_name}' — trying gpt-4o re-identification...")
-        retry_resp = await openai_client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": [
-                {"type": "text", "text": "What Pokemon species is on this card? Read the name printed on the card. English name only (e.g. Charizard, Latios, Hitmonchan). One word."},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
-            ]}],
-            max_completion_tokens=20, temperature=0)
-        reident_name = retry_resp.choices[0].message.content.strip().split()[0].strip(".,!\"'")
-        if reident_name.lower() != pokemon_name.lower():
-            log.info(f"  REIDENT_RETRY: '{reident_name}' (was '{pokemon_name}')")
-            card["pokemon"] = reident_name
-            retry_tcg = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, reident_name)
-            if retry_tcg:
-                await _attempt_tcg_match(retry_tcg, card, b64, vision_number_raw)
-        else:
-            log.info(f"  REIDENT: same name '{reident_name}' — no retry")
+    if tcg_cards:
+        matched = await _attempt_tcg_match(tcg_cards, card, b64, vision_number_raw)
+        if not matched:
+            # Reident + retry
+            retry_resp = await openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": [
+                    {"type": "text", "text": "What Pokemon species is on this card? English name only. One word."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
+                ]}],
+                max_completion_tokens=20, temperature=0)
+            reident_name = retry_resp.choices[0].message.content.strip().split()[0].strip(".,!\"'")
+            if reident_name.lower() != pokemon_name.lower():
+                log.info(f"  REIDENT_RETRY: '{reident_name}' (was '{pokemon_name}')")
+                card["pokemon"] = reident_name
+                retry_tcg = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, reident_name)
+                if retry_tcg:
+                    await _attempt_tcg_match(retry_tcg, card, b64, vision_number_raw)
 
     return card
 
@@ -442,6 +510,17 @@ async def find_cardmarket_url(card_info):
     """Findet die richtige Cardmarket-URL basierend auf TCG API Daten."""
     if card_info.get("cm_url_override"):
         return card_info["cm_url_override"]
+
+    # Ximilar CM product ID URL — fetch it to get the real Singles URL via og:url
+    if card_info.get("cm_product_url"):
+        log.info(f"  CM_PRODUCT: {card_info['cm_product_url']}")
+        html = await bd_scrape(card_info["cm_product_url"])
+        if html:
+            og = re.search(r'property="og:url"[^>]*content="([^"]+Singles/[^"]+)"', html)
+            if og:
+                real_url = og.group(1)
+                log.info(f"  CM_PRODUCT: resolved → {real_url.split('/')[-1]}")
+                return real_url
     name = card_info.get("name", "")
     set_name = card_info.get("set", "")
     number = card_info.get("number", "").split("/")[0]
@@ -491,21 +570,46 @@ async def find_cardmarket_url(card_info):
                     log.info(f"  CM_MATCH: '{name_slug}'+{tn} → {url.split('/')[-1]}")
                     return url
 
-    # Direct URL construction for old cards (EX-era etc.) where search fails
+    # Direct URL construction for cards where search fails
     if ptcgo_code and number:
-        card_slug = f"{name.replace(' ', '-')}-{ptcgo_code}{number}"
+        name_slug_d = name.replace(" ", "-")
         set_slug = set_name.replace(" ", "-")
-        for set_prefix in [f"EX-{set_slug}", set_slug, f"Base-{set_slug}"]:
-            direct_url = f"https://www.cardmarket.com/en/Pokemon/Products/Singles/{set_prefix}/{card_slug}"
-            log.info(f"  CM_DIRECT: {direct_url}")
-            html = await bd_scrape(direct_url)
-            if html and name.split()[0].lower() in html.lower() and "404" not in html[:500]:
-                log.info(f"  CM_DIRECT: FOUND!")
-                return direct_url
+        # Try multiple slug variants (uppercase/lowercase set_code, with/without EX- prefix)
+        pc_variants = list(set([ptcgo_code, ptcgo_code.lower(), ptcgo_code.upper()]))
+        card_slugs = [f"{name_slug_d}-{pc}{number}" for pc in pc_variants]
+        set_prefixes = [set_slug, f"EX-{set_slug}"]
+        for card_s in card_slugs:
+            for set_prefix in set_prefixes:
+                direct_url = f"https://www.cardmarket.com/en/Pokemon/Products/Singles/{set_prefix}/{card_s}"
+                log.info(f"  CM_DIRECT: {direct_url}")
+                html = await bd_scrape(direct_url)
+                # Strict check: page title must contain the card name (not a generic search page)
+                if html and "404" not in html[:500]:
+                    title_m = re.search(r"<title>(.*?)</title>", html)
+                    if title_m and name.split()[0].lower() in title_m.group(1).lower() and "Singles |" not in title_m.group(1):
+                        log.info(f"  CM_DIRECT: FOUND!")
+                        return direct_url
+
+    # Try partner sets (e.g. WHT → BLK for twin JP sets)
+    partner_sets = card_info.get("ximilar_partner_sets", [])
+    if partner_sets and number:
+        for ps in partner_sets:
+            log.info(f"  CM_PARTNER: trying set_code '{ps}'...")
+            ps_results = await search_cardmarket(f"{name} {ps}")
+            for url in ps_results:
+                slug = url.split("/")[-1].lower()
+                if name_slug in slug and slug.endswith(number):
+                    pos = len(slug) - len(number)
+                    if pos > 0 and slug[pos - 1].isdigit():
+                        continue
+                    log.info(f"  CM_PARTNER: FOUND {url.split('/')[-1]}")
+                    return url
 
     # Fallback: first result
-    log.info(f"  CM_FALLBACK: using first result {results[0].split('/')[-1]}")
-    return results[0]
+    if results:
+        log.info(f"  CM_FALLBACK: using first result {results[0].split('/')[-1]}")
+        return results[0]
+    return None
 
 async def scrape_cardmarket_prices(card_info):
     """Scrapt Cardmarket Preise fuer eine Karte."""
