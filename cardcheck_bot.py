@@ -509,11 +509,11 @@ async def _process_photo(msg, context):
         if link_url:
             reply += f'\n\n<a href="{link_url}">Cardmarket</a>'
 
-        await msg.reply_text(reply, parse_mode="HTML", disable_web_page_preview=True)
+        await msg.reply_text(reply, parse_mode="HTML", disable_web_page_preview=True, reply_to_message_id=msg.message_id)
 
     except Exception as e:
         log.error(f"[{check_id}] ERROR: {e}", exc_info=True)
-        await msg.reply_text(f"\u274c Fehler: {e}")
+        await msg.reply_text(f"\u274c Fehler: {e}", reply_to_message_id=msg.message_id)
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle text messages — just acknowledge."""
