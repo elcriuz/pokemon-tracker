@@ -500,7 +500,9 @@ async def scrape_cardmarket_prices(card_info):
     if is_graded:
         params += "&minCondition=1&isGraded=Y"
     else:
-        params += "&minCondition=2"
+        # Use caption condition if provided, otherwise default NM
+        min_cond = card_info.get("min_condition", 2)
+        params += f"&minCondition={min_cond}"
     if card_info.get("is_first_edition"):
         params += "&isFirstEd=Y"
 
@@ -575,6 +577,36 @@ def calculate_verdict(shop_eur, market_eur):
     else:
         return "SKIP \u274c", diff_pct
 
+# ─── Caption Parsing ────────────────────────────────────────
+
+# Cardmarket condition codes → minCondition values
+CONDITION_MAP = {
+    "MT": 1, "MINT": 1,
+    "NM": 2, "NEARMINT": 2,
+    "EX": 3, "EXCELLENT": 3,
+    "GD": 4, "GOOD": 4,
+    "LP": 5, "LIGHTPLAYED": 5,
+    "PL": 6, "PLAYED": 6,
+    "PO": 7, "POOR": 7,
+}
+
+def parse_caption(caption):
+    """Parse condition + 1st edition from photo caption."""
+    result = {}
+    if not caption:
+        return result
+    upper = caption.upper().strip()
+    # Check for 1st Edition
+    if any(x in upper for x in ["1ST", "FIRST ED", "1. ED"]):
+        result["is_first_edition"] = True
+    # Check for condition code
+    for code, val in CONDITION_MAP.items():
+        if code in upper.split():
+            result["min_condition"] = val
+            result["condition_label"] = code
+            break
+    return result
+
 # ─── Main Handler ────────────────────────────────────────────
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -600,9 +632,20 @@ async def _process_photo(msg, context):
         photo_bytes = bio.getvalue()
         log.info(f"[{check_id}] Photo received ({len(photo_bytes)} bytes, {photo.width}x{photo.height})")
 
+        # 1b. Parse caption for condition + 1st edition
+        caption_opts = parse_caption(msg.caption)
+        if caption_opts:
+            log.info(f"[{check_id}] CAPTION: {caption_opts}")
+
         # 2. Identify card via Vision
         t0 = time.time()
         card = await identify_card(photo_bytes)
+        # Apply caption overrides
+        if caption_opts.get("is_first_edition"):
+            card["is_first_edition"] = True
+        if caption_opts.get("min_condition"):
+            card["min_condition"] = caption_opts["min_condition"]
+            card["condition_label"] = caption_opts.get("condition_label", "")
         vision_ms = int((time.time() - t0) * 1000)
         log.info(f"[{check_id}] VISION ({vision_ms}ms): {json.dumps(card, ensure_ascii=False)}")
 
@@ -623,7 +666,9 @@ async def _process_photo(msg, context):
         grade_label = f" {grade.upper()}" if grade and grade != "raw" else ""
         lang_label = language.upper()
 
-        header = f"<b>{name}{ver_label}</b> ({set_name}) {lang_label}{grade_label}"
+        cond_label = f" [{card.get('condition_label', '')}]" if card.get("condition_label") else ""
+        first_ed_label = " 1st Ed." if card.get("is_first_edition") else ""
+        header = f"<b>{name}{ver_label}</b> ({set_name}) {lang_label}{grade_label}{first_ed_label}{cond_label}"
         if number:
             header += f"\n#{number}"
 
