@@ -166,6 +166,7 @@ async def identify_card(photo_bytes):
                     if slug.endswith(tn):
                         log.info(f"  QUICK_CM: FOUND {slug} — skipping gpt-4o match")
                         card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
+                        card["set"] = url.split("/Singles/")[-1].split("/")[0].replace("-", " ") if "/Singles/" in url else ""
                         card["number"] = vision_num
                         card["cm_url_override"] = url
                         return card
@@ -195,6 +196,7 @@ async def identify_card(photo_bytes):
                         if slug.endswith(tn):
                             log.info(f"  QUICK_CM retry: FOUND {slug}")
                             card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
+                            card["set"] = url.split("/Singles/")[-1].split("/")[0].replace("-", " ") if "/Singles/" in url else ""
                             card["number"] = vision_num
                             card["cm_url_override"] = url
                             return card
