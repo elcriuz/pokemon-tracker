@@ -92,10 +92,12 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE cards ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN binder_id INTEGER REFERENCES binders(id) ON DELETE SET NULL") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN set_name TEXT NOT NULL DEFAULT ''") } catch {}
+  try { db.exec("ALTER TABLE scrape_runs ADD COLUMN engine TEXT NOT NULL DEFAULT 'patchright'") } catch {}
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
   insert.run("alert_threshold_pct", "5")
   insert.run("telegram_chat_id", "")
   insert.run("telegram_bot_token", "")
+  insert.run("decodo_api_token", "")
 }

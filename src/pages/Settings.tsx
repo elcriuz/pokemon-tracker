@@ -13,7 +13,7 @@ export function Settings() {
   const { data: scrapeHistory } = useQuery({ queryKey: ["scrapeHistory"], queryFn: () => api.getScrapeStatus() })
   const queryClient = useQueryClient()
 
-  const [form, setForm] = useState({ alert_threshold_pct: "5", telegram_bot_token: "", telegram_chat_id: "" })
+  const [form, setForm] = useState({ alert_threshold_pct: "5", telegram_bot_token: "", telegram_chat_id: "", decodo_api_token: "" })
   const [saved, setSaved] = useState(false)
   const [testResult, setTestResult] = useState<boolean | null>(null)
   const [newBinder, setNewBinder] = useState("")
@@ -183,6 +183,26 @@ export function Settings() {
           </button>
           {testResult === true && <p className="text-sm text-positive flex items-center gap-1"><Check className="w-4 h-4" /> Nachricht gesendet!</p>}
           {testResult === false && <p className="text-sm text-negative flex items-center gap-1"><AlertCircle className="w-4 h-4" /> Fehler beim Senden</p>}
+        </div>
+      </section>
+
+      {/* Decodo Scraper API */}
+      <section className="space-y-4">
+        <h2 className="text-lg font-semibold">Decodo Scraper API</h2>
+        <div className="p-4 rounded-lg bg-card border border-border space-y-3">
+          <label className="block">
+            <span className="text-sm text-muted-foreground">API Token</span>
+            <input
+              type="password"
+              value={form.decodo_api_token}
+              onChange={(e) => setForm({ ...form, decodo_api_token: e.target.value })}
+              placeholder="VTAw..."
+              className="mt-1 w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground"
+            />
+          </label>
+          <p className="text-xs text-muted-foreground">
+            Token von scraper-api.decodo.com — ermoeglicht automatisiertes Scraping ohne Browser/noVNC
+          </p>
         </div>
       </section>
 

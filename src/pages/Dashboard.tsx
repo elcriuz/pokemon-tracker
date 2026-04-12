@@ -53,12 +53,13 @@ export function Dashboard() {
     refetchInterval: scrapeStatus?.isRunning ? 5_000 : 60_000,
   })
 
+  const [scrapeEngine, setScrapeEngine] = useState<"patchright" | "decodo">("patchright")
   const scrapeMutation = useMutation({
-    mutationFn: api.triggerScrape,
+    mutationFn: () => api.triggerScrape(scrapeEngine),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["scrapeStatus"] }),
   })
   const scrapeCardsMutation = useMutation({
-    mutationFn: (ids: number[]) => api.scrapeCards(ids),
+    mutationFn: (ids: number[]) => api.scrapeCards(ids, scrapeEngine),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["scrapeStatus"] })
       setSelected(new Set())
@@ -186,6 +187,24 @@ export function Dashboard() {
             <Filter className="w-4 h-4" />
             Smart Scrape
           </button>
+          <div className="flex rounded-lg overflow-hidden border border-border">
+            <button
+              onClick={() => setScrapeEngine("patchright")}
+              className={`px-2.5 py-1.5 text-xs transition-colors ${
+                scrapeEngine === "patchright" ? "bg-ring text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Chrome
+            </button>
+            <button
+              onClick={() => setScrapeEngine("decodo")}
+              className={`px-2.5 py-1.5 text-xs transition-colors ${
+                scrapeEngine === "decodo" ? "bg-ring text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Decodo
+            </button>
+          </div>
           <button
             onClick={() => setShowAdd(true)}
             className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-ring text-primary-foreground hover:bg-ring/80 transition-colors"

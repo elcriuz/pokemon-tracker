@@ -27,11 +27,13 @@ export const api = {
     fetchJSON<any>(`/cards/${id}`, { method: "DELETE" }),
   deleteImage: (id: number) =>
     fetchJSON<any>(`/cards/${id}/image`, { method: "DELETE" }),
-  triggerScrape: () => fetchJSON<any>("/scrape", { method: "POST" }),
-  scrapeCards: (cardIds: number[]) =>
-    fetchJSON<any>("/scrape/cards", { method: "POST", body: JSON.stringify({ cardIds }) }),
+  triggerScrape: (engine?: string) =>
+    fetchJSON<any>("/scrape", { method: "POST", body: JSON.stringify({ engine }) }),
+  scrapeCards: (cardIds: number[], engine?: string) =>
+    fetchJSON<any>("/scrape/cards", { method: "POST", body: JSON.stringify({ cardIds, engine }) }),
   stopScrape: () => fetchJSON<any>("/scrape/stop", { method: "POST" }),
   getScrapeStatus: () => fetchJSON<any>("/scrape/status"),
+  getScrapeLogs: () => fetchJSON<{ engine: string | null; lines: string[] }>("/scrape/logs"),
   getPortfolioHistory: () => fetchJSON<any[]>("/portfolio/history"),
   getSettings: () => fetchJSON<Record<string, string>>("/settings"),
   updateSettings: (data: Record<string, string>) =>

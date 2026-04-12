@@ -10,9 +10,13 @@ export const scrapeRouter = Router()
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const BASE = path.join(__dirname, "../..")
+type ScrapeEngine = "patchright" | "decodo"
 let isRunning = false
 let currentRunId: number | null = null
 let currentProcess: ReturnType<typeof spawn> | null = null
+let currentEngine: ScrapeEngine | null = null
+const logBuffer: string[] = []
+const LOG_BUFFER_MAX = 200
 
 function regeneratePortfolioCsv() {
   const db = getDb()
@@ -55,9 +59,23 @@ function importResults() {
   }
 }
 
+function captureStdout(proc: ReturnType<typeof spawn>) {
+  proc.stdout?.on("data", (chunk) => {
+    const lines = chunk.toString().split("\n").filter(Boolean)
+    for (const line of lines) {
+      logBuffer.push(line)
+      if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift()
+    }
+  })
+}
+
 // POST /api/scrape - trigger full scrape
-scrapeRouter.post("/", (_req, res) => {
+scrapeRouter.post("/", (req, res) => {
   if (isRunning) return res.status(409).json({ error: "Scrape already running", runId: currentRunId })
+
+  const engine: ScrapeEngine = req.body?.engine === "decodo" ? "decodo" : "patchright"
+  const script = engine === "decodo" ? "scrape_decodo.py" : "scrape.py"
+  const env = engine === "decodo" ? { ...process.env } : { ...process.env, DISPLAY: ":99" }
 
   const db = getDb()
   regeneratePortfolioCsv()
@@ -65,16 +83,19 @@ scrapeRouter.post("/", (_req, res) => {
   try { fs.unlinkSync(path.join(BASE, "data", "scrape_resume.json")) } catch {}
 
   const run = db.prepare(
-    "INSERT INTO scrape_runs (started_at, status, card_count) VALUES (datetime('now'), 'running', (SELECT COUNT(*) FROM cards))"
-  ).run()
+    "INSERT INTO scrape_runs (started_at, status, card_count, engine) VALUES (datetime('now'), 'running', (SELECT COUNT(*) FROM cards), ?)"
+  ).run(engine)
   currentRunId = run.lastInsertRowid as number
+  currentEngine = engine
   isRunning = true
+  logBuffer.length = 0
 
-  const proc = spawn("python3", ["scrape.py"], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, DISPLAY: ":99" } })
+  const proc = spawn("python3", [script], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"], env })
   currentProcess = proc
 
   let stderr = ""
   proc.stderr.on("data", (d) => (stderr += d.toString()))
+  captureStdout(proc)
 
   const liveImport = setInterval(() => {
     try { importResults(); db.pragma("wal_checkpoint(TRUNCATE)") } catch {}
@@ -92,17 +113,22 @@ scrapeRouter.post("/", (_req, res) => {
     isRunning = false
     currentProcess = null
     currentRunId = null
+    currentEngine = null
   })
 
-  res.json({ runId: currentRunId, status: "running" })
+  res.json({ runId: currentRunId, status: "running", engine })
 })
 
 // POST /api/scrape/cards - scrape specific card IDs
 scrapeRouter.post("/cards", (req, res) => {
   if (isRunning) return res.status(409).json({ error: "Scrape already running", runId: currentRunId })
 
-  const { cardIds } = req.body as { cardIds: number[] }
+  const { cardIds, engine: reqEngine } = req.body as { cardIds: number[]; engine?: string }
   if (!cardIds?.length) return res.status(400).json({ error: "cardIds required" })
+
+  const engine: ScrapeEngine = reqEngine === "decodo" ? "decodo" : "patchright"
+  const script = engine === "decodo" ? "scrape_decodo.py" : "scrape.py"
+  const env = engine === "decodo" ? { ...process.env } : { ...process.env, DISPLAY: ":99" }
 
   const db = getDb()
   const cards = db.prepare(`SELECT url, name, grade, notes FROM cards WHERE id IN (${cardIds.map(() => "?").join(",")})`)
@@ -119,16 +145,19 @@ scrapeRouter.post("/cards", (req, res) => {
   fs.writeFileSync(path.join(BASE, "portfolio.csv"), header + rows + "\n")
 
   const run = db.prepare(
-    "INSERT INTO scrape_runs (started_at, status, card_count) VALUES (datetime('now'), 'running', ?)"
-  ).run(cards.length)
+    "INSERT INTO scrape_runs (started_at, status, card_count, engine) VALUES (datetime('now'), 'running', ?, ?)"
+  ).run(cards.length, engine)
   currentRunId = run.lastInsertRowid as number
+  currentEngine = engine
   isRunning = true
+  logBuffer.length = 0
 
-  const proc = spawn("python3", ["scrape.py"], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, DISPLAY: ":99" } })
+  const proc = spawn("python3", [script], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"], env })
   currentProcess = proc
 
   let stderr = ""
   proc.stderr.on("data", (d) => (stderr += d.toString()))
+  captureStdout(proc)
 
   const liveImport = setInterval(() => {
     try { importResults(); db.pragma("wal_checkpoint(TRUNCATE)") } catch {}
@@ -136,18 +165,20 @@ scrapeRouter.post("/cards", (req, res) => {
 
   proc.on("close", (code) => {
     clearInterval(liveImport)
-    const status = code === 0 ? "completed" : "failed"
+    const wasStopped = code === null || code === 137 || code === 15
+    const status = wasStopped ? "stopped" : code === 0 ? "completed" : "failed"
     try { importResults() } catch (e) { console.error("Import error:", e) }
     db.pragma("wal_checkpoint(TRUNCATE)")
     db.prepare(
       "UPDATE scrape_runs SET finished_at = datetime('now'), status = ?, duration_s = (julianday(datetime('now')) - julianday(started_at)) * 86400, error = ? WHERE id = ?"
-    ).run(status, code !== 0 ? stderr.slice(0, 500) : null, currentRunId)
+    ).run(status, wasStopped ? "Manually stopped" : code !== 0 ? stderr.slice(0, 500) : null, currentRunId)
     regeneratePortfolioCsv()
     isRunning = false
     currentRunId = null
+    currentEngine = null
   })
 
-  res.json({ runId: currentRunId, status: "running", cardCount: cards.length })
+  res.json({ runId: currentRunId, status: "running", cardCount: cards.length, engine })
 })
 
 // GET /api/scrape/status
@@ -191,7 +222,12 @@ scrapeRouter.get("/status", (_req, res) => {
     } catch {}
   }
 
-  res.json({ isRunning, currentRunId, latest, progress, total: latest?.card_count || 0 })
+  res.json({ isRunning, currentRunId, latest, progress, total: latest?.card_count || 0, engine: currentEngine })
+})
+
+// GET /api/scrape/logs - live log lines from current scrape
+scrapeRouter.get("/logs", (_req, res) => {
+  res.json({ engine: currentEngine, lines: [...logBuffer] })
 })
 
 // GET /api/scrape/history
