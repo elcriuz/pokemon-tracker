@@ -22,9 +22,9 @@ export function PriceHistoryChart({ data }: { data: any[] }) {
             formatter={(value: number, name: string) => [formatEUR(value), name]}
           />
           <Legend />
-          <Line type="monotone" dataKey="value" name="Wert" stroke="hsl(212, 100%, 48%)" strokeWidth={2} dot={{ r: 3 }} />
-          <Line type="monotone" dataKey="trend" name="Trend" stroke="hsl(142, 71%, 45%)" strokeWidth={1.5} dot={{ r: 2 }} />
-          <Line type="monotone" dataKey="from_price" name="Low" stroke="hsl(0, 84%, 60%)" strokeWidth={1.5} dot={{ r: 2 }} />
+          <Line type="monotone" dataKey="value" name="Wert" stroke="hsl(212, 100%, 48%)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+          <Line type="monotone" dataKey="trend" name="Trend" stroke="hsl(142, 71%, 45%)" strokeWidth={1.5} dot={{ r: 2 }} connectNulls />
+          <Line type="monotone" dataKey="from_price" name="Low" stroke="hsl(0, 84%, 60%)" strokeWidth={1.5} dot={{ r: 2 }} connectNulls />
         </LineChart>
       </ResponsiveContainer>
     </div>
