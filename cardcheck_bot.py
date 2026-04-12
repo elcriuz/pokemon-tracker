@@ -12,6 +12,7 @@ import time
 from io import BytesIO
 
 import requests
+import aiohttp
 from openai import AsyncOpenAI
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
@@ -157,8 +158,7 @@ async def identify_card(photo_bytes):
         # Try with pokemon name first, then without (in case Vision got name wrong)
         for search_q in [f"{pokemon_name} {vision_sc}", f"{vision_sc}{vision_num}"]:
             log.info(f"  QUICK_CM: trying '{search_q}'...")
-            quick_results = await asyncio.get_event_loop().run_in_executor(
-                None, lambda sq=search_q: search_cardmarket(sq))
+            quick_results = await search_cardmarket(search_q)
             for tn in [vision_num]:  # exact match only
                 for url in quick_results:
                     slug = url.split("/")[-1]
@@ -188,8 +188,7 @@ async def identify_card(photo_bytes):
             # Retry Quick CM with corrected name
             for search_q in [f"{pokemon_name} {vision_sc}", f"{pokemon_name} ex {vision_sc}"]:
                 log.info(f"  QUICK_CM retry: '{search_q}'...")
-                quick_results = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda sq=search_q: search_cardmarket(sq))
+                quick_results = await search_cardmarket(search_q)
                 for tn in [vision_num]:  # exact match only
                     for url in quick_results:
                         slug = url.split("/")[-1]
@@ -284,7 +283,18 @@ async def identify_card(photo_bytes):
 
 # ─── Bright Data Scraping ────────────────────────────────────
 
-def bd_scrape(url):
+async def bd_scrape(url):
+    async with aiohttp.ClientSession() as session:
+        async with session.post("https://api.brightdata.com/request",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {BD_KEY}"},
+            json={"zone": BD_ZONE, "url": url, "format": "raw", "country": "de"},
+            timeout=aiohttp.ClientTimeout(total=90)) as resp:
+            if resp.status != 200:
+                return None
+            return await resp.text()
+
+def bd_scrape_sync(url):
+    """Sync version for use in run_in_executor contexts."""
     resp = requests.post("https://api.brightdata.com/request",
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {BD_KEY}"},
         json={"zone": BD_ZONE, "url": url, "format": "raw", "country": "de"},
@@ -323,9 +333,9 @@ def extract_prices(html):
 
 # ─── Cardmarket Search + Scrape ──────────────────────────────
 
-def search_cardmarket(query):
+async def search_cardmarket(query):
     url = f"https://www.cardmarket.com/en/Pokemon/Products/Search?searchString={requests.utils.quote(query)}"
-    html = bd_scrape(url)
+    html = await bd_scrape(url)
     if not html:
         return []
     links = re.findall(r'href="(/en/Pokemon/Products/Singles/[^"?]+)"', html)
@@ -339,7 +349,7 @@ def search_cardmarket(query):
         seen.append("https://www.cardmarket.com" + path)
     return seen
 
-def find_cardmarket_url(card_info):
+async def find_cardmarket_url(card_info):
     """Findet die richtige Cardmarket-URL basierend auf TCG API Daten."""
     if card_info.get("cm_url_override"):
         return card_info["cm_url_override"]
@@ -358,7 +368,7 @@ def find_cardmarket_url(card_info):
     seen = set()
     for q in queries:
         log.info(f"  CM_SEARCH: '{q}'")
-        for url in search_cardmarket(q):
+        for url in await search_cardmarket(q):
             if url not in seen:
                 seen.add(url)
                 results.append(url)
@@ -386,9 +396,9 @@ def find_cardmarket_url(card_info):
     log.info(f"  CM_FALLBACK: using first result {results[0].split('/')[-1]}")
     return results[0]
 
-def scrape_cardmarket_prices(card_info):
+async def scrape_cardmarket_prices(card_info):
     """Scrapt Cardmarket Preise fuer eine Karte."""
-    url = find_cardmarket_url(card_info)
+    url = await find_cardmarket_url(card_info)
     if not url:
         return None, None, None
 
@@ -407,7 +417,7 @@ def scrape_cardmarket_prices(card_info):
     full_url = f"{url}{separator}{params}"
 
     log.info(f"  Scraping: {full_url}")
-    html = bd_scrape(full_url)
+    html = await bd_scrape(full_url)
     if not html:
         return url, None, full_url
 
@@ -416,11 +426,11 @@ def scrape_cardmarket_prices(card_info):
 
 # ─── eBay Fallback ───────────────────────────────────────────
 
-def scrape_ebay_sold(query):
+async def scrape_ebay_sold(query):
     """Scrapt eBay Sold Listings und berechnet Median."""
     terms = re.sub(r"[^\w\s]", " ", query).strip().replace(" ", "+")
     url = f"https://www.ebay.com/sch/i.html?_nkw={terms}+-psa+-cgc+-bgs+-graded&LH_Complete=1&LH_Sold=1&_sop=13"
-    html = bd_scrape(url)
+    html = await bd_scrape(url)
     if not html:
         return None
 
@@ -538,7 +548,7 @@ async def _process_photo(msg, context):
 
         # 3. Scrape Cardmarket
         t1 = time.time()
-        cm_url, prices, cm_full_url = scrape_cardmarket_prices(card)
+        cm_url, prices, cm_full_url = await scrape_cardmarket_prices(card)
         scrape_ms = int((time.time() - t1) * 1000)
         log.info(f"[{check_id}] SCRAPE ({scrape_ms}ms): url={cm_full_url} prices={json.dumps({k:v for k,v in (prices or {}).items() if k != 'title'})}")
 
@@ -588,7 +598,7 @@ async def _process_photo(msg, context):
             lang_word = {"jp": "japanese", "en": "english", "de": "german", "kr": "korean"}.get(language, "")
             ebay_query = f"{name} {number} {set_name} {lang_word}".strip()
             log.info(f"[{check_id}] EBAY_QUERY: {ebay_query}")
-            ebay = scrape_ebay_sold(ebay_query)
+            ebay = await scrape_ebay_sold(ebay_query)
             if ebay:
                 median_eur = to_eur(ebay["median_usd"], "USD")
                 ebay_line = f"\neBay Sold ({ebay['count']}x): Median ${ebay['median_usd']:,.0f} ({fmt_eur(median_eur)})"
