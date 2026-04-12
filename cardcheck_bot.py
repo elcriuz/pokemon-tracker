@@ -55,6 +55,12 @@ log = logging.getLogger("cardcheck")
 
 openai_client = AsyncOpenAI(api_key=CONFIG["openai_key"])
 
+# Ximilar toggle — remove ximilar_api_key from DB to disable (falls back to Vision+TCG+gpt-4o)
+if XIMILAR_KEY:
+    log.info("Ximilar enabled — hybrid identification (Vision + Ximilar)")
+else:
+    log.info("Ximilar disabled — using Vision + TCG API + gpt-4o pipeline")
+
 # ─── Currency ────────────────────────────────────────────────
 
 _eur_rates = {"ts": 0, "rates": {}}
