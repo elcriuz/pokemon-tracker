@@ -21,24 +21,25 @@ export function AppShell({ children }: { children: ReactNode }) {
   })
   const [showPanel, setShowPanel] = useState(false)
   const [manualClose, setManualClose] = useState(false)
+  const [panelEngine, setPanelEngine] = useState<string | null>(null)
   // noVNC only available on remote server (not localhost/Electron)
   const isLocal = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
   const hasVnc = !isLocal
-  const isDecodo = scrapeStatus?.engine === "decodo"
+  // Remember which engine opened the panel (so it doesn't flip to VNC when scrape ends and engine becomes null)
+  const isDecodo = panelEngine === "decodo"
 
   // Auto-open when scraping starts, only close when explicitly done (not on transient status changes)
   useEffect(() => {
-    // Decodo log panel works everywhere; VNC only on remote
-    const canShow = isDecodo || hasVnc
-    if (!canShow) return
-    if (scrapeStatus?.isRunning && !manualClose) {
+    const engine = scrapeStatus?.engine
+    const canShow = engine === "decodo" || hasVnc
+    if (scrapeStatus?.isRunning && !manualClose && canShow) {
+      setPanelEngine(engine || "patchright")
       setShowPanel(true)
     }
     // Only close when latest run is explicitly completed/failed/stopped (not just isRunning=false)
     const latestStatus = scrapeStatus?.latest?.status
     if (!scrapeStatus?.isRunning && latestStatus && latestStatus !== "running" && showPanel && !manualClose) {
-      // Delay close to avoid flicker on transient states
-      const timer = setTimeout(() => setShowPanel(false), 3000)
+      const timer = setTimeout(() => { setShowPanel(false); setPanelEngine(null) }, 3000)
       return () => clearTimeout(timer)
     }
   }, [scrapeStatus?.isRunning, scrapeStatus?.latest?.status, scrapeStatus?.engine])
@@ -72,15 +73,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           })}
         </nav>
         {/* Panel toggle (VNC for Patchright on remote, Log for Decodo everywhere) */}
-        {(isDecodo || hasVnc) && scrapeStatus?.isRunning && (
+        {((scrapeStatus?.engine === "decodo") || hasVnc) && scrapeStatus?.isRunning && (
           <button
             onClick={() => { setShowPanel((v) => !v); setManualClose(false) }}
-            title={isDecodo ? "Scraper Log" : "Live View"}
+            title={scrapeStatus?.engine === "decodo" ? "Scraper Log" : "Live View"}
             className={`mt-auto p-2.5 rounded-lg transition-colors ${
               showPanel ? "bg-yellow-500/20 text-yellow-400" : "text-muted-foreground hover:text-yellow-400"
             }`}
           >
-            {isDecodo ? <Terminal className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
+            {scrapeStatus?.engine === "decodo" ? <Terminal className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
           </button>
         )}
       </aside>
@@ -96,7 +97,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       } overflow-hidden`}>
         {showPanel && (
           isDecodo ? (
-            <LogPanel onClose={() => { setShowPanel(false); setManualClose(true) }} />
+            <LogPanel onClose={() => { setShowPanel(false); setManualClose(true); setPanelEngine(null) }} />
           ) : (
             <>
               <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
@@ -111,7 +112,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   )}
                 </div>
                 <button
-                  onClick={() => { setShowPanel(false); setManualClose(true) }}
+                  onClick={() => { setShowPanel(false); setManualClose(true); setPanelEngine(null) }}
                   className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground"
                 >
                   <X className="w-4 h-4" />
