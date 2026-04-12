@@ -108,7 +108,14 @@ REGELN:
 - Artwork das ueber den Kartenrahmen hinausgeht = SAR oder Illustration Rare
 - Goldener Rand / komplett goldene Karte = UR (Ultra Rare / Gold)
 - PSA/CGC/BGS Slab = graded Karte, Grade vom PSA-Label lesen (GEM MT 10 = PSA10, MINT 9 = PSA9)
-- Bei PSA Slabs: OBEN auf dem Label steht der exakte Kartenname, Set und Nummer — lies diese IMMER ab!
+- Bei PSA Slabs: OBEN auf dem Label steht der exakte Kartenname, Set, Nummer und Set-Code — lies ALLES ab!
+- PSA Label Format: "YYYY POKEMON [SET_CODE] [LANGUAGE]" dann "KARTENNAME" dann "SET_NAME" dann "#NNN" und "GEM MT 10" etc.
+- set_code: Lies den Set-Code EXAKT vom PSA-Label oder von der Karte (z.B. WHT, sv8a, sm9, SV-P, PFL, MEW)
+- set: Uebersetze den Set-Code in den englischen Set-Namen:
+  WHT = White Flare, BLK = Black Bolt, sv8a = Terastal Festival ex, sm9 = Tag Bolt,
+  PFL = Phantasmal Flames, MEW = Pokemon Card 151, SV-P = SV-P Promotional Cards,
+  sv8 = Surging Sparks, m2a = MEGA Dream ex, JTG = Journey Together
+- WENN ein PSA-Label vorhanden ist: set und set_code MUESSEN vom Label kommen, NICHT geraten!
 - Preistag: Suche nach Preisetiketten, Stickern oder Preisschildern IM ODER NEBEN dem Foto
 - shop_price: Die GROESSTE sichtbare Zahl auf dem Preistag (ACHTUNG: ¥130.000 = 130000, nicht 30000! Punkte sind Tausendertrennzeichen!)
 - Japanische Preise nutzen ¥ Symbol oder sind in der Naehe von "税込" (inkl. MwSt)
@@ -206,6 +213,9 @@ def find_cardmarket_url(card_info):
     query = f"{name} {set_name}"
     log.info(f"  URL_SEARCH: query='{query}' number={number} set_code={set_code}")
     results = search_cardmarket(query)
+    if not results and set_code:
+        log.info(f"  URL_SEARCH: no results, trying with set_code '{name} {set_code}'")
+        results = search_cardmarket(f"{name} {set_code}")
     if not results:
         log.info(f"  URL_SEARCH: no results, trying name only '{name}'")
         results = search_cardmarket(name)
