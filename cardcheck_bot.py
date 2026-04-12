@@ -162,7 +162,8 @@ async def identify_card(photo_bytes):
             for tn in [vision_num] + ([str(int(vision_num)-1), str(int(vision_num)+1)] if vision_num.isdigit() else []):
                 for url in quick_results:
                     slug = url.split("/")[-1]
-                    if tn in slug:
+                    # Number must be at END of slug (after set code prefix), not a substring
+                    if slug.endswith(tn):
                         log.info(f"  QUICK_CM: FOUND {slug} — skipping gpt-4o match")
                         card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
                         card["number"] = vision_num
@@ -192,7 +193,7 @@ async def identify_card(photo_bytes):
                 for tn in [vision_num] + ([str(int(vision_num)-1), str(int(vision_num)+1)] if vision_num.isdigit() else []):
                     for url in quick_results:
                         slug = url.split("/")[-1]
-                        if tn in slug:
+                        if slug.endswith(tn):
                             log.info(f"  QUICK_CM retry: FOUND {slug}")
                             card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
                             card["number"] = vision_num
@@ -377,7 +378,7 @@ def find_cardmarket_url(card_info):
         for tn in try_numbers:
             for url in results:
                 slug = url.split("/")[-1].lower()
-                if name_slug in slug and tn in slug:
+                if name_slug in slug and slug.endswith(tn):
                     log.info(f"  CM_MATCH: '{name_slug}'+{tn} → {url.split('/')[-1]}")
                     return url
 
