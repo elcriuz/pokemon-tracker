@@ -337,46 +337,7 @@ def find_cardmarket_url(card_info):
                     log.info(f"  URL_MATCH: number {try_num} (target={number}) found in {slug}")
                     return url
 
-    # 2. Fallback: direct URL construction from set_name
-    if number:
-        set_slug = set_name.replace(" ", "-")
-        name_slug = name.replace(" ", "-").replace("&", "")
-        for v in ["V1", "V2", "V3", "V4", "V5"]:
-            candidate = f"https://www.cardmarket.com/en/Pokemon/Products/Singles/{set_slug}/{name_slug}-{v}"
-            if number in candidate:
-                log.info(f"  URL_CONSTRUCT: trying {candidate}")
-                html = bd_scrape(candidate)
-                if html and len(html) > 10000:
-                    title_p = extract_prices(html).get("title", "")
-                    if title_p and "Singles" not in title_p:
-                        log.info(f"  URL_CONSTRUCT: FOUND via direct construction: {candidate}")
-                        return candidate
-            # Also try with set_code prefix in card slug
-            for prefix in [set_code.upper(), set_slug.replace("-", "")[:3].upper()]:
-                candidate2 = f"https://www.cardmarket.com/en/Pokemon/Products/Singles/{set_slug}/{name_slug}-{v}-{prefix}{number}"
-                log.info(f"  URL_CONSTRUCT: trying {candidate2}")
-                html = bd_scrape(candidate2)
-                if html and len(html) > 10000:
-                    title_p = extract_prices(html).get("title", "")
-                    if title_p and "Singles" not in title_p:
-                        log.info(f"  URL_CONSTRUCT: FOUND: {candidate2}")
-                        return candidate2
-
-    # 3. Try constructing URLs from first search result with V1-V5
-    if number and results:
-        base = results[0]
-        for v in ["V1", "V2", "V3", "V4", "V5"]:
-            candidate = re.sub(r'V\d', v, base)
-            # Also try appending set_code + number
-            if set_code and number not in candidate:
-                candidate = re.sub(r'(V\d)[^?]*', rf'\1-{set_code.upper()}{number}', candidate)
-            if number in candidate and candidate != base:
-                log.info(f"  Trying constructed URL: {candidate}")
-                html = bd_scrape(candidate)
-                if html and "<title>" in html and "Singles" not in extract_prices(html).get("title", "Singles"):
-                    return candidate
-
-    # 3. Fallback: version-based guess
+    # 2. Fallback: version-based guess from search results (no extra requests)
     version = card_info.get("version", "regular")
     if version in ("SAR", "SR", "UR", "IR"):
         # Prefer higher V-numbers (V4, V5 are usually the rarer versions)
