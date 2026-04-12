@@ -173,21 +173,42 @@ async def identify_card(photo_bytes):
 
     log.info(f"  TCG_API: {len(tcg_cards)} cards found")
 
-    # Step 3: Visual match with gpt-4o
-    candidates = []
-    for i, c in enumerate(tcg_cards):
+    # Step 3: Pre-filter candidates — special rares first, then a few regular as fallback
+    special = []
+    regular = []
+    for c in tcg_cards:
         img = c.get("images", {}).get("large", c.get("images", {}).get("small", ""))
-        if img:
-            candidates.append({
-                "idx": i + 1, "id": c["id"], "name": c.get("name", ""),
-                "number": c.get("number", ""), "set_name": c["set"]["name"],
-                "set_id": c["set"]["id"], "rarity": c.get("rarity", ""), "img": img,
-            })
+        if not img:
+            continue
+        entry = {
+            "id": c["id"], "name": c.get("name", ""), "number": c.get("number", ""),
+            "set_name": c["set"]["name"], "set_id": c["set"]["id"],
+            "rarity": c.get("rarity", ""), "img": img,
+        }
+        num_str = c.get("number", "0")
+        rarity = c.get("rarity", "").lower()
+        try:
+            num = int(re.match(r"\d+", num_str).group())
+        except (ValueError, AttributeError):
+            num = 0
+        total = c["set"].get("printedTotal", 999)
+        is_special = num > total or any(r in rarity for r in ["ultra", "rainbow", "illustration", "secret", "prism", "full art", "double"])
+        if is_special:
+            special.append(entry)
+        else:
+            regular.append(entry)
+
+    # Send special rares + a few regular as fallback (max ~15 images for reliable matching)
+    candidates = special + regular[:max(5, 15 - len(special))]
+    for i, c in enumerate(candidates):
+        c["idx"] = i + 1
+
+    log.info(f"  MATCH_FILTER: {len(special)} special + {len(regular)} regular → {len(candidates)} candidates")
 
     if not candidates:
         return card
 
-    cand_text = "\n".join(f"{c['idx']}. {c['name']} #{c['number']} ({c['set_name']})" for c in candidates)
+    cand_text = "\n".join(f"{c['idx']}. {c['name']} #{c['number']} ({c['set_name']}) [{c['rarity']}]" for c in candidates)
     cand_images = [{"type": "image_url", "image_url": {"url": c["img"], "detail": "low"}} for c in candidates]
 
     match_content = [
