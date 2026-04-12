@@ -342,16 +342,25 @@ def find_cardmarket_url(card_info):
         log.warning(f"  URL_SEARCH: FAILED — no results at all")
         return None
 
-    # 1. Best match: card number in URL — also try +/-1 for regional numbering differences
+    # 1. Best match: card number + name in URL — also try +/-2 for regional numbering
+    name_slug = name.split()[0].lower()  # "Reshiram" from "Reshiram ex"
     if number:
         try_numbers = [number]
         n = int(number)
         try_numbers += [str(n - 1), str(n + 1), str(n - 2), str(n + 2)]
+        # First pass: match number AND name
         for try_num in try_numbers:
+            for url in results:
+                slug = url.split("/")[-1].lower()
+                if name_slug in slug and re.search(rf'(?:^|[a-z]){re.escape(try_num)}(?:\?|$)', slug):
+                    log.info(f"  URL_MATCH: name+number '{name_slug}'+{try_num} found in {url.split('/')[-1]}")
+                    return url
+        # Second pass: match number only (if name didn't match, e.g. different spelling)
+        for try_num in [number]:  # only exact number without name
             for url in results:
                 slug = url.split("/")[-1]
                 if re.search(rf'(?:^|[A-Za-z]){re.escape(try_num)}(?:\?|$)', slug):
-                    log.info(f"  URL_MATCH: number {try_num} (target={number}) found in {slug}")
+                    log.info(f"  URL_MATCH: number {try_num} (no name match) in {slug}")
                     return url
 
     # 2. Fallback: version-based guess from search results (no extra requests)
