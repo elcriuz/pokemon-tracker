@@ -304,40 +304,19 @@ def find_cardmarket_url(card_info):
         log.warning(f"  URL_SEARCH: FAILED — no results at all")
         return None
 
-    # 1. Best match: card number in URL (e.g. "WHT173" or "sv8a217")
+    # 1. Best match: card number in URL — also try +/-1 for regional numbering differences
     if number:
-        for url in results:
-            if re.search(rf'(?:^|[A-Za-z]){re.escape(number)}(?:\?|$)', url.split("/")[-1]):
-                log.info(f"  URL_MATCH: number {number} found in {url.split('/')[-1]}")
-                return url
-        for url in results:
-            if number in url.split("/")[-1]:
-                log.info(f"  URL_MATCH: number {number} loose match in {url.split('/')[-1]}")
-                return url
+        try_numbers = [number]
+        n = int(number)
+        try_numbers += [str(n - 1), str(n + 1), str(n - 2), str(n + 2)]
+        for try_num in try_numbers:
+            for url in results:
+                slug = url.split("/")[-1]
+                if re.search(rf'(?:^|[A-Za-z]){re.escape(try_num)}(?:\?|$)', slug):
+                    log.info(f"  URL_MATCH: number {try_num} (target={number}) found in {slug}")
+                    return url
 
-    # 2. Number not found — derive set slug from search results and construct URL
-    if number and results:
-        # Extract the Cardmarket set slug from first matching result
-        # e.g. "https://www.cardmarket.com/en/.../Singles/Black-Bolt/Victini-V1-BLK012"
-        # → set_slug = "Black-Bolt", set_prefix = "BLK"
-        first_slug = results[0].split("/Singles/")[-1].split("/")[0] if "/Singles/" in results[0] else ""
-        first_card = results[0].split("/")[-1]
-        # Extract the set prefix (e.g. BLK from Victini-V1-BLK012)
-        prefix_m = re.search(r'-V\d-([A-Za-z]+)\d', first_card)
-        if first_slug and prefix_m:
-            cm_prefix = prefix_m.group(1)
-            # Try V1-V5 with this prefix + our number
-            for v in range(1, 6):
-                candidate = f"https://www.cardmarket.com/en/Pokemon/Products/Singles/{first_slug}/{name.replace(' ', '-')}-V{v}-{cm_prefix}{number}"
-                log.info(f"  URL_DERIVE: trying {candidate}")
-                html = bd_scrape(candidate)
-                if html and len(html) > 10000:
-                    title_p = extract_prices(html).get("title", "")
-                    if title_p and "Singles" not in title_p:
-                        log.info(f"  URL_DERIVE: FOUND! {candidate} → {title_p}")
-                        return candidate
-
-    # 3. Fallback: direct URL construction from set_name
+    # 2. Fallback: direct URL construction from set_name
     if number:
         set_slug = set_name.replace(" ", "-")
         name_slug = name.replace(" ", "-").replace("&", "")
