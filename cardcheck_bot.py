@@ -154,27 +154,54 @@ async def identify_card(photo_bytes):
     vision_sc = card.get("vision_set_code", "")
     vision_num = re.sub(r"[^\d]", "", card.get("number", "").split("/")[0]) if card.get("number") else ""
     if vision_sc and vision_num and len(vision_sc) <= 6:
-        log.info(f"  QUICK_CM: trying '{pokemon_name} {vision_sc}' for #{vision_num}...")
-        quick_results = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: search_cardmarket(f"{pokemon_name} {vision_sc}"))
-        pslug = pokemon_name.lower().split()[0]
-        for tn in [vision_num, str(int(vision_num)-1), str(int(vision_num)+1)] if vision_num.isdigit() else [vision_num]:
-            for url in quick_results:
-                slug = url.split("/")[-1].lower()
-                if pslug in slug and tn in slug:
-                    log.info(f"  QUICK_CM: FOUND {url.split('/')[-1]} — skipping gpt-4o match")
-                    # Extract card name from URL slug
-                    card_slug = url.split("/")[-1]
-                    card["name"] = re.sub(r"-V\d.*", "", card_slug).replace("-", " ")
-                    card["number"] = vision_num
-                    card["cm_url_override"] = url
-                    return card
+        # Try with pokemon name first, then without (in case Vision got name wrong)
+        for search_q in [f"{pokemon_name} {vision_sc}", f"{vision_sc}{vision_num}"]:
+            log.info(f"  QUICK_CM: trying '{search_q}'...")
+            quick_results = await asyncio.get_event_loop().run_in_executor(
+                None, lambda sq=search_q: search_cardmarket(sq))
+            for tn in [vision_num] + ([str(int(vision_num)-1), str(int(vision_num)+1)] if vision_num.isdigit() else []):
+                for url in quick_results:
+                    slug = url.split("/")[-1]
+                    if tn in slug:
+                        log.info(f"  QUICK_CM: FOUND {slug} — skipping gpt-4o match")
+                        card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
+                        card["number"] = vision_num
+                        card["cm_url_override"] = url
+                        return card
+
+    # ─── Step 1c: If Quick CM failed and we have set_code, try gpt-4o to re-identify ───
+    if vision_sc and vision_num:
+        log.info(f"  QUICK_CM failed — trying gpt-4o re-identification...")
+        retry_resp = await openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": [
+                {"type": "text", "text": "What Pokemon is on this card? Give the FULL English name including Mega/etc (e.g. 'Mega Charizard X', 'Giratina'). One line only."},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
+            ]}],
+            max_completion_tokens=20, temperature=0)
+        new_name = retry_resp.choices[0].message.content.strip().split("\n")[0].strip()
+        log.info(f"  GPT4O_REIDENT: '{new_name}' (was '{pokemon_name}')")
+        if new_name.lower() != pokemon_name.lower():
+            pokemon_name = new_name
+            card["pokemon"] = pokemon_name
+            # Retry Quick CM with corrected name
+            for search_q in [f"{pokemon_name} {vision_sc}", f"{pokemon_name} ex {vision_sc}"]:
+                log.info(f"  QUICK_CM retry: '{search_q}'...")
+                quick_results = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda sq=search_q: search_cardmarket(sq))
+                for tn in [vision_num] + ([str(int(vision_num)-1), str(int(vision_num)+1)] if vision_num.isdigit() else []):
+                    for url in quick_results:
+                        slug = url.split("/")[-1]
+                        if tn in slug:
+                            log.info(f"  QUICK_CM retry: FOUND {slug}")
+                            card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
+                            card["number"] = vision_num
+                            card["cm_url_override"] = url
+                            return card
 
     # ─── Step 2: TCG API → all versions of this Pokemon ───
     tcg_cards = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, pokemon_name)
 
-    # If no results, gpt-5.4-mini probably got the species wrong (gold/dark cards)
-    # Retry with gpt-4o which is better at identifying Pokemon from artwork
     if not tcg_cards:
         log.info(f"  TCG_API: 0 results for '{pokemon_name}' — retrying identification with gpt-4o...")
         retry_resp = await openai_client.chat.completions.create(
@@ -184,7 +211,7 @@ async def identify_card(photo_bytes):
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
             ]}],
             max_completion_tokens=20, temperature=0)
-        pokemon_name = retry_resp.choices[0].message.content.strip().split()[0]
+        pokemon_name = retry_resp.choices[0].message.content.strip().split("\n")[0].strip()
         log.info(f"  GPT4O_REIDENT: '{pokemon_name}'")
         card["pokemon"] = pokemon_name
         tcg_cards = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, pokemon_name)
