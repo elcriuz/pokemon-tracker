@@ -124,9 +124,12 @@ def search_tcg_api(pokemon_name):
 MATCH_PROMPT = """Hier ist ein Foto einer Pokemon-Karte. Darunter {count} Kandidaten-Bilder.
 
 Welches Bild hat EXAKT dasselbe Artwork UND denselben Kartenrahmen?
-- Alte Karten (1999-2007): silber/grauer Rahmen, "ex" klein, gelber Hintergrund, WotC/EX-era Design
-- Moderne Karten (2008+): schwarzer/farbiger Rahmen, "EX/GX/V/ex" im modernen Stil
-Der Rahmen-Stil ist das WICHTIGSTE Unterscheidungsmerkmal.
+
+WICHTIGE REGELN:
+1. "Victini" und "Victini ex" sind KOMPLETT VERSCHIEDENE Karten! Lies den Namen auf dem Foto: steht "ex", "V", "GX", "VSTAR" drauf? Wenn NICHT → waehle eine Karte OHNE diesen Suffix.
+2. Alte Karten (1999-2007): silber/grauer Rahmen, WotC/EX-era Design
+3. Moderne Karten (2008+): schwarzer/farbiger Rahmen
+4. Illustration Rare (IR): Artwork bedeckt die GANZE Karte, kein normaler Rahmen — diagonale Linien oder spezielle Textur
 
 {candidates}
 
