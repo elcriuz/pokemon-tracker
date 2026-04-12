@@ -101,7 +101,7 @@ REGELN:
 - pokemon: LIES den Pokemon-Namen DIREKT von der Karte (steht oben). NICHT raten! Nockchan=Hitmonchan, Nachtara=Umbreon, Glurak=Charizard, Mega-Glurak=Mega Charizard, Latios=Latios, Latias=Latias. Bei alten Karten (1999-2007) steht der Name ebenfalls oben.
 - number: IMMER mit Total angeben falls lesbar (z.B. "7/102", "94/97", "161/131"). Steht unten rechts oder links auf der Karte.
 - set_code: Steht unten links auf der Karte vor der Nummer (z.B. "PRE 161/131" → PRE) oder auf dem PSA Label. Alte WotC/EX-era Karten (1999-2007) haben KEINEN Text-Code → null
-- is_first_edition: true wenn "1st Edition" oder "Edition 1" oder das Kreis-1-Symbol links am Kartenrand sichtbar ist
+- is_first_edition: GENAU PRÜFEN! true wenn links unter dem Kartenbild ein kleines "1" in einem Kreis/schwarzen Punkt steht, oder "1st Edition", "Edition 1", "1. Edition" auf der Karte steht. Bei alten Karten (1999-2003) ist das 1st-Edition-Symbol ein kleiner schwarzer Kreis mit "1" darin, links neben dem Beschreibungstext.
 - grade: PSA/CGC/BGS Label lesen. GEM MT 10=PSA10, MINT 9=PSA9. Kein Slab=raw
 - shop_price: Preistag lesen. Punkte=Tausender (¥130.000=130000). null wenn nicht sichtbar"""
 
