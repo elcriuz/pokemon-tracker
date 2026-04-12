@@ -159,7 +159,7 @@ async def identify_card(photo_bytes):
             log.info(f"  QUICK_CM: trying '{search_q}'...")
             quick_results = await asyncio.get_event_loop().run_in_executor(
                 None, lambda sq=search_q: search_cardmarket(sq))
-            for tn in [vision_num] + ([str(int(vision_num)-1), str(int(vision_num)+1)] if vision_num.isdigit() else []):
+            for tn in [vision_num]:  # exact match only
                 for url in quick_results:
                     slug = url.split("/")[-1]
                     # Number must be at END of slug (after set code prefix), not a substring
@@ -190,7 +190,7 @@ async def identify_card(photo_bytes):
                 log.info(f"  QUICK_CM retry: '{search_q}'...")
                 quick_results = await asyncio.get_event_loop().run_in_executor(
                     None, lambda sq=search_q: search_cardmarket(sq))
-                for tn in [vision_num] + ([str(int(vision_num)-1), str(int(vision_num)+1)] if vision_num.isdigit() else []):
+                for tn in [vision_num]:  # exact match only
                     for url in quick_results:
                         slug = url.split("/")[-1]
                         if slug.endswith(tn):
