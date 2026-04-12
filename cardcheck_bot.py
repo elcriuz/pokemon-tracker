@@ -117,29 +117,91 @@ REGELN:
 - Preistag: GROESSTE Zahl auf Etikett/Sticker (Punkte = Tausender: ¥130.000 = 130000)
 - shop_price null wenn kein Preis sichtbar"""
 
+TCG_API = "https://api.pokemontcg.io/v2"
+
+async def search_tcg_api(pokemon_name):
+    """Sucht alle Karten eines Pokemon in der TCG API."""
+    try:
+        resp = requests.get(
+            f"{TCG_API}/cards",
+            params={"q": f"name:{pokemon_name}", "select": "id,name,number,set,rarity,images", "pageSize": 50},
+            timeout=10
+        )
+        if resp.status_code == 200:
+            return resp.json().get("data", [])
+    except Exception as e:
+        log.warning(f"  TCG API failed: {e}")
+    return []
+
+OCR_PROMPT = """Lies NUR den Text UNTEN LINKS auf dieser Pokemon-Karte.
+Dort steht ein Set-Code und eine Kartennummer, z.B. "PRE 161/131" oder "sv8a 217/187" oder "sm9 103/095" oder "sv11B 171/086".
+Es ist oft klein gedruckt. Antworte NUR mit dem was du liest (z.B. "sv11B 171/086"). Nichts anderes."""
+
 async def identify_card(photo_bytes):
     import base64
     b64 = base64.b64encode(photo_bytes).decode()
 
-    resp = await openai_client.chat.completions.create(
+    # Step 1: General identification (name, grade, price) + focused OCR — in parallel
+    vision_task = openai_client.chat.completions.create(
         model="gpt-5.4-mini",
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": VISION_PROMPT},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
-            ]
-        }],
-        max_completion_tokens=500,
-        temperature=0,
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text": VISION_PROMPT},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
+        ]}],
+        max_completion_tokens=500, temperature=0,
+    )
+    ocr_task = openai_client.chat.completions.create(
+        model="gpt-5.4-mini",
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text": OCR_PROMPT},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}}
+        ]}],
+        max_completion_tokens=50, temperature=0,
     )
 
-    text = resp.choices[0].message.content.strip()
-    # Strip markdown fences if present
+    vision_resp, ocr_resp = await asyncio.gather(vision_task, ocr_task)
+
+    text = vision_resp.choices[0].message.content.strip()
     text = re.sub(r"^```json?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
+    card = json.loads(text)
 
-    return json.loads(text)
+    ocr_text = ocr_resp.choices[0].message.content.strip()
+    log.info(f"  OCR: '{ocr_text}'")
+
+    # Step 2: Parse OCR result and use it to correct/override set_code + number
+    ocr_match = re.match(r"([A-Za-z0-9]+)\s+(\d+/\d+)", ocr_text)
+    if ocr_match:
+        ocr_set_code = ocr_match.group(1)
+        ocr_number = ocr_match.group(2)
+        log.info(f"  OCR_PARSED: set_code={ocr_set_code} number={ocr_number}")
+
+        # Override if different from vision
+        if ocr_set_code != card.get("set_code"):
+            log.info(f"  OCR_OVERRIDE: set_code {card.get('set_code')} -> {ocr_set_code}")
+            card["set_code"] = ocr_set_code
+        if ocr_number != card.get("number"):
+            log.info(f"  OCR_OVERRIDE: number {card.get('number')} -> {ocr_number}")
+            card["number"] = ocr_number
+
+    # Step 3: TCG API lookup to get correct set name
+    pokemon_name = card.get("name", "").split(" ex")[0].split(" EX")[0].split(" V")[0].split(" GX")[0].split(" VMAX")[0].strip()
+    number_prefix = card.get("number", "").split("/")[0]
+
+    if pokemon_name and number_prefix:
+        log.info(f"  TCG_API: searching '{pokemon_name}' to match #{number_prefix}...")
+        tcg_cards = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, pokemon_name)
+
+        if tcg_cards:
+            for c in tcg_cards:
+                if c.get("number") == number_prefix or c.get("number") == card.get("number", "").split("/")[0]:
+                    s = c.get("set", {})
+                    log.info(f"  TCG_MATCH: {c['name']} #{c['number']} from {s.get('name')} ({s.get('id')})")
+                    card["set"] = s.get("name", card.get("set"))
+                    card["tcg_set_id"] = s.get("id", "")
+                    break
+
+    return card
 
 # ─── Bright Data Scraping ────────────────────────────────────
 
