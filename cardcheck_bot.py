@@ -121,9 +121,12 @@ def search_tcg_api(pokemon_name):
         log.warning(f"  TCG API failed: {e}")
     return []
 
-MATCH_PROMPT = """Hier ist ein Foto einer Pokemon-Karte. Darunter {count} Kandidaten-Bilder aus der Datenbank.
+MATCH_PROMPT = """Hier ist ein Foto einer Pokemon-Karte. Darunter {count} Kandidaten-Bilder.
 
-Welches Bild hat EXAKT dasselbe Artwork? Achte genau auf: Hintergrundfarbe, Pose, Stil, Rahmen, Kartentyp (gold, full-art, illustration).
+Welches Bild hat EXAKT dasselbe Artwork UND denselben Kartenrahmen?
+- Alte Karten (1999-2007): silber/grauer Rahmen, "ex" klein, gelber Hintergrund, WotC/EX-era Design
+- Moderne Karten (2008+): schwarzer/farbiger Rahmen, "EX/GX/V/ex" im modernen Stil
+Der Rahmen-Stil ist das WICHTIGSTE Unterscheidungsmerkmal.
 
 {candidates}
 
@@ -136,7 +139,7 @@ async def _attempt_tcg_match(tcg_cards, card, b64, vision_number_raw):
 
     # ─── Number+Total deterministic match ───
     # e.g. "7/102" → only one set with 102 printed cards has this Pokemon as #7
-    if "/" in vision_number_raw:
+    if vision_number_raw and "/" in vision_number_raw:
         parts = vision_number_raw.split("/")
         num_str = re.sub(r"[^\d]", "", parts[0])
         total_str = re.sub(r"[^\d]", "", parts[1])
@@ -151,6 +154,7 @@ async def _attempt_tcg_match(tcg_cards, card, b64, vision_number_raw):
                 card["set_code"] = m["set"]["id"]
                 card["number"] = m.get("number", "")
                 card["tcg_id"] = m["id"]
+                card["ptcgo_code"] = m["set"].get("ptcgoCode", "")
                 return True
             elif num_matches:
                 log.info(f"  NUMBER_MATCH: {len(num_matches)} ambiguous for #{num_str}/{total_int} — narrowing candidates")
@@ -162,10 +166,12 @@ async def _attempt_tcg_match(tcg_cards, card, b64, vision_number_raw):
         img = c.get("images", {}).get("large", c.get("images", {}).get("small", ""))
         if not img:
             continue
+        year = c["set"].get("releaseDate", "")[:4]
         entry = {
             "id": c["id"], "name": c.get("name", ""), "number": c.get("number", ""),
             "set_name": c["set"]["name"], "set_id": c["set"]["id"],
-            "rarity": c.get("rarity", ""), "img": img,
+            "ptcgo_code": c["set"].get("ptcgoCode", ""),
+            "rarity": c.get("rarity", ""), "img": img, "year": year,
         }
         try:
             num = int(re.match(r"\d+", c.get("number", "0")).group())
@@ -173,7 +179,7 @@ async def _attempt_tcg_match(tcg_cards, card, b64, vision_number_raw):
             num = 0
         total = c["set"].get("printedTotal", 999)
         rarity = c.get("rarity", "").lower()
-        is_special = num > total or any(r in rarity for r in ["ultra", "rainbow", "illustration", "secret", "prism", "full art", "double", "black white", "hyper"])
+        is_special = num > total or any(r in rarity for r in ["ultra", "rainbow", "illustration", "secret", "prism", "full art", "double", "black white", "hyper", "holo ex", "holo gx", "holo star"])
         (special if is_special else regular).append(entry)
 
     candidates = special + regular[:max(5, 15 - len(special))]
@@ -185,7 +191,7 @@ async def _attempt_tcg_match(tcg_cards, card, b64, vision_number_raw):
     if not candidates:
         return False
 
-    cand_text = "\n".join(f"{c['idx']}. {c['name']} #{c['number']} ({c['set_name']}) [{c['rarity']}]" for c in candidates)
+    cand_text = "\n".join(f"{c['idx']}. {c['name']} #{c['number']} ({c['set_name']}, {c.get('year','?')}) [{c['rarity']}]" for c in candidates)
     cand_images = [{"type": "image_url", "image_url": {"url": c["img"], "detail": "low"}} for c in candidates]
 
     log.info(f"  MATCH: sending {len(cand_images)} thumbnails to gpt-4o...")
@@ -211,6 +217,7 @@ async def _attempt_tcg_match(tcg_cards, card, b64, vision_number_raw):
             card["set_code"] = matched["set_id"]
             card["number"] = matched["number"]
             card["tcg_id"] = matched["id"]
+            card["ptcgo_code"] = matched.get("ptcgo_code", "")
             return True
 
     log.warning(f"  MATCH: no valid match from gpt-4o: '{answer}'")
@@ -243,7 +250,9 @@ async def identify_card(photo_bytes):
 
     # ─── Step 1b: Quick CM check — if Vision read set_code, try direct CM search ───
     # This handles JP-only sets not in TCG API (Lost Abyss s11, etc.)
-    vision_sc = card.get("vision_set_code", "")
+    vision_sc = card.get("vision_set_code") or ""
+    if vision_sc.lower() in ("none", "null"):
+        vision_sc = ""
     vision_num = re.sub(r"[^\d]", "", card.get("number", "").split("/")[0]) if card.get("number") else ""
     if vision_sc and vision_num and len(vision_sc) <= 6:
         # Try with pokemon name first, then without (in case Vision got name wrong)
@@ -293,7 +302,7 @@ async def identify_card(photo_bytes):
                             return card
 
     # ─── Step 2: TCG API → all versions of this Pokemon ───
-    vision_number_raw = card.get("number", "")  # save original e.g. "7/102" before overwrites
+    vision_number_raw = card.get("number") or ""  # save original e.g. "7/102" before overwrites
     tcg_cards = await asyncio.get_event_loop().run_in_executor(None, search_tcg_api, pokemon_name)
 
     if not tcg_cards:
@@ -418,9 +427,15 @@ async def find_cardmarket_url(card_info):
 
     # Search Cardmarket — use vision's set_code (e.g. PRE, WHT) which CM understands
     vision_set_code = card_info.get("vision_set_code", "")
+    ptcgo_code = card_info.get("ptcgo_code", "")
     queries = []
+    # For TCG-matched cards with ptcgo_code: construct expected CM slug (e.g. "Latios-ex-DR94")
+    if ptcgo_code and number:
+        queries.append(f"{name.replace(' ', '-')}-{ptcgo_code}{number}")
     if vision_set_code:
         queries.append(f"{name} {vision_set_code}")
+    if ptcgo_code and ptcgo_code != vision_set_code:
+        queries.append(f"{name} {ptcgo_code}")
     queries += [f"{name} {set_name}", name, pokemon]
     results = []
     seen = set()
@@ -449,6 +464,18 @@ async def find_cardmarket_url(card_info):
                 if name_slug in slug and slug.endswith(tn):
                     log.info(f"  CM_MATCH: '{name_slug}'+{tn} → {url.split('/')[-1]}")
                     return url
+
+    # Direct URL construction for old cards (EX-era etc.) where search fails
+    if ptcgo_code and number:
+        card_slug = f"{name.replace(' ', '-')}-{ptcgo_code}{number}"
+        set_slug = set_name.replace(" ", "-")
+        for set_prefix in [f"EX-{set_slug}", set_slug, f"Base-{set_slug}"]:
+            direct_url = f"https://www.cardmarket.com/en/Pokemon/Products/Singles/{set_prefix}/{card_slug}"
+            log.info(f"  CM_DIRECT: {direct_url}")
+            html = await bd_scrape(direct_url)
+            if html and name.split()[0].lower() in html.lower() and "404" not in html[:500]:
+                log.info(f"  CM_DIRECT: FOUND!")
+                return direct_url
 
     # Fallback: first result
     log.info(f"  CM_FALLBACK: using first result {results[0].split('/')[-1]}")
