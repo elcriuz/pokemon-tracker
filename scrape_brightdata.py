@@ -493,25 +493,70 @@ Log-Datei:       {log_file}
 {'='*50}"""
     log.info(summary)
 
+    # Load previous prices from DB for change detection
+    prev_prices = {}
+    alert_pct = 10  # default
+    try:
+        db_path = BASE_DIR / "data" / "tracker.db"
+        if db_path.exists():
+            import sqlite3
+            conn = sqlite3.connect(str(db_path))
+            # Get most recent value per card
+            rows = conn.execute("""
+                SELECT c.url, p.value FROM cards c
+                JOIN prices p ON p.card_id = c.id
+                WHERE p.value IS NOT NULL
+                  AND p.scraped_at = (SELECT MAX(p2.scraped_at) FROM prices p2 WHERE p2.card_id = c.id AND p2.value IS NOT NULL)
+            """).fetchall()
+            prev_prices = {r[0]: r[1] for r in rows}
+            # Get alert threshold from settings
+            row = conn.execute("SELECT value FROM settings WHERE key = 'alert_threshold_pct'").fetchone()
+            if row:
+                alert_pct = float(row[0])
+            conn.close()
+    except Exception as e:
+        log.warning(f"Vorherige Preise laden fehlgeschlagen: {e}")
+
+    # Detect significant movers: >35 EUR change OR >alert_pct% change
+    ABS_THRESHOLD = 35.0
+    movers = []
+    for r in results:
+        if r.get("error") or not r.get("value"):
+            continue
+        url = r["url"]
+        new_val = r["value"]
+        old_val = prev_prices.get(url)
+        if old_val is None or old_val == 0:
+            continue
+        diff = new_val - old_val
+        pct = (diff / old_val) * 100
+        if abs(diff) >= ABS_THRESHOLD or abs(pct) >= alert_pct:
+            arrow = "\U0001f4c8" if diff > 0 else "\U0001f4c9"
+            name = r.get("name") or r["url"].split("/")[-1].split("?")[0]
+            sign = "+" if diff > 0 else ""
+            movers.append((abs(diff), f"{arrow} {name}: {old_val:.2f} \u2192 {new_val:.2f}\u20ac ({sign}{diff:.2f}\u20ac / {sign}{pct:.1f}%)"))
+
+    movers.sort(reverse=True)  # biggest movers first
+
+    # Build Telegram message
+    msg_parts = [f"\U0001f4ca <b>Scrape Report</b> ({now.strftime('%d.%m.%Y %H:%M')})\n"]
+    msg_parts.append(f"\u2705 {stats['ok']}/{len(results)} Karten | Portfolio: EUR {total_value:,.2f}")
+
     if stats["cloudflare"] > 0 or stats["errors"] > 0 or stats["no_prices"] > 0:
         problems = []
-        if stats["cloudflare"]: problems.append(f"\u2601\ufe0f {stats['cloudflare']}x Cloudflare")
+        if stats["cloudflare"]: problems.append(f"\u2601\ufe0f {stats['cloudflare']}x CF")
         if stats["no_prices"]: problems.append(f"\u26a0\ufe0f {stats['no_prices']}x keine Preise")
         if stats["errors"]: problems.append(f"\u274c {stats['errors']}x Fehler")
-        failed_cards = [r["name"] or r["url"].split("/")[-1] for r in results if r.get("error")]
-        send_telegram(
-            f"\U0001f4ca <b>Bright Data Scrape Report</b>\n\n"
-            f"\u2705 {stats['ok']}/{len(results)} erfolgreich\n"
-            f"{chr(10).join(problems)}\n\n"
-            f"<b>Betroffene Karten:</b>\n"
-            f"{chr(10).join(chr(8226) + ' ' + c for c in failed_cards[:10])}\n\n"
-            f"Portfolio: EUR {total_value:,.2f}"
-        )
+        msg_parts.append(" | ".join(problems))
+
+    if movers:
+        msg_parts.append(f"\n<b>Grosse Bewegungen ({len(movers)}):</b>")
+        for _, line in movers[:15]:
+            msg_parts.append(line)
     else:
-        send_telegram(
-            f"\u2705 <b>Bright Data Scrape OK</b> \u2014 {stats['ok']}/{len(results)} Karten\n"
-            f"Portfolio: EUR {total_value:,.2f}"
-        )
+        msg_parts.append("\nKeine grossen Preisbewegungen.")
+
+    send_telegram("\n".join(msg_parts))
 
     return csv_file
 
