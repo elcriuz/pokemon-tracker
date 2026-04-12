@@ -328,6 +328,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg or not msg.photo:
         return
 
+    # Fire and forget — allows parallel processing of multiple photos
+    asyncio.create_task(_process_photo(msg, context))
+
+async def _process_photo(msg, context):
     try:
         # 1. Download photo
         photo = msg.photo[-1]  # highest resolution
