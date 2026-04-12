@@ -233,19 +233,29 @@ def scrape_cardmarket_prices(card_info):
     """Scrapt Cardmarket Preise fuer eine Karte."""
     url = find_cardmarket_url(card_info)
     if not url:
-        return None, None
+        return None, None, None
 
     lang_code = LANG_MAP.get(card_info.get("language", "jp"), 7)
+    grade = card_info.get("grade", "raw")
+
+    # Build URL with filters
+    params = f"language={lang_code}"
+    # minCondition: 1=Mint (fuer graded), 2=Near Mint, 3=Excellent
+    if grade.startswith("PSA") or grade.startswith("CGC") or grade.startswith("BGS"):
+        params += "&minCondition=1"
+    else:
+        params += "&minCondition=2"
+
     separator = "&" if "?" in url else "?"
-    full_url = f"{url}{separator}language={lang_code}"
+    full_url = f"{url}{separator}{params}"
 
     log.info(f"  Scraping: {full_url}")
     html = bd_scrape(full_url)
     if not html:
-        return url, None
+        return url, None, full_url
 
     prices = extract_prices(html)
-    return url, prices
+    return url, prices, full_url
 
 # ─── eBay Fallback ───────────────────────────────────────────
 
@@ -364,7 +374,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 3. Scrape Cardmarket
         log.info("Scraping Cardmarket...")
-        cm_url, prices = scrape_cardmarket_prices(card)
+        cm_url, prices, cm_full_url = scrape_cardmarket_prices(card)
 
         cm_line = ""
         market_eur = None
@@ -433,8 +443,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 6. Build reply
         reply = f"{header}{shop_line}{cm_line}{psa_line}{ebay_line}{verdict_line}"
 
-        if cm_url:
-            reply += f'\n\n<a href="{cm_url}">Cardmarket</a>'
+        link_url = cm_full_url or cm_url
+        if link_url:
+            reply += f'\n\n<a href="{link_url}">Cardmarket</a>'
 
         await msg.reply_text(reply, parse_mode="HTML", disable_web_page_preview=True)
 
