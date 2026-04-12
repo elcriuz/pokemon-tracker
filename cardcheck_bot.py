@@ -251,7 +251,7 @@ async def identify_card(photo_bytes):
     # ─── Step 1b: Quick CM check — if Vision read set_code, try direct CM search ───
     # This handles JP-only sets not in TCG API (Lost Abyss s11, etc.)
     vision_sc = card.get("vision_set_code") or ""
-    if vision_sc.lower() in ("none", "null"):
+    if vision_sc.lower() in ("none", "null", "basis", "basic", "stage", "stufe"):
         vision_sc = ""
     vision_num = re.sub(r"[^\d]", "", card.get("number", "").split("/")[0]) if card.get("number") else ""
     if vision_sc and vision_num and len(vision_sc) <= 6:
@@ -591,19 +591,28 @@ CONDITION_MAP = {
 }
 
 def parse_caption(caption):
-    """Parse condition + 1st edition from photo caption."""
+    """Parse condition, 1st edition, and set code from photo caption.
+    Examples: "LP", "1st", "LP 1st", "BLK", "PRE LP"
+    """
     result = {}
     if not caption:
         return result
     upper = caption.upper().strip()
+    words = upper.split()
     # Check for 1st Edition
     if any(x in upper for x in ["1ST", "FIRST ED", "1. ED"]):
         result["is_first_edition"] = True
     # Check for condition code
     for code, val in CONDITION_MAP.items():
-        if code in upper.split():
+        if code in words:
             result["min_condition"] = val
             result["condition_label"] = code
+            break
+    # Remaining words that aren't conditions or "1st" → treat as set_code
+    skip = set(CONDITION_MAP.keys()) | {"1ST", "FIRST", "ED", "1.", "EDITION"}
+    for w in words:
+        if w not in skip and len(w) >= 2 and w.isalnum():
+            result["set_code"] = w
             break
     return result
 
@@ -646,6 +655,9 @@ async def _process_photo(msg, context):
         if caption_opts.get("min_condition"):
             card["min_condition"] = caption_opts["min_condition"]
             card["condition_label"] = caption_opts.get("condition_label", "")
+        if caption_opts.get("set_code"):
+            card["vision_set_code"] = caption_opts["set_code"]
+            log.info(f"[{check_id}] CAPTION set_code override: {caption_opts['set_code']}")
         vision_ms = int((time.time() - t0) * 1000)
         log.info(f"[{check_id}] VISION ({vision_ms}ms): {json.dumps(card, ensure_ascii=False)}")
 
