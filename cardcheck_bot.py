@@ -200,28 +200,51 @@ def find_cardmarket_url(card_info):
     """Findet die richtige Cardmarket-URL fuer eine Karte."""
     name = card_info.get("name", "")
     set_name = card_info.get("set", "")
-    number = card_info.get("number", "").split("/")[0]
+    number = card_info.get("number", "").split("/")[0]  # "173" from "173/086"
+    set_code = card_info.get("set_code", "").lower()
 
     results = search_cardmarket(f"{name} {set_name}")
     if not results:
-        # Fallback: nur Kartenname
         results = search_cardmarket(name)
 
     if not results:
         return None
 
-    # Match by card number in URL
+    # 1. Best match: card number in URL (e.g. "WHT173" or "sv8a217")
     if number:
         for url in results:
-            if number in url:
+            # Match number at end of URL path (after set code prefix)
+            if re.search(rf'(?:^|[A-Za-z]){re.escape(number)}(?:\?|$)', url.split("/")[-1]):
+                return url
+        # Looser match: number anywhere in last URL segment
+        for url in results:
+            if number in url.split("/")[-1]:
                 return url
 
-    # Match by version suffix (V3/V4 for SAR/SR/UR)
+    # 2. Try constructing URLs directly with V1-V5 and check which exists
+    if number and results:
+        # Extract base pattern from first result
+        base = results[0]
+        # Try replacing V-number to find the right version
+        for v in ["V1", "V2", "V3", "V4", "V5"]:
+            candidate = re.sub(r'V\d', v, base)
+            # Also try appending set_code + number
+            if set_code and number not in candidate:
+                candidate = re.sub(r'(V\d)[^?]*', rf'\1-{set_code.upper()}{number}', candidate)
+            if number in candidate and candidate != base:
+                log.info(f"  Trying constructed URL: {candidate}")
+                html = bd_scrape(candidate)
+                if html and "<title>" in html and "Singles" not in extract_prices(html).get("title", "Singles"):
+                    return candidate
+
+    # 3. Fallback: version-based guess
     version = card_info.get("version", "regular")
     if version in ("SAR", "SR", "UR", "IR"):
-        for url in results:
-            if any(f"V{n}" in url for n in ["3", "4", "5"]):
-                return url
+        # Prefer higher V-numbers (V4, V5 are usually the rarer versions)
+        for vn in ["5", "4", "3"]:
+            for url in results:
+                if f"V{vn}" in url:
+                    return url
     elif version == "FA":
         for url in results:
             if "V2" in url:
