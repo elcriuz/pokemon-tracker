@@ -110,11 +110,16 @@ REGELN:
 - PSA/CGC/BGS Slab = graded Karte, Grade vom PSA-Label lesen (GEM MT 10 = PSA10, MINT 9 = PSA9)
 - Bei PSA Slabs: OBEN auf dem Label steht der exakte Kartenname, Set, Nummer und Set-Code — lies ALLES ab!
 - PSA Label Format: "YYYY POKEMON [SET_CODE] [LANGUAGE]" dann "KARTENNAME" dann "SET_NAME" dann "#NNN" und "GEM MT 10" etc.
-- set_code: Lies den Set-Code EXAKT vom PSA-Label oder von der Karte (z.B. WHT, sv8a, sm9, SV-P, PFL, MEW)
+- set_code: Lies den Set-Code EXAKT vom PSA-Label oder von der Karte unten links (z.B. PRE, WHT, sv8a, sm9)
+- ACHTUNG: Die Kartennummer steht unten links auf der Karte (z.B. "PRE 161/131" oder "sv8a 217/187")
+  Der Buchstabencode VOR der Nummer ist der set_code!
 - set: Uebersetze den Set-Code in den englischen Set-Namen:
-  WHT = White Flare, BLK = Black Bolt, sv8a = Terastal Festival ex, sm9 = Tag Bolt,
+  PRE = Prismatic Evolutions, WHT = White Flare, BLK = Black Bolt,
+  sv8a = Terastal Festival ex, sm9 = Tag Bolt, sv2a = Pokemon Card 151,
   PFL = Phantasmal Flames, MEW = Pokemon Card 151, SV-P = SV-P Promotional Cards,
-  sv8 = Surging Sparks, m2a = MEGA Dream ex, JTG = Journey Together
+  sv8 = Surging Sparks, m2a = MEGA Dream ex, JTG = Journey Together,
+  SCR = Stellar Crown, TWM = Twilight Masquerade, OBF = Obsidian Flames
+- WICHTIG: PRE und sv8a sind VERSCHIEDENE Sets! PRE = Prismatic Evolutions, sv8a = Terastal Festival ex
 - WENN ein PSA-Label vorhanden ist: set und set_code MUESSEN vom Label kommen, NICHT geraten!
 - Preistag: Suche nach Preisetiketten, Stickern oder Preisschildern IM ODER NEBEN dem Foto
 - shop_price: Die GROESSTE sichtbare Zahl auf dem Preistag (ACHTUNG: ¥130.000 = 130000, nicht 30000! Punkte sind Tausendertrennzeichen!)
@@ -244,11 +249,36 @@ def find_cardmarket_url(card_info):
             if number in url.split("/")[-1]:
                 return url
 
-    # 2. Try constructing URLs directly with V1-V5 and check which exists
+    # 2. Number didn't match any search result — maybe wrong set in search
+    #    Try direct URL construction from set_name
+    if number:
+        # Convert set name to URL slug (e.g. "Prismatic Evolutions" -> "Prismatic-Evolutions")
+        set_slug = set_name.replace(" ", "-")
+        name_slug = name.replace(" ", "-").replace("&", "")
+        for v in ["V1", "V2", "V3", "V4", "V5"]:
+            candidate = f"https://www.cardmarket.com/en/Pokemon/Products/Singles/{set_slug}/{name_slug}-{v}"
+            if number in candidate:
+                log.info(f"  URL_CONSTRUCT: trying {candidate}")
+                html = bd_scrape(candidate)
+                if html and len(html) > 10000:
+                    title_p = extract_prices(html).get("title", "")
+                    if title_p and "Singles" not in title_p:
+                        log.info(f"  URL_CONSTRUCT: FOUND via direct construction: {candidate}")
+                        return candidate
+            # Also try with set_code prefix in card slug
+            for prefix in [set_code.upper(), set_slug.replace("-", "")[:3].upper()]:
+                candidate2 = f"https://www.cardmarket.com/en/Pokemon/Products/Singles/{set_slug}/{name_slug}-{v}-{prefix}{number}"
+                log.info(f"  URL_CONSTRUCT: trying {candidate2}")
+                html = bd_scrape(candidate2)
+                if html and len(html) > 10000:
+                    title_p = extract_prices(html).get("title", "")
+                    if title_p and "Singles" not in title_p:
+                        log.info(f"  URL_CONSTRUCT: FOUND: {candidate2}")
+                        return candidate2
+
+    # 3. Try constructing URLs from first search result with V1-V5
     if number and results:
-        # Extract base pattern from first result
         base = results[0]
-        # Try replacing V-number to find the right version
         for v in ["V1", "V2", "V3", "V4", "V5"]:
             candidate = re.sub(r'V\d', v, base)
             # Also try appending set_code + number
