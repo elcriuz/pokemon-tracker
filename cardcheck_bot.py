@@ -142,7 +142,7 @@ async def identify_card(photo_bytes):
     b64 = base64.b64encode(photo_bytes).decode()
 
     # Step 1: General identification (name, grade, price) + focused OCR — in parallel
-    vision_task = openai_client.chat.completions.create(
+    vision_coro = openai_client.chat.completions.create(
         model="gpt-5.4-mini",
         messages=[{"role": "user", "content": [
             {"type": "text", "text": VISION_PROMPT},
@@ -150,7 +150,7 @@ async def identify_card(photo_bytes):
         ]}],
         max_completion_tokens=500, temperature=0,
     )
-    ocr_task = openai_client.chat.completions.create(
+    ocr_coro = openai_client.chat.completions.create(
         model="gpt-5.4-mini",
         messages=[{"role": "user", "content": [
             {"type": "text", "text": OCR_PROMPT},
@@ -159,7 +159,8 @@ async def identify_card(photo_bytes):
         max_completion_tokens=50, temperature=0,
     )
 
-    vision_resp, ocr_resp = await asyncio.gather(vision_task, ocr_task)
+    results = await asyncio.gather(asyncio.ensure_future(vision_coro), asyncio.ensure_future(ocr_coro))
+    vision_resp, ocr_resp = results[0], results[1]
 
     text = vision_resp.choices[0].message.content.strip()
     text = re.sub(r"^```json?\s*", "", text)
