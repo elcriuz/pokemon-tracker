@@ -303,21 +303,38 @@ def find_cardmarket_url(card_info):
     number = card_info.get("number", "").split("/")[0]  # "173" from "173/086"
     set_code = card_info.get("set_code", "").lower()
 
-    query = f"{name} {set_name}"
-    log.info(f"  URL_SEARCH: query='{query}' number={number} set_code={set_code} name_local='{name_local}'")
-    results = search_cardmarket(query)
-    if not results and set_code:
-        log.info(f"  URL_SEARCH: trying with set_code '{name} {set_code}'")
-        results = search_cardmarket(f"{name} {set_code}")
-    if not results and name_local and name_local != name:
-        log.info(f"  URL_SEARCH: trying local name '{name_local} {set_name}'")
-        results = search_cardmarket(f"{name_local} {set_name}")
-    if not results:
-        log.info(f"  URL_SEARCH: trying name only '{name}'")
-        results = search_cardmarket(name)
-    if not results and name_local and name_local != name:
-        log.info(f"  URL_SEARCH: trying local name only '{name_local}'")
-        results = search_cardmarket(name_local)
+    # Search with targeted queries — set_code first (most precise)
+    queries = []
+    if set_code:
+        queries.append(f"{name} {set_code}")  # "Reshiram ex WHT" → finds WHT173 directly
+    queries.append(f"{name} {set_name}")
+    if number:
+        queries.append(f"{name} {number}")
+    queries.append(name)
+    if name_local and name_local != name:
+        queries.append(f"{name_local} {set_name}")
+
+    results = []
+    seen = set()
+    for q in queries:
+        log.info(f"  URL_SEARCH: query='{q}'")
+        for url in search_cardmarket(q):
+            if url not in seen:
+                seen.add(url)
+                results.append(url)
+        if len(results) >= 5 and number:
+            # Check if we already have a match before searching more
+            try_nums = [number, str(int(number)-1), str(int(number)+1)]
+            for tn in try_nums:
+                for url in results:
+                    if tn in url.split("/")[-1]:
+                        break
+                else:
+                    continue
+                break
+            else:
+                continue
+            break  # found a number match, stop searching
 
     log.info(f"  URL_SEARCH: {len(results)} results: {[u.split('/')[-1] for u in results[:8]]}")
 
