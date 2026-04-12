@@ -232,7 +232,12 @@ async def identify_card(photo_bytes):
             matched = candidates[idx]
             log.info(f"  MATCH_RESULT: {matched['name']} #{matched['number']} from {matched['set_name']} ({matched['set_id']})")
             card["set"] = matched["set_name"]
-            card["set_code"] = matched["set_id"]
+            # Keep Vision's set_code if it's a short code from PSA label (e.g. WHT, BLK, PRE)
+            # Only override if Vision had no set_code or a long TCG API ID
+            vision_code = card.get("set_code", "")
+            if not vision_code or len(vision_code) > 6:
+                card["set_code"] = matched["set_id"]
+            card["tcg_set_id"] = matched["set_id"]
             card["number"] = matched["number"]
             card["tcg_id"] = matched["id"]
 
