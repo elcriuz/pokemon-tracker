@@ -365,10 +365,17 @@ async def identify_card(photo_bytes):
         card["number"] = str(picked.get("card_number", ""))
         card["ximilar_id"] = True
         card["ptcgo_code"] = picked.get("set_code", "")
-        # Use Ximilar's CM product ID URL — BD follows redirect to actual card page
-        cm_link = picked.get("links", {}).get("cardmarket.com", "")
-        if cm_link and "idProduct=" in cm_link:
-            card["cm_product_url"] = cm_link
+        # Only use CM product URL for best_match (alt's product ID may point to wrong variant)
+        if picked is best:
+            cm_link = picked.get("links", {}).get("cardmarket.com", "")
+            if cm_link and "idProduct=" in cm_link:
+                card["cm_product_url"] = cm_link
+        # Save partner-set alternatives for CM search fallback (WHT/BLK etc.)
+        partner_alts = [a for a in ximilar_result["alternatives"]
+                        if a.get("name") == picked.get("name") and str(a.get("card_number")) == str(picked.get("card_number"))]
+        if partner_alts:
+            card["ximilar_partner_sets"] = [a.get("set_code", "") for a in partner_alts]
+            log.info(f"  XIMILAR: partner sets: {card['ximilar_partner_sets']}")
         return card
     else:
         log.info(f"  XIMILAR: no result or low confidence — falling back to TCG API pipeline")
@@ -577,9 +584,26 @@ async def find_cardmarket_url(card_info):
                         log.info(f"  CM_DIRECT: FOUND!")
                         return direct_url
 
+    # Try partner sets (e.g. WHT → BLK for twin JP sets)
+    partner_sets = card_info.get("ximilar_partner_sets", [])
+    if partner_sets and number:
+        for ps in partner_sets:
+            log.info(f"  CM_PARTNER: trying set_code '{ps}'...")
+            ps_results = await search_cardmarket(f"{name} {ps}")
+            for url in ps_results:
+                slug = url.split("/")[-1].lower()
+                if name_slug in slug and slug.endswith(number):
+                    pos = len(slug) - len(number)
+                    if pos > 0 and slug[pos - 1].isdigit():
+                        continue
+                    log.info(f"  CM_PARTNER: FOUND {url.split('/')[-1]}")
+                    return url
+
     # Fallback: first result
-    log.info(f"  CM_FALLBACK: using first result {results[0].split('/')[-1]}")
-    return results[0]
+    if results:
+        log.info(f"  CM_FALLBACK: using first result {results[0].split('/')[-1]}")
+        return results[0]
+    return None
 
 async def scrape_cardmarket_prices(card_info):
     """Scrapt Cardmarket Preise fuer eine Karte."""
