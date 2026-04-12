@@ -16,7 +16,7 @@ export function CardDetail() {
   const { data: card, isLoading } = useQuery({ queryKey: ["card", cardId], queryFn: () => api.getCard(cardId) })
   const { data: prices } = useQuery({ queryKey: ["cardPrices", cardId], queryFn: () => api.getCardPrices(cardId) })
   const [showEdit, setShowEdit] = useState(false)
-  const [scrapeEngine, setScrapeEngine] = useState<"patchright" | "decodo">("patchright")
+  const [scrapeEngine, setScrapeEngine] = useState<"patchright" | "brightdata">("patchright")
 
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteCard(cardId),
@@ -102,11 +102,11 @@ export function CardDetail() {
               }`}
             >Chrome</button>
             <button
-              onClick={() => setScrapeEngine("decodo")}
+              onClick={() => setScrapeEngine("brightdata")}
               className={`px-2 py-1.5 text-xs transition-colors ${
-                scrapeEngine === "decodo" ? "bg-ring text-primary-foreground" : "bg-secondary text-muted-foreground"
+                scrapeEngine === "brightdata" ? "bg-ring text-primary-foreground" : "bg-secondary text-muted-foreground"
               }`}
-            >Decodo</button>
+            >Bright Data</button>
           </div>
           <button
             onClick={() => scrapeMutation.mutate()}

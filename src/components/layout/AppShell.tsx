@@ -26,12 +26,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const isLocal = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
   const hasVnc = !isLocal
   // Remember which engine opened the panel (so it doesn't flip to VNC when scrape ends and engine becomes null)
-  const isDecodo = panelEngine === "decodo"
+  const isAutoScraper = panelEngine === "brightdata"
 
   // Auto-open when scraping starts, only close when explicitly done (not on transient status changes)
   useEffect(() => {
     const engine = scrapeStatus?.engine
-    const canShow = engine === "decodo" || hasVnc
+    const canShow = engine === "brightdata" || hasVnc
     if (scrapeStatus?.isRunning && !manualClose && canShow) {
       setPanelEngine(engine || "patchright")
       setShowPanel(true)
@@ -73,15 +73,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           })}
         </nav>
         {/* Panel toggle (VNC for Patchright on remote, Log for Decodo everywhere) */}
-        {((scrapeStatus?.engine === "decodo") || hasVnc) && scrapeStatus?.isRunning && (
+        {((scrapeStatus?.engine === "brightdata") || hasVnc) && scrapeStatus?.isRunning && (
           <button
             onClick={() => { setShowPanel((v) => !v); setManualClose(false) }}
-            title={scrapeStatus?.engine === "decodo" ? "Scraper Log" : "Live View"}
+            title={scrapeStatus?.engine === "brightdata" ? "Scraper Log" : "Live View"}
             className={`mt-auto p-2.5 rounded-lg transition-colors ${
               showPanel ? "bg-yellow-500/20 text-yellow-400" : "text-muted-foreground hover:text-yellow-400"
             }`}
           >
-            {scrapeStatus?.engine === "decodo" ? <Terminal className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
+            {scrapeStatus?.engine === "brightdata" ? <Terminal className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
           </button>
         )}
       </aside>
@@ -96,7 +96,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         showPanel ? "w-full md:w-[40vw] lg:w-[50vw]" : "w-0"
       } overflow-hidden`}>
         {showPanel && (
-          isDecodo ? (
+          isAutoScraper ? (
             <LogPanel onClose={() => { setShowPanel(false); setManualClose(true); setPanelEngine(null) }} />
           ) : (
             <>

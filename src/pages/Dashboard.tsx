@@ -53,7 +53,7 @@ export function Dashboard() {
     refetchInterval: scrapeStatus?.isRunning ? 5_000 : 60_000,
   })
 
-  const [scrapeEngine, setScrapeEngine] = useState<"patchright" | "decodo">("patchright")
+  const [scrapeEngine, setScrapeEngine] = useState<"patchright" | "brightdata">("patchright")
   const scrapeMutation = useMutation({
     mutationFn: () => api.triggerScrape(scrapeEngine),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["scrapeStatus"] }),
@@ -197,12 +197,12 @@ export function Dashboard() {
               Chrome
             </button>
             <button
-              onClick={() => setScrapeEngine("decodo")}
+              onClick={() => setScrapeEngine("brightdata")}
               className={`px-2.5 py-1.5 text-xs transition-colors ${
-                scrapeEngine === "decodo" ? "bg-ring text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"
+                scrapeEngine === "brightdata" ? "bg-ring text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"
               }`}
             >
-              Decodo
+              Bright Data
             </button>
           </div>
           <button

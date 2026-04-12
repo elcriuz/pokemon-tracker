@@ -10,7 +10,7 @@ export const scrapeRouter = Router()
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const BASE = path.join(__dirname, "../..")
-type ScrapeEngine = "patchright" | "decodo"
+type ScrapeEngine = "patchright" | "brightdata"
 let isRunning = false
 let currentRunId: number | null = null
 let currentProcess: ReturnType<typeof spawn> | null = null
@@ -73,9 +73,9 @@ function captureStdout(proc: ReturnType<typeof spawn>) {
 scrapeRouter.post("/", (req, res) => {
   if (isRunning) return res.status(409).json({ error: "Scrape already running", runId: currentRunId })
 
-  const engine: ScrapeEngine = req.body?.engine === "decodo" ? "decodo" : "patchright"
-  const script = engine === "decodo" ? "scrape_decodo.py" : "scrape.py"
-  const env = engine === "decodo" ? { ...process.env } : { ...process.env, DISPLAY: ":99" }
+  const engine: ScrapeEngine = req.body?.engine === "brightdata" ? "brightdata" : "patchright"
+  const script = engine === "brightdata" ? "scrape_brightdata.py" : "scrape.py"
+  const env = engine === "brightdata" ? { ...process.env } : { ...process.env, DISPLAY: ":99" }
 
   const db = getDb()
   regeneratePortfolioCsv()
@@ -126,9 +126,9 @@ scrapeRouter.post("/cards", (req, res) => {
   const { cardIds, engine: reqEngine } = req.body as { cardIds: number[]; engine?: string }
   if (!cardIds?.length) return res.status(400).json({ error: "cardIds required" })
 
-  const engine: ScrapeEngine = reqEngine === "decodo" ? "decodo" : "patchright"
-  const script = engine === "decodo" ? "scrape_decodo.py" : "scrape.py"
-  const env = engine === "decodo" ? { ...process.env } : { ...process.env, DISPLAY: ":99" }
+  const engine: ScrapeEngine = reqEngine === "brightdata" ? "brightdata" : "patchright"
+  const script = engine === "brightdata" ? "scrape_brightdata.py" : "scrape.py"
+  const env = engine === "brightdata" ? { ...process.env } : { ...process.env, DISPLAY: ":99" }
 
   const db = getDb()
   const cards = db.prepare(`SELECT url, name, grade, notes FROM cards WHERE id IN (${cardIds.map(() => "?").join(",")})`)

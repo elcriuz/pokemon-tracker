@@ -99,5 +99,6 @@ function initSchema(db: Database.Database) {
   insert.run("alert_threshold_pct", "5")
   insert.run("telegram_chat_id", "")
   insert.run("telegram_bot_token", "")
-  insert.run("decodo_api_token", "")
+  insert.run("brightdata_api_key", "")
+  insert.run("brightdata_zone", "cardmarket")
 }

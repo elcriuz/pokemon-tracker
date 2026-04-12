@@ -13,7 +13,7 @@ export function Settings() {
   const { data: scrapeHistory } = useQuery({ queryKey: ["scrapeHistory"], queryFn: () => api.getScrapeStatus() })
   const queryClient = useQueryClient()
 
-  const [form, setForm] = useState({ alert_threshold_pct: "5", telegram_bot_token: "", telegram_chat_id: "", decodo_api_token: "" })
+  const [form, setForm] = useState({ alert_threshold_pct: "5", telegram_bot_token: "", telegram_chat_id: "", brightdata_api_key: "", brightdata_zone: "cardmarket" })
   const [saved, setSaved] = useState(false)
   const [testResult, setTestResult] = useState<boolean | null>(null)
   const [newBinder, setNewBinder] = useState("")
@@ -186,22 +186,32 @@ export function Settings() {
         </div>
       </section>
 
-      {/* Decodo Scraper API */}
+      {/* Bright Data Scraper API */}
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Decodo Scraper API</h2>
+        <h2 className="text-lg font-semibold">Bright Data</h2>
         <div className="p-4 rounded-lg bg-card border border-border space-y-3">
           <label className="block">
-            <span className="text-sm text-muted-foreground">API Token</span>
+            <span className="text-sm text-muted-foreground">API Key</span>
             <input
               type="password"
-              value={form.decodo_api_token}
-              onChange={(e) => setForm({ ...form, decodo_api_token: e.target.value })}
-              placeholder="VTAw..."
+              value={form.brightdata_api_key}
+              onChange={(e) => setForm({ ...form, brightdata_api_key: e.target.value })}
+              placeholder="40befa30-..."
+              className="mt-1 w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground"
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm text-muted-foreground">Zone Name</span>
+            <input
+              type="text"
+              value={form.brightdata_zone}
+              onChange={(e) => setForm({ ...form, brightdata_zone: e.target.value })}
+              placeholder="cardmarket"
               className="mt-1 w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground"
             />
           </label>
           <p className="text-xs text-muted-foreground">
-            Token von scraper-api.decodo.com — ermoeglicht automatisiertes Scraping ohne Browser/noVNC
+            Web Unlocker API von brightdata.com — async parallel Scraping, $1.50/1K Requests (PAYG)
           </p>
         </div>
       </section>
