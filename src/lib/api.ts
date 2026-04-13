@@ -46,4 +46,6 @@ export const api = {
     fetchJSON<any>(`/binders/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteBinder: (id: number) =>
     fetchJSON<any>(`/binders/${id}`, { method: "DELETE" }),
+  getScans: (limit = 100) => fetchJSON<any>(`/scans?limit=${limit}`),
+  getScanUsers: () => fetchJSON<any[]>("/scans/users"),
 }

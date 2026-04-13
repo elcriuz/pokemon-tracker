@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { LayoutDashboard, BarChart3, Settings, Zap, Monitor, Terminal, X } from "lucide-react"
+import { LayoutDashboard, BarChart3, Settings, Zap, Monitor, Terminal, X, ScanSearch } from "lucide-react"
 import { useState, useEffect } from "react"
 import { api } from "@/lib/api"
 import { LogPanel } from "@/components/scrape/LogPanel"
@@ -9,6 +9,7 @@ import type { ReactNode } from "react"
 const NAV = [
   { to: "/", icon: LayoutDashboard, label: "Karten" },
   { to: "/analytics", icon: BarChart3, label: "Analytics" },
+  { to: "/scans", icon: ScanSearch, label: "Scans" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ]
 

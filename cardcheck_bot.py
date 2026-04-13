@@ -782,6 +782,31 @@ def parse_caption(caption):
             break
     return result
 
+# ─── Scan Logging ───────────────────────────────────────────
+
+def _log_scan(user_id, user_name, card_name, set_name, number, language, grade, market_eur, cm_url, duration_sec, via):
+    """Log scan to DB for activity tracking."""
+    import sqlite3, os
+    db = os.environ.get("CARDCHECK_DB", DB_PATH)
+    try:
+        conn = sqlite3.connect(db)
+        conn.execute("""CREATE TABLE IF NOT EXISTS scan_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scanned_at TEXT DEFAULT (datetime('now')),
+            user_id INTEGER, user_name TEXT,
+            card_name TEXT, set_name TEXT, number TEXT,
+            language TEXT, grade TEXT,
+            market_eur REAL, cm_url TEXT,
+            duration_sec INTEGER, via TEXT
+        )""")
+        conn.execute(
+            "INSERT INTO scan_log (user_id, user_name, card_name, set_name, number, language, grade, market_eur, cm_url, duration_sec, via) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (user_id, user_name, card_name, set_name, number, language, grade, market_eur, cm_url, duration_sec, via))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.warning(f"Scan log failed: {e}")
+
 # ─── Main Handler ────────────────────────────────────────────
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -949,6 +974,11 @@ async def _process_photo(msg, context):
         reply += f"  <i>({total_sec}s)</i>"
 
         await msg.reply_text(reply, parse_mode="HTML", disable_web_page_preview=True, reply_to_message_id=msg.message_id)
+
+        # 7. Log scan to DB
+        _log_scan(msg.from_user.id, msg.from_user.first_name or "?", name, set_name, number,
+                  language, grade, market_eur, link_url, total_sec,
+                  "ximilar" if card.get("ximilar_id") else "quick_cm" if card.get("cm_url_override") else "tcg_api")
 
     except Exception as e:
         log.error(f"[{check_id}] ERROR: {e}", exc_info=True)
