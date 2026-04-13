@@ -653,24 +653,36 @@ async def find_cardmarket_url(card_info):
 
 async def scrape_cardmarket_prices(card_info):
     """Scrapt Cardmarket Preise fuer eine Karte."""
-    url = await find_cardmarket_url(card_info)
-    if not url:
-        return None, None, None
-
     lang_code = LANG_MAP.get(card_info.get("language", "jp"), 7)
     grade = card_info.get("grade", "raw")
 
-    # Build URL with filters
+    # Build filter params
     params = f"language={lang_code}"
     is_graded = grade.startswith("PSA") or grade.startswith("CGC") or grade.startswith("BGS")
     if is_graded:
         params += "&minCondition=1&isGraded=Y"
     else:
-        # Use caption condition if provided, otherwise default NM
         min_cond = card_info.get("min_condition", 2)
         params += f"&minCondition={min_cond}"
     if card_info.get("is_first_edition"):
         params += "&isFirstEd=Y"
+
+    # Fast path: Ximilar CM product URL — scrape directly with filters (1 BD request instead of 2)
+    if card_info.get("cm_product_url"):
+        product_url = card_info["cm_product_url"] + "&" + params
+        log.info(f"  Scraping (product URL): {product_url}")
+        html = await bd_scrape(product_url)
+        if html:
+            prices = extract_prices(html)
+            if prices.get("from") or prices.get("trend"):
+                og = re.search(r'property="og:url"[^>]*content="([^"]+Singles/[^"]+)"', html)
+                real_url = og.group(1) if og else card_info["cm_product_url"]
+                full_url = f"{real_url}?{params}" if og else product_url
+                return real_url, prices, full_url
+
+    url = await find_cardmarket_url(card_info)
+    if not url:
+        return None, None, None
 
     separator = "&" if "?" in url else "?"
     full_url = f"{url}{separator}{params}"
