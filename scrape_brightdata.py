@@ -536,9 +536,13 @@ Log-Datei:       {log_file}
             arrow = "\U0001f4c8" if diff > 0 else "\U0001f4c9"
             name = r.get("name") or r["url"].split("/")[-1].split("?")[0]
             sign = "+" if diff > 0 else ""
-            movers.append((abs(diff), f"{arrow} {name}: {old_val:.2f} \u2192 {new_val:.2f}\u20ac ({sign}{diff:.2f}\u20ac / {sign}{pct:.1f}%)"))
+            movers.append((abs(diff), diff, f"{name}: {old_val:.2f} \u2192 {new_val:.2f}\u20ac ({sign}{diff:.2f}\u20ac / {sign}{pct:.1f}%)"))
 
-    movers.sort(reverse=True)  # biggest movers first
+    # Split into winners/losers
+    winners = [(d, line) for d, diff_val, line in movers if diff_val > 0]
+    losers = [(d, line) for d, diff_val, line in movers if diff_val < 0]
+    winners.sort(reverse=True)
+    losers.sort(reverse=True)
 
     # Build Telegram message
     msg_parts = [f"\U0001f4ca <b>Scrape Report</b> ({now.strftime('%d.%m.%Y %H:%M')})\n"]
@@ -551,11 +555,15 @@ Log-Datei:       {log_file}
         if stats["errors"]: problems.append(f"\u274c {stats['errors']}x Fehler")
         msg_parts.append(" | ".join(problems))
 
-    if movers:
-        msg_parts.append(f"\n<b>Grosse Bewegungen ({len(movers)}):</b>")
-        for _, line in movers[:15]:
+    if winners:
+        msg_parts.append(f"\n\U0001f4c8 <b>Gewinner ({len(winners)}):</b>")
+        for _, line in winners[:8]:
             msg_parts.append(line)
-    else:
+    if losers:
+        msg_parts.append(f"\n\U0001f4c9 <b>Verlierer ({len(losers)}):</b>")
+        for _, line in losers[:8]:
+            msg_parts.append(line)
+    if not winners and not losers:
         msg_parts.append("\nKeine grossen Preisbewegungen.")
 
     send_telegram("\n".join(msg_parts))
