@@ -988,9 +988,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle text messages — just acknowledge."""
     user_id = update.effective_user.id
     if user_id not in ALLOWED_USERS:
+        user_name = update.effective_user.first_name or "?"
+        log.info(f"BLOCKED: user_id={user_id} name='{user_name}' text='{(update.message.text or '')[:50]}'")
+        await update.message.reply_text("Kein Zugang. Frag Christoph ob er dich freischaltet!")
         return
     text = (update.message.text or "").strip().lower()
-    if text in ("hi", "hallo", "ping"):
+    if text in ("hi", "hallo", "ping", "hey", "start"):
         await update.message.reply_text("\U0001f4f8 Schick mir ein Kartenfoto fuer einen Preischeck!")
 
 # ─── Main ────────────────────────────────────────────────────
