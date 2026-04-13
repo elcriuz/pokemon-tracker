@@ -19,8 +19,29 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 # ─── Config ──────────────────────────────────────────────────
 
-ALLOWED_USERS = [8416445370]
 DB_PATH = "/opt/pokemon-tracker/data/tracker.db"
+
+def load_allowed_users():
+    """Laedt erlaubte User IDs aus DB (Tabelle: allowed_users) + Fallback hardcoded."""
+    import sqlite3, os
+    db = os.environ.get("CARDCHECK_DB", DB_PATH)
+    users = set()
+    try:
+        conn = sqlite3.connect(db)
+        conn.execute("CREATE TABLE IF NOT EXISTS allowed_users (telegram_id INTEGER PRIMARY KEY, name TEXT)")
+        rows = conn.execute("SELECT telegram_id FROM allowed_users").fetchall()
+        users = {r[0] for r in rows}
+        if not users:
+            # Seed with Christoph if table is empty
+            conn.execute("INSERT OR IGNORE INTO allowed_users (telegram_id, name) VALUES (8416445370, 'Christoph')")
+            conn.commit()
+            users = {8416445370}
+        conn.close()
+    except Exception:
+        users = {8416445370}
+    return users
+
+ALLOWED_USERS = load_allowed_users()
 
 def load_config():
     """Laedt Credentials aus DB settings."""
@@ -766,6 +787,8 @@ def parse_caption(caption):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ALLOWED_USERS:
+        user_name = update.effective_user.first_name or "?"
+        log.info(f"BLOCKED: user_id={user_id} name='{user_name}' — not in allowed_users")
         return
 
     msg = update.message
