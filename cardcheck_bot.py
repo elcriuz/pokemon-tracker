@@ -449,7 +449,7 @@ async def _get_bd_session():
     if _bd_session is None or _bd_session.closed:
         _bd_session = aiohttp.ClientSession(
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {BD_KEY}"},
-            timeout=aiohttp.ClientTimeout(total=60),
+            timeout=aiohttp.ClientTimeout(total=90),
         )
     return _bd_session
 
