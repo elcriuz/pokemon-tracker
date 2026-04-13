@@ -105,15 +105,20 @@ def send_telegram(message):
     token, _ = load_telegram_config()
     if not token:
         return False
-    # Get all user IDs from allowed_users table
+    # Get digest subscribers from allowed_users table
     chat_ids = []
     try:
         db_path = BASE_DIR / "data" / "tracker.db"
         if db_path.exists():
             import sqlite3
             conn = sqlite3.connect(str(db_path))
-            conn.execute("CREATE TABLE IF NOT EXISTS allowed_users (telegram_id INTEGER PRIMARY KEY, name TEXT)")
-            rows = conn.execute("SELECT telegram_id FROM allowed_users").fetchall()
+            conn.execute("CREATE TABLE IF NOT EXISTS allowed_users (telegram_id INTEGER PRIMARY KEY, name TEXT, receives_digest INTEGER NOT NULL DEFAULT 0)")
+            # Add column if missing (for existing DBs)
+            try:
+                conn.execute("ALTER TABLE allowed_users ADD COLUMN receives_digest INTEGER NOT NULL DEFAULT 0")
+            except Exception:
+                pass
+            rows = conn.execute("SELECT telegram_id FROM allowed_users WHERE receives_digest = 1").fetchall()
             chat_ids = [r[0] for r in rows]
             conn.close()
     except Exception:
