@@ -343,15 +343,52 @@ async def identify_card(photo_bytes):
     if not pokemon_name:
         return card
 
-    # ─── Step 2: If Vision has set_code → Quick CM (fastest path, handles JP sets) ───
+    # ─── Step 2: Ximilar product URL (fastest: 1 BD request, skips CM search) ───
+    # If Ximilar identified the card AND has a CM product URL → use it directly
+    if ximilar_result and ximilar_result["prob"] > 0.80 and ximilar_result.get("cm_link"):
+        xbest = ximilar_result["best"]
+        xset = (xbest.get("set_code") or "").upper()
+        # Trust Ximilar when: set_codes match (or no Vision set_code) AND numbers match
+        xnum_ok = not vision_num or str(xbest.get("card_number")) == vision_num
+        # Don't fast-path when ambiguous alts exist (same name, different set) without a number to disambiguate
+        has_ambiguous_alts = not vision_num and any(
+            a.get("name") == xbest.get("name") and a.get("set_code") != xbest.get("set_code")
+            for a in ximilar_result.get("alternatives", [])[:3])
+        if (not vision_sc or xset == vision_sc.upper()) and xnum_ok and not has_ambiguous_alts:
+            log.info(f"  XIMILAR_FAST: {xbest.get('full_name')} → product URL (skipping CM search)")
+            card["name"] = xbest.get("name", "")
+            card["set"] = xbest.get("set", "")
+            card["set_code"] = xbest.get("set_code", "")
+            card["number"] = str(xbest.get("card_number", ""))
+            card["ximilar_id"] = True
+            card["ptcgo_code"] = xbest.get("set_code", "")
+            card["cm_product_url"] = ximilar_result["cm_link"]
+            return card
+        # Vision set_code differs → retry Ximilar with hint (only if we have a real set_code)
+        if not vision_sc:
+            log.info(f"  XIMILAR_FAST: skipped (no set_code, number mismatch or ambiguous)")
+        else:
+            log.info(f"  XIMILAR: set mismatch ({xset} vs {vision_sc}) — retrying with hint...")
+        ximilar_hint = await _ximilar_identify(b64, set_code_hint=vision_sc) if vision_sc else None
+        if ximilar_hint and ximilar_hint["prob"] > 0.80 and ximilar_hint.get("cm_link"):
+            hbest = ximilar_hint["best"]
+            log.info(f"  XIMILAR_FAST (hinted): {hbest.get('full_name')} → product URL")
+            card["name"] = hbest.get("name", "")
+            card["set"] = hbest.get("set", "")
+            card["set_code"] = hbest.get("set_code", "")
+            card["number"] = str(hbest.get("card_number", ""))
+            card["ximilar_id"] = True
+            card["ptcgo_code"] = hbest.get("set_code", "")
+            card["cm_product_url"] = ximilar_hint["cm_link"]
+            return card
+
+    # ─── Step 3: Quick CM (fallback when Ximilar has no product URL — JP sets etc.) ───
     if vision_sc and vision_num and len(vision_sc) <= 6:
         for search_q in [f"{pokemon_name} {vision_sc}", f"{vision_sc}{vision_num}"]:
             log.info(f"  QUICK_CM: trying '{search_q}'...")
             quick_results = await search_cardmarket(search_q)
             for url in quick_results:
                 slug = url.split("/")[-1]
-                # Match: slug ends with vision_num (exact match, no digit-predecessor check
-                # because set codes like "s11" + number "111" → "s11111" are valid)
                 if slug.endswith(vision_num):
                     log.info(f"  QUICK_CM: FOUND {slug}")
                     card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
@@ -374,17 +411,20 @@ async def identify_card(photo_bytes):
         # Only if Vision read X/Y format AND the name matches (avoid picking wrong Pokemon)
         vision_number_raw = card.get("number") or ""
         picked = best
+        # Cross-reference Vision's number with Ximilar (supports "X/Y" and plain "X")
+        v_num = ""
         if "/" in vision_number_raw:
             v_num = re.sub(r"[^\d]", "", vision_number_raw.split("/")[0])
+        elif vision_number_raw:
+            v_num = re.sub(r"[^\d]", "", vision_number_raw)
+        if v_num and str(best.get("card_number")) != v_num:
             best_name_lower = (best.get("name") or "").lower()
-            if v_num and str(best.get("card_number")) != v_num:
-                for alt in ximilar_result["alternatives"]:
-                    alt_name_lower = (alt.get("name") or "").lower()
-                    # Only pick alt if same Pokemon species AND number matches
-                    if str(alt.get("card_number")) == v_num and best_name_lower.split()[0] in alt_name_lower:
-                        log.info(f"  XIMILAR: alt match by number #{v_num}: {alt.get('full_name')}")
-                        picked = alt
-                        break
+            for alt in ximilar_result["alternatives"]:
+                alt_name_lower = (alt.get("name") or "").lower()
+                if str(alt.get("card_number")) == v_num and best_name_lower.split()[0] in alt_name_lower:
+                    log.info(f"  XIMILAR: alt match by number #{v_num}: {alt.get('full_name')}")
+                    picked = alt
+                    break
 
         card["name"] = picked.get("name", "")
         card["set"] = picked.get("set", "")
@@ -392,8 +432,10 @@ async def identify_card(photo_bytes):
         card["number"] = str(picked.get("card_number", ""))
         card["ximilar_id"] = True
         card["ptcgo_code"] = picked.get("set_code", "")
-        # Only use CM product URL for best_match (alt's product ID may point to wrong variant)
-        if picked is best:
+        # Only use CM product URL for best_match when NOT ambiguous
+        ambiguous = any(a.get("name") == best.get("name") and a.get("set_code") != best.get("set_code")
+                        for a in ximilar_result["alternatives"][:3])
+        if picked is best and not ambiguous:
             cm_link = picked.get("links", {}).get("cardmarket.com", "")
             if cm_link and "idProduct=" in cm_link:
                 card["cm_product_url"] = cm_link
