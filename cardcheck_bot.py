@@ -441,18 +441,33 @@ async def identify_card(photo_bytes):
 # ─── Bright Data Scraping ────────────────────────────────────
 
 # Limit concurrent BD requests to avoid throttling when processing multiple cards
-_bd_semaphore = asyncio.Semaphore(3)
+_bd_semaphore = asyncio.Semaphore(5)
+_bd_session = None
+
+async def _get_bd_session():
+    global _bd_session
+    if _bd_session is None or _bd_session.closed:
+        _bd_session = aiohttp.ClientSession(
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {BD_KEY}"},
+            timeout=aiohttp.ClientTimeout(total=60),
+        )
+    return _bd_session
 
 async def bd_scrape(url):
     async with _bd_semaphore:
-        async with aiohttp.ClientSession() as session:
+        try:
+            session = await _get_bd_session()
             async with session.post("https://api.brightdata.com/request",
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {BD_KEY}"},
-                json={"zone": BD_ZONE, "url": url, "format": "raw", "country": "de"},
-                timeout=aiohttp.ClientTimeout(total=90)) as resp:
+                json={"zone": BD_ZONE, "url": url, "format": "raw", "country": "de"}) as resp:
                 if resp.status != 200:
                     return None
                 return await resp.text()
+        except asyncio.TimeoutError:
+            log.warning(f"  BD timeout: {url[:80]}")
+            return None
+        except Exception as e:
+            log.warning(f"  BD error: {e}")
+            return None
 
 def bd_scrape_sync(url):
     """Sync version for use in run_in_executor contexts."""
