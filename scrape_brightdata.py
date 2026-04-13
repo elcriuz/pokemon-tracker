@@ -101,19 +101,41 @@ def load_telegram_config():
 
 
 def send_telegram(message):
-    token, chat_id = load_telegram_config()
-    if not token or not chat_id:
+    """Send message to all allowed_users."""
+    token, _ = load_telegram_config()
+    if not token:
         return False
+    # Get all user IDs from allowed_users table
+    chat_ids = []
     try:
-        import urllib.request
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        data = json.dumps({"chat_id": chat_id, "text": message, "parse_mode": "HTML"}).encode()
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=10)
-        return True
-    except Exception as e:
-        log.warning(f"Telegram-Fehler: {e}")
-        return False
+        db_path = BASE_DIR / "data" / "tracker.db"
+        if db_path.exists():
+            import sqlite3
+            conn = sqlite3.connect(str(db_path))
+            conn.execute("CREATE TABLE IF NOT EXISTS allowed_users (telegram_id INTEGER PRIMARY KEY, name TEXT)")
+            rows = conn.execute("SELECT telegram_id FROM allowed_users").fetchall()
+            chat_ids = [r[0] for r in rows]
+            conn.close()
+    except Exception:
+        pass
+    # Fallback to settings chat_id if no allowed_users
+    if not chat_ids:
+        _, chat_id = load_telegram_config()
+        if chat_id:
+            chat_ids = [int(chat_id)]
+    sent = 0
+    for cid in chat_ids:
+        try:
+            import urllib.request
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            data = json.dumps({"chat_id": cid, "text": message, "parse_mode": "HTML"}).encode()
+            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=10)
+            sent += 1
+        except Exception as e:
+            log.warning(f"Telegram-Fehler (user {cid}): {e}")
+    log.info(f"Telegram: sent to {sent}/{len(chat_ids)} users")
+    return sent > 0
 
 
 # ─── Price Extraction (same as scrape.py) ────────────────────
