@@ -347,14 +347,15 @@ async def identify_card(photo_bytes):
     # If Ximilar identified the card AND has a CM product URL → use it directly
     if ximilar_result and ximilar_result["prob"] > 0.80 and ximilar_result.get("cm_link"):
         xbest = ximilar_result["best"]
-        xset = (xbest.get("set_code") or "").upper()
+        xset = (xbest.get("set_code") or "").upper().replace("-", "")
+        vision_sc_norm = vision_sc.upper().replace("-", "")
         # Trust Ximilar when: set_codes match (or no Vision set_code) AND numbers match
         xnum_ok = not vision_num or str(xbest.get("card_number")) == vision_num
         # Don't fast-path when ambiguous alts exist (same name, different set) without a number to disambiguate
         has_ambiguous_alts = not vision_num and any(
             a.get("name") == xbest.get("name") and a.get("set_code") != xbest.get("set_code")
             for a in ximilar_result.get("alternatives", [])[:3])
-        if (not vision_sc or xset == vision_sc.upper()) and xnum_ok and not has_ambiguous_alts:
+        if (not vision_sc or xset == vision_sc_norm) and xnum_ok and not has_ambiguous_alts:
             log.info(f"  XIMILAR_FAST: {xbest.get('full_name')} → product URL (skipping CM search)")
             card["name"] = xbest.get("name", "")
             card["set"] = xbest.get("set", "")
@@ -387,9 +388,10 @@ async def identify_card(photo_bytes):
         for search_q in [f"{pokemon_name} {vision_sc}", f"{vision_sc}{vision_num}"]:
             log.info(f"  QUICK_CM: trying '{search_q}'...")
             quick_results = await search_cardmarket(search_q)
+            name_slug = pokemon_name.lower().split()[0]
             for url in quick_results:
                 slug = url.split("/")[-1]
-                if slug.endswith(vision_num):
+                if slug.endswith(vision_num) and name_slug in slug.lower():
                     log.info(f"  QUICK_CM: FOUND {slug}")
                     card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
                     card["set"] = url.split("/Singles/")[-1].split("/")[0].replace("-", " ") if "/Singles/" in url else ""
@@ -464,12 +466,13 @@ async def identify_card(photo_bytes):
         if new_name.lower() != pokemon_name.lower():
             pokemon_name = new_name
             card["pokemon"] = pokemon_name
+        retry_name_slug = pokemon_name.lower().split()[0]
         for search_q in [f"{pokemon_name} {vision_sc}", f"{pokemon_name} ex {vision_sc}"]:
             log.info(f"  QUICK_CM retry: '{search_q}'...")
             quick_results = await search_cardmarket(search_q)
             for url in quick_results:
                 slug = url.split("/")[-1]
-                if slug.endswith(vision_num):
+                if slug.endswith(vision_num) and retry_name_slug in slug.lower():
                     log.info(f"  QUICK_CM retry: FOUND {slug}")
                     card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
                     card["set"] = url.split("/Singles/")[-1].split("/")[0].replace("-", " ") if "/Singles/" in url else ""
