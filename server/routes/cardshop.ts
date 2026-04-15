@@ -24,14 +24,26 @@ function getRecommendation(from_price: number | null, avg7: number | null, avg30
 
 const REC_ORDER: Record<string, number> = { SELL_NOW: 0, GOOD: 1, HOLD: 2, AVOID: 3 }
 
+// POST /api/cardshop/:id/stash — toggle stash status
+cardshopRouter.post("/:id/stash", (req, res) => {
+  const db = getDb()
+  const { id } = req.params
+  const card = db.prepare("SELECT stash FROM cards WHERE id = ?").get(id) as any
+  if (!card) return res.status(404).json({ error: "Card not found" })
+  const newStash = card.stash ? 0 : 1
+  db.prepare("UPDATE cards SET stash = ? WHERE id = ?").run(newStash, id)
+  res.json({ id: Number(id), stash: newStash })
+})
+
 // GET /api/cardshop
 cardshopRouter.get("/", (req, res) => {
   const db = getDb()
+  const showStash = req.query.stash === "1"
 
   // Latest prices per card (same pattern as dashboard.ts)
   const cards = db.prepare(`
     SELECT
-      c.id, c.name, c.grade, c.image, c.url, c.quantity, c.purchase_price,
+      c.id, c.name, c.grade, c.image, c.url, c.quantity, c.purchase_price, c.stash,
       p.from_price, p.trend, p.avg7, p.avg30, p.value, p.scraped_at,
       p.psa10_low, p.psa9_low,
       prev.from_price AS prev_from
@@ -46,18 +58,34 @@ cardshopRouter.get("/", (req, res) => {
       )
   `).all() as any[]
 
+  // Filter stash cards unless explicitly requested
+  const filteredCards = showStash ? cards : cards.filter((c: any) => !c.stash)
+
   let totalShopValue = 0
   let totalMarketValue = 0
   let sellNowCount = 0
 
-  const result = cards.map((c) => {
-    const from_price = c.from_price || c.value || null
+  const result = filteredCards.map((c: any) => {
+    const grade = (c.grade || "").toUpperCase()
+    const isGraded = grade.startsWith("PSA") || grade.startsWith("CGC") || grade.startsWith("BGS")
+
+    // For graded cards: use the matching graded price, not the raw from_price
+    let market_price: number | null = null
+    if (isGraded) {
+      if (grade.includes("10")) market_price = c.psa10_low || c.from_price || c.value || null
+      else if (grade.includes("9")) market_price = c.psa9_low || c.from_price || c.value || null
+      else market_price = c.from_price || c.value || null
+    } else {
+      market_price = c.from_price || c.value || null
+    }
+
+    const from_price = market_price
     const shop_price = from_price ? Math.round(from_price * SHOP_RATE * 100) / 100 : null
     const avg7 = c.avg7 || null
     const avg30 = c.avg30 || null
     const ratio_7d = from_price && avg7 ? Math.round((from_price / avg7) * 1000) / 1000 : null
     const ratio_30d = from_price && avg30 ? Math.round((from_price / avg30) * 1000) / 1000 : null
-    const recommendation = getRecommendation(from_price, avg7, avg30)
+    const recommendation = isGraded ? getRecommendation(from_price, avg7, avg30) : getRecommendation(from_price, avg7, avg30)
     const profit_if_sold = shop_price && c.purchase_price ? Math.round((shop_price - c.purchase_price) * 100) / 100 : null
 
     if (shop_price) totalShopValue += shop_price * (c.quantity || 1)
@@ -82,6 +110,7 @@ cardshopRouter.get("/", (req, res) => {
       recommendation,
       purchase_price: c.purchase_price || null,
       profit_if_sold,
+      stash: !!c.stash,
       scraped_at: c.scraped_at || null,
     }
   })

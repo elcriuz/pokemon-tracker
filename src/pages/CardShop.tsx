@@ -1,7 +1,8 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/lib/api"
 import { Link } from "react-router-dom"
+import { Lock, Unlock } from "lucide-react"
 
 const REC_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   SELL_NOW: { label: "SELL NOW", color: "text-green-400", bg: "bg-green-500/20" },
@@ -35,8 +36,14 @@ function TrendBadge({ ratio, label }: { ratio: number | null; label: string }) {
 type FilterType = "ALL" | "SELL_NOW" | "GOOD" | "HOLD" | "AVOID"
 
 export function CardShop() {
-  const { data, isLoading } = useQuery({ queryKey: ["cardshop"], queryFn: api.getCardShop, refetchInterval: 60_000 })
+  const queryClient = useQueryClient()
+  const [showStash, setShowStash] = useState(false)
+  const { data, isLoading } = useQuery({ queryKey: ["cardshop", showStash], queryFn: () => api.getCardShop(showStash), refetchInterval: 60_000 })
   const [filter, setFilter] = useState<FilterType>("ALL")
+  const stashMutation = useMutation({
+    mutationFn: (id: number) => api.toggleStash(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cardshop"] }),
+  })
 
   const summary = data?.summary || {}
   const allCards = data?.cards || []
@@ -70,7 +77,7 @@ export function CardShop() {
       </div>
 
       {/* Filter */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 items-center">
         {(["ALL", "SELL_NOW", "GOOD", "HOLD", "AVOID"] as FilterType[]).map((f) => {
           const count = f === "ALL" ? allCards.length : allCards.filter((c: any) => c.recommendation === f).length
           const active = filter === f
@@ -87,6 +94,16 @@ export function CardShop() {
             </button>
           )
         })}
+        <div className="ml-auto">
+          <button
+            onClick={() => setShowStash((v) => !v)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1 ${
+              showStash ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+            }`}
+          >
+            <Lock className="w-3 h-3" /> Stash {showStash ? "an" : "aus"}
+          </button>
+        </div>
       </div>
 
       {/* Table */}
@@ -105,7 +122,8 @@ export function CardShop() {
                 <th className="py-2 pr-3 text-right">7d</th>
                 <th className="py-2 pr-3 text-right">30d</th>
                 <th className="py-2 pr-3 text-center">Signal</th>
-                <th className="py-2 text-right">Gewinn</th>
+                <th className="py-2 pr-3 text-right">Gewinn</th>
+                <th className="py-2 w-8"></th>
               </tr>
             </thead>
             <tbody>
@@ -137,7 +155,7 @@ export function CardShop() {
                         <span className="text-xs text-muted-foreground">-</span>
                       )}
                     </td>
-                    <td className="py-2.5 text-right">
+                    <td className="py-2.5 pr-3 text-right">
                       {c.profit_if_sold != null ? (
                         <span className={c.profit_if_sold >= 0 ? "text-green-400" : "text-red-400"}>
                           {c.profit_if_sold >= 0 ? "+" : ""}{formatEur(c.profit_if_sold)}
@@ -145,6 +163,15 @@ export function CardShop() {
                       ) : (
                         <span className="text-muted-foreground">-</span>
                       )}
+                    </td>
+                    <td className="py-2.5">
+                      <button
+                        onClick={() => stashMutation.mutate(c.id)}
+                        title={c.stash ? "Aus Stash entfernen" : "In Stash (nicht verkaufen)"}
+                        className="text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        {c.stash ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5 opacity-30 hover:opacity-100" />}
+                      </button>
                     </td>
                   </tr>
                 )

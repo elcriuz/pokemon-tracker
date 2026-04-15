@@ -46,7 +46,8 @@ export const api = {
     fetchJSON<any>(`/binders/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteBinder: (id: number) =>
     fetchJSON<any>(`/binders/${id}`, { method: "DELETE" }),
-  getCardShop: () => fetchJSON<any>("/cardshop"),
+  getCardShop: (showStash = false) => fetchJSON<any>(`/cardshop${showStash ? "?stash=1" : ""}`),
+  toggleStash: (id: number) => fetchJSON<any>(`/cardshop/${id}/stash`, { method: "POST" }),
   getScans: (limit = 100) => fetchJSON<any>(`/scans?limit=${limit}`),
   getScanUsers: () => fetchJSON<any[]>("/scans/users"),
 }
