@@ -81,11 +81,30 @@ cardshopRouter.get("/", (req, res) => {
 
     const from_price = market_price
     const shop_price = from_price ? Math.round(from_price * SHOP_RATE * 100) / 100 : null
-    const avg7 = c.avg7 || null
-    const avg30 = c.avg30 || null
-    const ratio_7d = from_price && avg7 ? Math.round((from_price / avg7) * 1000) / 1000 : null
-    const ratio_30d = from_price && avg30 ? Math.round((from_price / avg30) * 1000) / 1000 : null
-    const recommendation = isGraded ? getRecommendation(from_price, avg7, avg30) : getRecommendation(from_price, avg7, avg30)
+
+    // For graded cards: avg7/avg30 are raw-card averages → don't compare with graded price
+    // Instead use previous scrape price for trend
+    let ratio_7d: number | null = null
+    let ratio_30d: number | null = null
+    let recommendation: Recommendation = null
+
+    if (isGraded) {
+      // Graded: compare today's graded price vs previous scrape's graded price
+      const prev = c.prev_from || null
+      if (from_price && prev && prev > 0) {
+        const change = from_price / prev
+        ratio_7d = Math.round(change * 1000) / 1000
+        ratio_30d = null // no 30d data for graded
+        recommendation = change > 1.05 ? "SELL_NOW" : change > 1.0 ? "GOOD" : change > 0.95 ? "HOLD" : "AVOID"
+      }
+    } else {
+      // Raw: compare from_price against CM avg7 and avg30
+      const avg7 = c.avg7 || null
+      const avg30 = c.avg30 || null
+      ratio_7d = from_price && avg7 ? Math.round((from_price / avg7) * 1000) / 1000 : null
+      ratio_30d = from_price && avg30 ? Math.round((from_price / avg30) * 1000) / 1000 : null
+      recommendation = getRecommendation(from_price, avg7, avg30)
+    }
     const profit_if_sold = shop_price && c.purchase_price ? Math.round((shop_price - c.purchase_price) * 100) / 100 : null
 
     if (shop_price) totalShopValue += shop_price * (c.quantity || 1)
@@ -102,8 +121,9 @@ cardshopRouter.get("/", (req, res) => {
       from_price,
       shop_price,
       trend: c.trend || null,
-      avg7,
-      avg30,
+      avg7: isGraded ? null : (c.avg7 || null),
+      avg30: isGraded ? null : (c.avg30 || null),
+      isGraded,
       prev_from: c.prev_from || null,
       ratio_7d,
       ratio_30d,

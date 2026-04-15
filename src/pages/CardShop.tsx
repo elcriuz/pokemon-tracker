@@ -144,7 +144,7 @@ export function CardShop() {
                     </td>
                     <td className="py-2.5 pr-3 text-right">{formatEur(c.from_price)}</td>
                     <td className="py-2.5 pr-3 text-right font-medium">{formatEur(c.shop_price)}</td>
-                    <td className="py-2.5 pr-3"><TrendBadge ratio={c.ratio_7d} label="vs 7d" /></td>
+                    <td className="py-2.5 pr-3"><TrendBadge ratio={c.ratio_7d} label={c.isGraded ? "vs prev" : "vs 7d"} /></td>
                     <td className="py-2.5 pr-3"><TrendBadge ratio={c.ratio_30d} label="vs 30d" /></td>
                     <td className="py-2.5 pr-3 text-center">
                       {rec ? (
