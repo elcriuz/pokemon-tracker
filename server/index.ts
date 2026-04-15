@@ -14,6 +14,7 @@ import { settingsRouter } from "./routes/settings"
 import { telegramRouter } from "./routes/telegram"
 import { bindersRouter } from "./routes/binders"
 import { scansRouter } from "./routes/scans"
+import { cardshopRouter } from "./routes/cardshop"
 
 const app = express()
 const PORT = process.env.PORT || 3333
@@ -33,6 +34,7 @@ app.use("/api/settings", settingsRouter)
 app.use("/api/telegram", telegramRouter)
 app.use("/api/binders", bindersRouter)
 app.use("/api/scans", scansRouter)
+app.use("/api/cardshop", cardshopRouter)
 
 // Serve card images
 app.use("/images", express.static(path.join(__dirname, "..", "data", "images")))
