@@ -350,7 +350,7 @@ async def identify_card(photo_bytes):
         xset = (xbest.get("set_code") or "").upper().replace("-", "")
         vision_sc_norm = vision_sc.upper().replace("-", "")
         # Trust Ximilar when: set_codes match (or no Vision set_code) AND numbers match
-        xnum_ok = not vision_num or str(xbest.get("card_number")) == vision_num
+        xnum_ok = not vision_num or str(xbest.get("card_number")).lstrip("0") == vision_num.lstrip("0")
         # Don't fast-path when ambiguous alts exist (same name, different set) without a number to disambiguate
         has_ambiguous_alts = not vision_num and any(
             a.get("name") == xbest.get("name") and a.get("set_code") != xbest.get("set_code")
