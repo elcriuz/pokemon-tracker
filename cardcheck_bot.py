@@ -134,7 +134,8 @@ REGELN:
 - set_code: Steht unten links auf der Karte vor der Nummer (z.B. "PRE 161/131" → PRE) oder auf dem PSA Label. Alte WotC/EX-era Karten (1999-2007) haben KEINEN Text-Code → null
 - is_first_edition: true wenn links unter dem Kartenbild ein "1" in einem Kreis steht, oder "1st Edition"/"1. Edition" auf der Karte steht
 - grade: PSA/CGC/BGS Label lesen. GEM MT 10=PSA10, MINT 9=PSA9. Kein Slab=raw
-- shop_price: Preistag lesen. Punkte=Tausender (¥130.000=130000). null wenn nicht sichtbar"""
+- shop_price: Preistag lesen. Punkte=Tausender (¥130.000=130000). null wenn nicht sichtbar
+- shop_currency: NUR JPY wenn ¥-Symbol oder japanischer Text sichtbar. Sonst EUR als Default."""
 
 TCG_API = "https://api.pokemontcg.io/v2"
 
@@ -918,7 +919,7 @@ async def _process_photo(msg, context):
         language = card.get("language", "jp")
         grade = card.get("grade", "raw")
         shop_price = card.get("shop_price")
-        shop_currency = card.get("shop_currency", "JPY")
+        shop_currency = card.get("shop_currency", "EUR")
         set_code = card.get("set_code", "")
 
         log.info(f"[{check_id}] CARD: {name} {version} ({set_name}/{set_code}) #{number} {language} {grade} shop={shop_price}{shop_currency}")
