@@ -46,7 +46,9 @@ cardshopRouter.get("/", (req, res) => {
       c.id, c.name, c.grade, c.image, c.url, c.quantity, c.purchase_price, c.stash,
       p.from_price, p.trend, p.avg7, p.avg30, p.value, p.scraped_at,
       p.psa10_low, p.psa9_low,
-      prev.from_price AS prev_from
+      prev.from_price AS prev_from,
+      prev.psa10_low AS prev_psa10,
+      prev.psa9_low AS prev_psa9
     FROM cards c
     LEFT JOIN prices p ON p.card_id = c.id
       AND p.scraped_at = (SELECT MAX(p2.scraped_at) FROM prices p2 WHERE p2.card_id = c.id AND p2.value IS NOT NULL)
@@ -89,8 +91,8 @@ cardshopRouter.get("/", (req, res) => {
     let recommendation: Recommendation = null
 
     if (isGraded) {
-      // Graded: compare today's graded price vs previous scrape's graded price
-      const prev = c.prev_from || null
+      // Graded: compare today's graded price vs previous scrape's GRADED price
+      const prev = grade.includes("10") ? (c.prev_psa10 || null) : grade.includes("9") ? (c.prev_psa9 || null) : (c.prev_from || null)
       if (from_price && prev && prev > 0) {
         const change = from_price / prev
         ratio_7d = Math.round(change * 1000) / 1000
