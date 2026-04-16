@@ -527,7 +527,7 @@ async def bd_scrape(url):
         try:
             session = await _get_bd_session()
             async with session.post("https://api.brightdata.com/request",
-                json={"zone": BD_ZONE, "url": url, "format": "raw", "country": "de"}) as resp:
+                json={"zone": BD_ZONE, "url": url, "format": "raw"}) as resp:
                 if resp.status != 200:
                     return None
                 return await resp.text()
@@ -542,7 +542,7 @@ def bd_scrape_sync(url):
     """Sync version for use in run_in_executor contexts."""
     resp = requests.post("https://api.brightdata.com/request",
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {BD_KEY}"},
-        json={"zone": BD_ZONE, "url": url, "format": "raw", "country": "de"},
+        json={"zone": BD_ZONE, "url": url, "format": "raw"},
         timeout=90)
     if resp.status_code != 200:
         return None
@@ -604,7 +604,8 @@ async def find_cardmarket_url(card_info):
         log.info(f"  CM_PRODUCT: {card_info['cm_product_url']}")
         html = await bd_scrape(card_info["cm_product_url"])
         if html:
-            og = re.search(r'property="og:url"[^>]*content="([^"]+Singles/[^"]+)"', html)
+            # Stop at "?" so the query string (with HTML-escaped &amp;) doesn't end up in real_url
+            og = re.search(r'property="og:url"[^>]*content="([^"?]+Singles/[^"?]+)"', html)
             if og:
                 real_url = og.group(1)
                 log.info(f"  CM_PRODUCT: resolved → {real_url.split('/')[-1]}")
@@ -735,7 +736,8 @@ async def scrape_cardmarket_prices(card_info):
         if html:
             prices = extract_prices(html)
             if prices.get("from") or prices.get("trend"):
-                og = re.search(r'property="og:url"[^>]*content="([^"]+Singles/[^"]+)"', html)
+                # Stop at "?" so the query string (with HTML-escaped &amp;) doesn't end up in real_url
+                og = re.search(r'property="og:url"[^>]*content="([^"?]+Singles/[^"?]+)"', html)
                 real_url = og.group(1) if og else card_info["cm_product_url"]
                 full_url = f"{real_url}?{params}" if og else product_url
                 return real_url, prices, full_url
