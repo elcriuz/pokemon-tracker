@@ -667,29 +667,30 @@ async def find_cardmarket_url(card_info):
                     # Ensure it's an exact number match, not a suffix (e.g. "7" in "107")
                     pos = len(slug) - len(tn)
                     if pos > 0 and slug[pos - 1].isdigit():
-                        continue  # "MEW107" endswith "7" but it's actually 107
+                        # Allow if preceding chars are a known set code (e.g. SM678 = SM6 + 78)
+                        sc = (ptcgo_code or vision_set_code or "").lower()
+                        if not (sc and slug.endswith(sc + tn)):
+                            continue  # "MEW107" endswith "7" but it's actually 107
                     log.info(f"  CM_MATCH: '{name_slug}'+{tn} → {url.split('/')[-1]}")
                     return url
 
-    # Direct URL construction for cards where search fails
+    # Direct URL construction for cards where search fails (max 2 BD requests)
     if ptcgo_code and number:
         name_slug_d = name.replace(" ", "-")
         set_slug = set_name.replace(" ", "-")
-        # Try multiple slug variants (uppercase/lowercase set_code, with/without EX- prefix)
-        pc_variants = list(set([ptcgo_code, ptcgo_code.lower(), ptcgo_code.upper()]))
-        card_slugs = [f"{name_slug_d}-{pc}{number}" for pc in pc_variants]
-        set_prefixes = [set_slug, f"EX-{set_slug}"]
-        for card_s in card_slugs:
-            for set_prefix in set_prefixes:
-                direct_url = f"https://www.cardmarket.com/en/Pokemon/Products/Singles/{set_prefix}/{card_s}"
-                log.info(f"  CM_DIRECT: {direct_url}")
-                html = await bd_scrape(direct_url)
-                # Strict check: page title must contain the card name (not a generic search page)
-                if html and "404" not in html[:500]:
-                    title_m = re.search(r"<title>(.*?)</title>", html)
-                    if title_m and name.split()[0].lower() in title_m.group(1).lower() and "Singles |" not in title_m.group(1):
-                        log.info(f"  CM_DIRECT: FOUND!")
-                        return direct_url
+        direct_urls = [
+            f"https://www.cardmarket.com/en/Pokemon/Products/Singles/{set_slug}/{name_slug_d}-{ptcgo_code}{number}",
+            f"https://www.cardmarket.com/en/Pokemon/Products/Singles/EX-{set_slug}/{name_slug_d}-{ptcgo_code.lower()}{number}",
+        ]
+        for direct_url in direct_urls:
+            log.info(f"  CM_DIRECT: {direct_url}")
+            html = await bd_scrape(direct_url)
+            # Strict check: page title must contain the card name (not a generic search page)
+            if html and "404" not in html[:500]:
+                title_m = re.search(r"<title>(.*?)</title>", html)
+                if title_m and name.split()[0].lower() in title_m.group(1).lower() and "Singles |" not in title_m.group(1):
+                    log.info(f"  CM_DIRECT: FOUND!")
+                    return direct_url
 
     # Try partner sets (e.g. WHT → BLK for twin JP sets)
     partner_sets = card_info.get("ximilar_partner_sets", [])
@@ -702,14 +703,20 @@ async def find_cardmarket_url(card_info):
                 if name_slug in slug and slug.endswith(number):
                     pos = len(slug) - len(number)
                     if pos > 0 and slug[pos - 1].isdigit():
-                        continue
+                        sc = (ptcgo_code or vision_set_code or "").lower()
+                        if not (sc and slug.endswith(sc + number)):
+                            continue
                     log.info(f"  CM_PARTNER: FOUND {url.split('/')[-1]}")
                     return url
 
-    # Fallback: first result
+    # Fallback: first result — only if card name matches (avoid returning wrong card)
     if results:
-        log.info(f"  CM_FALLBACK: using first result {results[0].split('/')[-1]}")
-        return results[0]
+        first_slug = results[0].split("/")[-1].lower()
+        if name_slug in first_slug:
+            log.info(f"  CM_FALLBACK: using first result {results[0].split('/')[-1]}")
+            return results[0]
+        else:
+            log.info(f"  CM_FALLBACK: skipped {results[0].split('/')[-1]} ('{name_slug}' not in URL)")
     return None
 
 async def scrape_cardmarket_prices(card_info):
