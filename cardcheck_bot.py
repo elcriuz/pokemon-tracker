@@ -386,14 +386,15 @@ async def identify_card(photo_bytes):
 
     # ─── Step 3: Quick CM (fallback when Ximilar has no product URL — JP sets etc.) ───
     if vision_sc and vision_num and len(vision_sc) <= 6:
-        for search_q in [f"{pokemon_name} {vision_sc}", f"{vision_sc}{vision_num}"]:
-            log.info(f"  QUICK_CM: trying '{search_q}'...")
-            quick_results = await search_cardmarket(search_q)
-            name_slug = pokemon_name.lower().split()[0]
+        search_queries = [f"{pokemon_name} {vision_sc}", f"{vision_sc}{vision_num}"]
+        log.info(f"  QUICK_CM: trying {search_queries} in parallel...")
+        results_per_query = await asyncio.gather(*[search_cardmarket(q) for q in search_queries])
+        name_slug = pokemon_name.lower().split()[0]
+        for search_q, quick_results in zip(search_queries, results_per_query):
             for url in quick_results:
                 slug = url.split("/")[-1]
                 if slug.endswith(vision_num) and name_slug in slug.lower():
-                    log.info(f"  QUICK_CM: FOUND {slug}")
+                    log.info(f"  QUICK_CM: FOUND {slug} (via '{search_q}')")
                     card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
                     card["set"] = url.split("/Singles/")[-1].split("/")[0].replace("-", " ") if "/Singles/" in url else ""
                     card["number"] = vision_num
@@ -468,13 +469,14 @@ async def identify_card(photo_bytes):
             pokemon_name = new_name
             card["pokemon"] = pokemon_name
         retry_name_slug = pokemon_name.lower().split()[0]
-        for search_q in [f"{pokemon_name} {vision_sc}", f"{pokemon_name} ex {vision_sc}"]:
-            log.info(f"  QUICK_CM retry: '{search_q}'...")
-            quick_results = await search_cardmarket(search_q)
+        retry_queries = [f"{pokemon_name} {vision_sc}", f"{pokemon_name} ex {vision_sc}"]
+        log.info(f"  QUICK_CM retry: trying {retry_queries} in parallel...")
+        retry_results_per_query = await asyncio.gather(*[search_cardmarket(q) for q in retry_queries])
+        for search_q, quick_results in zip(retry_queries, retry_results_per_query):
             for url in quick_results:
                 slug = url.split("/")[-1]
                 if slug.endswith(vision_num) and retry_name_slug in slug.lower():
-                    log.info(f"  QUICK_CM retry: FOUND {slug}")
+                    log.info(f"  QUICK_CM retry: FOUND {slug} (via '{search_q}')")
                     card["name"] = re.sub(r"-V\d.*", "", slug).replace("-", " ")
                     card["set"] = url.split("/Singles/")[-1].split("/")[0].replace("-", " ") if "/Singles/" in url else ""
                     card["number"] = vision_num
@@ -508,7 +510,7 @@ async def identify_card(photo_bytes):
 # ─── Bright Data Scraping ────────────────────────────────────
 
 # Limit concurrent BD requests to avoid throttling when processing multiple cards
-_bd_semaphore = asyncio.Semaphore(5)
+_bd_semaphore = asyncio.Semaphore(8)
 _bd_session = None
 
 async def _get_bd_session():
@@ -626,15 +628,27 @@ async def find_cardmarket_url(card_info):
     queries += [f"{name} {set_name}", name, pokemon]
     results = []
     seen = set()
-    for q in queries:
-        log.info(f"  CM_SEARCH: '{q}'")
-        for url in await search_cardmarket(q):
+    # Run the most specific queries (first 3) in parallel, fall back to the rest sequentially
+    parallel_queries = queries[:3]
+    fallback_queries = queries[3:]
+    log.info(f"  CM_SEARCH: running {len(parallel_queries)} queries in parallel: {parallel_queries}")
+    parallel_results = await asyncio.gather(*[search_cardmarket(q) for q in parallel_queries])
+    for q, urls in zip(parallel_queries, parallel_results):
+        for url in urls:
             if url not in seen:
                 seen.add(url)
                 results.append(url)
-        # Stop early if we found a number match
-        if number and any(number in url.split("/")[-1] for url in results):
-            break
+    has_number_match = number and any(number in url.split("/")[-1] for url in results)
+    if not has_number_match:
+        for q in fallback_queries:
+            log.info(f"  CM_SEARCH (fallback): '{q}'")
+            for url in await search_cardmarket(q):
+                if url not in seen:
+                    seen.add(url)
+                    results.append(url)
+            # Stop early if we found a number match
+            if number and any(number in url.split("/")[-1] for url in results):
+                break
 
     log.info(f"  CM_RESULTS: {len(results)} — {[u.split('/')[-1] for u in results[:8]]}")
 
