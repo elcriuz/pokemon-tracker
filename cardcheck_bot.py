@@ -402,10 +402,16 @@ async def identify_card(photo_bytes):
                     return card
 
     # ─── Step 3: Ximilar result → use if available ───
-    # If Vision had a set_code, retry Ximilar with hint for better accuracy
+    # If Vision had a set_code, retry Ximilar with hint for better accuracy — but KEEP the
+    # original match as fallback. Otherwise a garbage hint (e.g. Vision misreads "BLW" as "BLK"
+    # which isn't a real PTCGO set) silently destroys a perfectly good Ximilar identification.
     if ximilar_result and vision_sc and ximilar_result["best"].get("set_code") != vision_sc:
         log.info(f"  XIMILAR: retrying with set_code hint '{vision_sc}'...")
-        ximilar_result = await _ximilar_identify(b64, set_code_hint=vision_sc)
+        hinted = await _ximilar_identify(b64, set_code_hint=vision_sc)
+        if hinted and hinted["prob"] > 0.75:
+            ximilar_result = hinted
+        else:
+            log.info(f"  XIMILAR: hinted retry empty/low-conf — keeping original match ({ximilar_result['best'].get('set_code')})")
 
     if ximilar_result and ximilar_result["prob"] > 0.75:
         best = ximilar_result["best"]
@@ -615,18 +621,31 @@ async def find_cardmarket_url(card_info):
     number = card_info.get("number", "").split("/")[0]
     pokemon = card_info.get("pokemon", name.split(" ex")[0].split(" V")[0].split(" GX")[0].strip())
 
+    # Fall back to Vision's pokemon name when Ximilar/QuickCM didn't identify the card,
+    # otherwise queries become " BWP" / " " and CM returns random cards.
+    search_name = name or pokemon
+
     # Search Cardmarket — use vision's set_code (e.g. PRE, WHT) which CM understands
     vision_set_code = card_info.get("vision_set_code", "")
     ptcgo_code = card_info.get("ptcgo_code", "")
     queries = []
     # For TCG-matched cards with ptcgo_code: construct expected CM slug (e.g. "Latios-ex-DR94")
-    if ptcgo_code and number:
-        queries.append(f"{name.replace(' ', '-')}-{ptcgo_code}{number}")
-    if vision_set_code:
-        queries.append(f"{name} {vision_set_code}")
-    if ptcgo_code and ptcgo_code != vision_set_code:
-        queries.append(f"{name} {ptcgo_code}")
-    queries += [f"{name} {set_name}", name, pokemon]
+    if search_name and ptcgo_code and number:
+        queries.append(f"{search_name.replace(' ', '-')}-{ptcgo_code}{number}")
+    if search_name and vision_set_code:
+        queries.append(f"{search_name} {vision_set_code}")
+    if search_name and ptcgo_code and ptcgo_code != vision_set_code:
+        queries.append(f"{search_name} {ptcgo_code}")
+    if search_name and set_name:
+        queries.append(f"{search_name} {set_name}")
+    if search_name:
+        queries.append(search_name)
+    if pokemon and pokemon != search_name:
+        queries.append(pokemon)
+    queries = [q for q in queries if q.strip()]
+    if not queries:
+        log.info("  CM_SEARCH: no usable query (name/pokemon missing)")
+        return None
     results = []
     seen = set()
     # Run the most specific queries (first 3) in parallel, fall back to the rest sequentially
@@ -709,14 +728,15 @@ async def find_cardmarket_url(card_info):
                     log.info(f"  CM_PARTNER: FOUND {url.split('/')[-1]}")
                     return url
 
-    # Fallback: first result — only if card name matches (avoid returning wrong card)
+    # Fallback: scan ALL results for a slug matching the card name (not just the first).
+    # Without this we'd give up on 60 results just because result[0] happened to be unrelated.
     if results:
-        first_slug = results[0].split("/")[-1].lower()
-        if name_slug in first_slug:
-            log.info(f"  CM_FALLBACK: using first result {results[0].split('/')[-1]}")
-            return results[0]
-        else:
-            log.info(f"  CM_FALLBACK: skipped {results[0].split('/')[-1]} ('{name_slug}' not in URL)")
+        for url in results:
+            slug = url.split("/")[-1].lower()
+            if name_slug in slug:
+                log.info(f"  CM_FALLBACK: using {url.split('/')[-1]}")
+                return url
+        log.info(f"  CM_FALLBACK: no match — '{name_slug}' not in any of {len(results)} URLs")
     return None
 
 async def scrape_cardmarket_prices(card_info):
