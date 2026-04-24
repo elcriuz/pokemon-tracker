@@ -125,17 +125,36 @@ def extract_prices(content):
     if m:
         prices["available_items"] = int(m.group(1))
 
-    for grade_key, grade_pattern in [
-        ("psa10_low", r"PSA\s*10[^€]*?([\d.,]+)\s*€"),
-        ("psa9_low", r"PSA\s*9(?!\d)[^€]*?([\d.,]+)\s*€"),
-        ("cgc10_low", r"CGC\s*10[^€]*?([\d.,]+)\s*€"),
-        ("bgs10_low", r"BGS\s*10[^€]*?([\d.,]+)\s*€"),
-    ]:
-        m = re.search(grade_pattern, content, re.IGNORECASE)
-        if m:
-            prices[grade_key] = parse_de_price(m.group(1))
+    prices.update(extract_grade_lows(content))
 
     return prices
+
+
+LISTING_RE = re.compile(
+    r'fst-italic small">(?P<comment>[^<]+)</span>.*?color-primary[^>]*>\s*(?P<price>[\d.,]+)\s*€',
+    re.DOTALL,
+)
+_GRADE_LABEL_PATTERNS = {
+    "psa10_low": re.compile(r"^\s*PSA\s*10\b(?!\s*(?:contender|candidate|potential|worthy|ready))", re.IGNORECASE),
+    "psa9_low":  re.compile(r"^\s*PSA\s*9\b(?!\d)", re.IGNORECASE),
+    "cgc10_low": re.compile(r"^\s*CGC\s*(?:Pristine\s*|Black\s*Label\s*)?10\b", re.IGNORECASE),
+    "bgs10_low": re.compile(r"^\s*BGS\s*(?:Pristine\s*|Black\s*Label\s*)?10\b", re.IGNORECASE),
+}
+
+
+def extract_grade_lows(content):
+    lows = {}
+    for m in LISTING_RE.finditer(content):
+        comment = m.group("comment").strip()
+        price = parse_de_price(m.group("price"))
+        if price is None:
+            continue
+        for key, pat in _GRADE_LABEL_PATTERNS.items():
+            if pat.match(comment):
+                if key not in lows or price < lows[key]:
+                    lows[key] = price
+                break
+    return lows
 
 
 def extract_set_from_url(url):
