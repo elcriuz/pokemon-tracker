@@ -162,7 +162,6 @@ def extract_prices(content):
         "avg30": r"(?:30-days average|30-Tages-Durchschnitt)[^€]*?([\d.,]+)\s*€",
         "avg7": r"(?:7-days average|7-Tages-Durchschnitt)[^€]*?([\d.,]+)\s*€",
         "avg1": r"(?:1-day average|1-Tages-Durchschnitt)[^€]*?([\d.,]+)\s*€",
-        "from": r"(?:From|ab)[^€]*?([\d.,]+)\s*€",
     }
     for key, pattern in patterns.items():
         m = re.search(pattern, content, re.IGNORECASE)
@@ -173,9 +172,29 @@ def extract_prices(content):
     if m:
         prices["available_items"] = int(m.group(1))
 
+    listing_min = extract_min_listing_price(content)
+    if listing_min is not None:
+        prices["from"] = listing_min
+
     prices.update(extract_grade_lows(content))
 
     return prices
+
+
+# Listing-row prices use a dedicated bold-primary span; trend/averages use other markup.
+# Anchoring on this exact class combo avoids matching unrelated Euro values on the page.
+LISTING_PRICE_RE = re.compile(
+    r'<span class="color-primary[^"]*fw-bold[^"]*">\s*([\d.,]+)\s*€\s*</span>'
+)
+
+
+def extract_min_listing_price(content):
+    prices = []
+    for m in LISTING_PRICE_RE.finditer(content):
+        p = parse_de_price(m.group(1))
+        if p is not None:
+            prices.append(p)
+    return min(prices) if prices else None
 
 
 # Cardmarket offer-listing structure: each offer has a comment span (fst-italic small)
