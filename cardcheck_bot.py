@@ -675,8 +675,35 @@ async def find_cardmarket_url(card_info):
     if not results:
         return None
 
+    # Cardmarket slug: lowercase, drop apostrophes, non-alnum → dash.
+    def _cm_slug(s):
+        s = (s or "").strip().lower().replace("'", "").replace("’", "").replace("ʼ", "")
+        return re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+
+    full_name_slug = _cm_slug(name)
+    set_slug = _cm_slug(set_name)
+    name_slug_short = pokemon.lower().split()[0] if pokemon else ""
+
+    # Priority 1: full-name + set in URL. Catches single-variant cards whose URL has no
+    # number suffix (e.g. "Sabrinas-Gengar-CFTD"), where the existing number-based match
+    # would otherwise pick an unrelated card with the same number from another set.
+    if full_name_slug and set_slug and "-" in full_name_slug:
+        set_path = f"/singles/{set_slug}/"
+        for url in results:
+            if set_path in url.lower() and full_name_slug in url.split("/")[-1].lower():
+                log.info(f"  CM_MATCH (full+set): {url.split('/')[-1]}")
+                return url
+
+    # Priority 2: full-name only (multi-word, distinguishes "Sabrinas-Gengar" from "Gengar-V1").
+    # Skipped for single-word names (e.g. "pikachu") since those need set/number to disambiguate.
+    if full_name_slug and "-" in full_name_slug and full_name_slug != name_slug_short:
+        for url in results:
+            if full_name_slug in url.split("/")[-1].lower():
+                log.info(f"  CM_MATCH (full name): {url.split('/')[-1]}")
+                return url
+
     # Match by card number + pokemon name in URL (try +/-2 for regional numbering)
-    name_slug = pokemon.lower().split()[0]
+    name_slug = name_slug_short
     if number:
         try_numbers = [number] + ([str(int(number)+d) for d in [-1,1,-2,2]] if number.isdigit() else [])
         for tn in try_numbers:
