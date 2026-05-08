@@ -261,6 +261,29 @@ def download_image(image_url, card_url, page=None):
     return None
 
 
+# ─── DB Lookup für stale grade fallback ──────────────────────
+
+def lookup_last_grade_low(card_url, grade_key):
+    """Sucht letzten nicht-null Wert von <grade_key> aus prices fuer diese Karte."""
+    try:
+        import sqlite3
+        db_path = BASE_DIR / "data" / "tracker.db"
+        if not db_path.exists():
+            return None
+        conn = sqlite3.connect(str(db_path))
+        row = conn.execute(
+            f"SELECT {grade_key} FROM prices p JOIN cards c ON p.card_id = c.id "
+            f"WHERE c.url = ? AND {grade_key} IS NOT NULL "
+            f"ORDER BY p.scraped_at DESC LIMIT 1",
+            (card_url,)
+        ).fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception as e:
+        log.warning(f"  lookup_last_grade_low failed: {e}")
+        return None
+
+
 # ─── Portfolio Loading ────────────────────────────────────────
 
 def load_portfolio():
@@ -396,8 +419,19 @@ def scrape_single_card(page, card, timestamp, is_first):
             log.info(f"  Low: EUR {prices.get('from')}, Trend: EUR {prices.get('trend')}")
 
     # Value-Bestimmung
+    stale_grade = 0
     if grade_value:
         value = grade_value
+    elif grade_key:
+        last_known = lookup_last_grade_low(card["url"], grade_key)
+        if last_known:
+            value = last_known
+            stale_grade = 1
+            log.info(f"  {grade} heute nicht gelistet → letzten bekannten {grade_key}={last_known} EUR (stale)")
+        else:
+            value = prices.get("trend") or prices.get("from")
+            stale_grade = 1
+            log.info(f"  {grade} heute nicht gelistet, kein History-Wert → Fallback Trend={value} (stale)")
     elif prices.get("from"):
         from_price = prices["from"]
         # Wenn ungraded Karte aber from == psa10/psa9 low → nur graded verfuegbar
@@ -417,6 +451,7 @@ def scrape_single_card(page, card, timestamp, is_first):
         "set_name": extract_set_from_url(card["url"]),
         "grade": grade,
         "value": value,
+        "stale_grade": stale_grade,
         "notes": card["notes"],
         "image": image_file,
         "timestamp": timestamp,

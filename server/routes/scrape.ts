@@ -36,8 +36,8 @@ function importResults() {
   const urlToId = new Map(cardLookup.map((c: any) => [c.url, c.id]))
 
   const insert = db.prepare(`
-    INSERT OR IGNORE INTO prices (card_id, scraped_at, value, trend, avg7, avg30, avg1, from_price, available_items, psa10_low, psa9_low, cgc10_low, bgs10_low, error)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO prices (card_id, scraped_at, value, trend, avg7, avg30, avg1, from_price, available_items, psa10_low, psa9_low, cgc10_low, bgs10_low, error, stale_grade)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
   const updateImage = db.prepare("UPDATE cards SET image = ? WHERE id = ? AND (image = '' OR image IS NULL)")
@@ -50,7 +50,8 @@ function importResults() {
       cardId, r.timestamp ?? "", r.value ?? null, r.trend ?? null,
       r.avg7 ?? null, r.avg30 ?? null, r.avg1 ?? null, r.from ?? null,
       r.available_items ?? null, r.psa10_low ?? null, r.psa9_low ?? null,
-      r.cgc10_low ?? null, r.bgs10_low ?? null, r.error ?? null
+      r.cgc10_low ?? null, r.bgs10_low ?? null, r.error ?? null,
+      r.stale_grade ? 1 : 0
     )
     // Save image + name to card if scraped and missing
     if (r.image) updateImage.run(r.image, cardId)

@@ -342,6 +342,28 @@ def clear_resume_state():
 
 # ─── Result Processing ──────────────────────────────────────
 
+def lookup_last_grade_low(card_url, grade_key):
+    """Sucht letzten nicht-null Wert von <grade_key> aus prices fuer diese Karte.
+    Nutzt URL → card_id Lookup. Gibt None zurueck wenn DB nicht da oder kein Treffer."""
+    try:
+        import sqlite3
+        db_path = BASE_DIR / "data" / "tracker.db"
+        if not db_path.exists():
+            return None
+        conn = sqlite3.connect(str(db_path))
+        row = conn.execute(
+            f"SELECT {grade_key} FROM prices p JOIN cards c ON p.card_id = c.id "
+            f"WHERE c.url = ? AND {grade_key} IS NOT NULL "
+            f"ORDER BY p.scraped_at DESC LIMIT 1",
+            (card_url,)
+        ).fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception as e:
+        log.warning(f"  lookup_last_grade_low failed: {e}")
+        return None
+
+
 def process_result(content, card, timestamp):
     """Verarbeitet HTML-Content einer Karte und gibt Result-Dict zurueck."""
     if "cf-challenge" in content.lower() or ("just a moment" in content.lower() and len(content) < 5000):
@@ -369,8 +391,20 @@ def process_result(content, card, timestamp):
         }, "no_prices"
 
     # Value-Bestimmung
+    stale_grade = 0
     if grade_value:
         value = grade_value
+    elif grade_key:
+        # Graded Karte aber kein matching Listing heute → letzten bekannten grade_low aus DB
+        last_known = lookup_last_grade_low(card["url"], grade_key)
+        if last_known:
+            value = last_known
+            stale_grade = 1
+            log.info(f"  {grade} heute nicht gelistet → letzten bekannten {grade_key}={last_known} EUR (stale)")
+        else:
+            value = prices.get("trend") or prices.get("from")
+            stale_grade = 1
+            log.info(f"  {grade} heute nicht gelistet, kein History-Wert → Fallback Trend={value} (stale)")
     elif prices.get("from"):
         from_price = prices["from"]
         psa_prices = [p for p in [prices.get("psa10_low"), prices.get("psa9_low")] if p]
@@ -386,14 +420,14 @@ def process_result(content, card, timestamp):
         "url": card["url"],
         "name": card["name"] or info.get("page_title", ""),
         "set_name": extract_set_from_url(card["url"]),
-        "grade": grade, "value": value, "notes": card["notes"],
+        "grade": grade, "value": value, "stale_grade": stale_grade, "notes": card["notes"],
         "image": image_file, "timestamp": timestamp, "error": None,
         **prices,
     }
 
     if grade_value:
         log.info(f"  {grade} Low: EUR {grade_value} | Trend: EUR {prices.get('trend')}")
-    else:
+    elif not stale_grade:
         log.info(f"  Low: EUR {prices.get('from')} | Trend: EUR {prices.get('trend')} | 7d: EUR {prices.get('avg7')}")
 
     return result, "ok"
@@ -658,8 +692,8 @@ def import_to_db(results):
             if not card_id:
                 continue
             conn.execute(
-                "INSERT OR IGNORE INTO prices (card_id, scraped_at, value, trend, avg7, avg30, avg1, from_price, available_items, psa10_low, psa9_low, cgc10_low, bgs10_low, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (card_id, r.get("timestamp", ""), r.get("value"), r.get("trend"), r.get("avg7"), r.get("avg30"), r.get("avg1"), r.get("from"), r.get("available_items"), r.get("psa10_low"), r.get("psa9_low"), r.get("cgc10_low"), r.get("bgs10_low"), r.get("error"))
+                "INSERT OR IGNORE INTO prices (card_id, scraped_at, value, trend, avg7, avg30, avg1, from_price, available_items, psa10_low, psa9_low, cgc10_low, bgs10_low, error, stale_grade) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (card_id, r.get("timestamp", ""), r.get("value"), r.get("trend"), r.get("avg7"), r.get("avg30"), r.get("avg1"), r.get("from"), r.get("available_items"), r.get("psa10_low"), r.get("psa9_low"), r.get("cgc10_low"), r.get("bgs10_low"), r.get("error"), r.get("stale_grade", 0))
             )
             if r.get("image"):
                 conn.execute("UPDATE cards SET image = ? WHERE id = ? AND (image = '' OR image IS NULL)", (r["image"], card_id))

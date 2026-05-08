@@ -17,7 +17,7 @@ cardsRouter.get("/", (req, res) => {
     SELECT c.*, b.name as binder_name, b.color as binder_color,
            p.value, p.trend, p.avg7, p.avg30, p.avg1, p.from_price,
            p.available_items, p.psa10_low, p.psa9_low, p.cgc10_low, p.bgs10_low,
-           p.scraped_at, p.error,
+           p.scraped_at, p.error, p.stale_grade,
            prev.value as prev_value
     FROM cards c
     LEFT JOIN binders b ON b.id = c.binder_id
@@ -48,7 +48,7 @@ cardsRouter.get("/:id", (req, res) => {
       SELECT c.*, b.name as binder_name, b.color as binder_color,
              p.value, p.trend, p.avg7, p.avg30, p.avg1, p.from_price,
              p.available_items, p.psa10_low, p.psa9_low, p.cgc10_low, p.bgs10_low,
-             p.scraped_at, p.error
+             p.scraped_at, p.error, p.stale_grade
       FROM cards c
       LEFT JOIN binders b ON b.id = c.binder_id
       LEFT JOIN prices p ON p.card_id = c.id

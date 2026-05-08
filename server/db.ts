@@ -51,6 +51,7 @@ function initSchema(db: Database.Database) {
       cgc10_low       REAL,
       bgs10_low       REAL,
       error           TEXT,
+      stale_grade     INTEGER NOT NULL DEFAULT 0,
       UNIQUE(card_id, scraped_at)
     );
 
@@ -94,6 +95,7 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE cards ADD COLUMN set_name TEXT NOT NULL DEFAULT ''") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN stash INTEGER NOT NULL DEFAULT 0") } catch {}
   try { db.exec("ALTER TABLE scrape_runs ADD COLUMN engine TEXT NOT NULL DEFAULT 'patchright'") } catch {}
+  try { db.exec("ALTER TABLE prices ADD COLUMN stale_grade INTEGER NOT NULL DEFAULT 0") } catch {}
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
