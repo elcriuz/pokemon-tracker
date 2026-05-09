@@ -91,7 +91,7 @@ scrapeRouter.post("/", (req, res) => {
   isRunning = true
   logBuffer.length = 0
 
-  const proc = spawn("python3", [script], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"], env })
+  const proc = spawn("python3", [script, "--all"], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"], env })
   currentProcess = proc
 
   let stderr = ""
@@ -153,7 +153,7 @@ scrapeRouter.post("/cards", (req, res) => {
   isRunning = true
   logBuffer.length = 0
 
-  const proc = spawn("python3", [script], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"], env })
+  const proc = spawn("python3", [script, "--all"], { cwd: BASE, stdio: ["ignore", "pipe", "pipe"], env })
   currentProcess = proc
 
   let stderr = ""

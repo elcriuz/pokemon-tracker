@@ -2,7 +2,7 @@ import { useParams, useNavigate, Link } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { formatEUR, urlToFlag } from "@/lib/utils"
-import { ArrowLeft, Pencil, Trash2, ExternalLink, RefreshCw, ImageOff } from "lucide-react"
+import { ArrowLeft, Pencil, Trash2, ExternalLink, RefreshCw, ImageOff, Eye, EyeOff } from "lucide-react"
 import { PriceHistoryChart } from "@/components/charts/PriceHistoryChart"
 import { useState } from "react"
 import { EditCardDialog } from "@/components/cards/EditCardDialog"
@@ -132,6 +132,13 @@ export function CardDetail() {
               className="p-2 rounded-lg hover:bg-secondary" title="Bild loeschen (wird beim naechsten Scrape neu geholt)"
             ><ImageOff className="w-4 h-4" /></button>
           )}
+          <button
+            onClick={() => { api.toggleWatch(cardId).then(() => queryClient.invalidateQueries({ queryKey: ["card", cardId] })) }}
+            className={`p-2 rounded-lg ${card.watch ? "bg-ring/20 text-ring hover:bg-ring/30" : "hover:bg-secondary"}`}
+            title={card.watch ? "Watch aktiv: wird taeglich gescraped (klick zum Deaktivieren)" : "Watch aktivieren (taeglich scrapen, ignoriert Tier-Intervall)"}
+          >
+            {card.watch ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+          </button>
           <button onClick={() => setShowEdit(true)} className="p-2 rounded-lg hover:bg-secondary" title="Bearbeiten"><Pencil className="w-4 h-4" /></button>
           <button
             onClick={() => { if (confirm("Karte wirklich loeschen?")) deleteMutation.mutate() }}

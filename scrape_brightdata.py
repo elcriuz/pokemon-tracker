@@ -299,6 +299,81 @@ def load_portfolio():
         except Exception as e:
             log.warning(f"  DB-Ladevorgang fehlgeschlagen, Fallback auf CSV: {e}")
 
+
+def filter_due_cards(cards):
+    """Filtert Karten nach Tier-Intervall.
+    Hot (>=hot_thresh) taeglich, Mid (>=mid_thresh) alle N Tage, Cold weekly.
+    Karten mit watch=1, ohne History oder mit letztem error werden immer gescrapt.
+    Bucket via (today_idx + card_id) % interval == 0 → stabile Verteilung.
+    """
+    db_path = BASE_DIR / "data" / "tracker.db"
+    if not db_path.exists():
+        return cards, {"due": len(cards), "skipped": 0, "by_tier": {}}
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+
+        def setting(key, default):
+            row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            try: return float(row[0]) if row else default
+            except: return default
+
+        thresh_hot = setting("scrape_threshold_hot", 50)
+        thresh_mid = setting("scrape_threshold_mid", 15)
+        iv_mid = int(setting("scrape_interval_mid_days", 3))
+        iv_cold = int(setting("scrape_interval_cold_days", 7))
+
+        today_idx = int(datetime.now().timestamp() // 86400)
+
+        url_to_meta = {}
+        for r in conn.execute("""
+            SELECT c.id, c.url, c.watch,
+              (SELECT p.value FROM prices p WHERE p.card_id=c.id AND p.value IS NOT NULL ORDER BY p.scraped_at DESC LIMIT 1) AS last_value,
+              (SELECT p.error FROM prices p WHERE p.card_id=c.id ORDER BY p.scraped_at DESC LIMIT 1) AS last_error,
+              (SELECT MAX(p.scraped_at) FROM prices p WHERE p.card_id=c.id) AS last_scraped
+            FROM cards c
+        """).fetchall():
+            url_to_meta[r["url"]] = dict(r)
+        conn.close()
+
+        due, skipped = [], 0
+        by_tier = {"hot": 0, "mid_due": 0, "mid_skip": 0, "cold_due": 0, "cold_skip": 0,
+                   "watch": 0, "first": 0, "error_retry": 0}
+        for card in cards:
+            meta = url_to_meta.get(card["url"])
+            if not meta:
+                # Unbekannte URL (CSV-only) → scrapen
+                due.append(card); by_tier["first"] += 1
+                continue
+            if meta["watch"]:
+                due.append(card); by_tier["watch"] += 1
+                continue
+            if not meta["last_scraped"]:
+                due.append(card); by_tier["first"] += 1
+                continue
+            if meta["last_error"]:
+                due.append(card); by_tier["error_retry"] += 1
+                continue
+            v = meta["last_value"]
+            cid = meta["id"]
+            if v is None or v >= thresh_hot:
+                due.append(card); by_tier["hot"] += 1
+                continue
+            interval = iv_mid if v >= thresh_mid else iv_cold
+            tier_key = "mid" if v >= thresh_mid else "cold"
+            if (today_idx + cid) % interval == 0:
+                due.append(card); by_tier[f"{tier_key}_due"] += 1
+            else:
+                skipped += 1; by_tier[f"{tier_key}_skip"] += 1
+
+        log.info(f"  Tier-Filter: {len(due)}/{len(cards)} faellig, {skipped} skipped")
+        log.info(f"    by_tier: {by_tier}")
+        return due, {"due": len(due), "skipped": skipped, "by_tier": by_tier}
+    except Exception as e:
+        log.warning(f"  filter_due_cards failed ({e}), scrape all")
+        return cards, {"due": len(cards), "skipped": 0, "by_tier": {}}
+
     cards = []
     with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -739,6 +814,12 @@ def main():
         if not cards:
             print("Keine Karten in portfolio.csv!")
             sys.exit(1)
+        # Tier-Filter: standardmaessig an, mit --all umgehbar
+        if "--all" not in args and "--single" not in args:
+            cards, _ = filter_due_cards(cards)
+            if not cards:
+                log.info("Heute keine Karten faellig. Fertig.")
+                sys.exit(0)
 
     log.info(f"\n{len(cards)} Karten zu scrapen (Bright Data async parallel)...")
 

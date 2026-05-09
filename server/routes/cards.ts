@@ -117,6 +117,16 @@ cardsRouter.put("/:id", (req, res) => {
   res.json(card)
 })
 
+// POST /api/cards/:id/watch - toggle watch flag (always-scrape)
+cardsRouter.post("/:id/watch", (req, res) => {
+  const db = getDb()
+  const card = db.prepare("SELECT watch FROM cards WHERE id = ?").get(req.params.id) as any
+  if (!card) return res.status(404).json({ error: "Card not found" })
+  const newWatch = card.watch ? 0 : 1
+  db.prepare("UPDATE cards SET watch = ? WHERE id = ?").run(newWatch, req.params.id)
+  res.json({ id: Number(req.params.id), watch: newWatch })
+})
+
 // DELETE /api/cards/:id/image - delete image so it gets re-scraped
 cardsRouter.delete("/:id/image", (req, res) => {
   const db = getDb()

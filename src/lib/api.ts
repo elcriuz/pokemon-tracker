@@ -27,6 +27,8 @@ export const api = {
     fetchJSON<any>(`/cards/${id}`, { method: "DELETE" }),
   deleteImage: (id: number) =>
     fetchJSON<any>(`/cards/${id}/image`, { method: "DELETE" }),
+  toggleWatch: (id: number) =>
+    fetchJSON<any>(`/cards/${id}/watch`, { method: "POST" }),
   triggerScrape: (engine?: string) =>
     fetchJSON<any>("/scrape", { method: "POST", body: JSON.stringify({ engine }) }),
   scrapeCards: (cardIds: number[], engine?: string) =>

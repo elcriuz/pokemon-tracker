@@ -96,6 +96,7 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE cards ADD COLUMN stash INTEGER NOT NULL DEFAULT 0") } catch {}
   try { db.exec("ALTER TABLE scrape_runs ADD COLUMN engine TEXT NOT NULL DEFAULT 'patchright'") } catch {}
   try { db.exec("ALTER TABLE prices ADD COLUMN stale_grade INTEGER NOT NULL DEFAULT 0") } catch {}
+  try { db.exec("ALTER TABLE cards ADD COLUMN watch INTEGER NOT NULL DEFAULT 0") } catch {}
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
@@ -106,4 +107,8 @@ function initSchema(db: Database.Database) {
   insert.run("brightdata_api_key", "")
   insert.run("brightdata_zone", "cardmarket")
   insert.run("openai_api_key", "")
+  insert.run("scrape_threshold_hot", "50")
+  insert.run("scrape_threshold_mid", "15")
+  insert.run("scrape_interval_mid_days", "3")
+  insert.run("scrape_interval_cold_days", "7")
 }
