@@ -39,6 +39,7 @@ cardshopRouter.post("/:id/stash", (req, res) => {
 cardshopRouter.get("/", (req, res) => {
   const db = getDb()
   const showStash = req.query.stash === "1"
+  const showLosers = req.query.losers === "1"
 
   // Latest prices per card (same pattern as dashboard.ts)
   const cards = db.prepare(`
@@ -137,21 +138,39 @@ cardshopRouter.get("/", (req, res) => {
     }
   })
 
+  // Default: nur Karten mit Gewinn (oder ohne Kaufpreis = unbekannt). Loser ausblenden.
+  const visible = showLosers
+    ? result
+    : result.filter((c) => c.profit_if_sold == null || c.profit_if_sold > 0)
+  const hiddenLosers = result.length - visible.length
+
   // Sort: SELL_NOW first, then by shop_price desc
-  result.sort((a, b) => {
+  visible.sort((a, b) => {
     const ra = REC_ORDER[a.recommendation || ""] ?? 99
     const rb = REC_ORDER[b.recommendation || ""] ?? 99
     if (ra !== rb) return ra - rb
     return (b.shop_price || 0) - (a.shop_price || 0)
   })
 
+  // Summary spiegelt nur sichtbare Karten wider
+  const visibleShopValue = visible.reduce((s, c) => s + (c.shop_price || 0) * (c.quantity || 1), 0)
+  const visibleMarketValue = visible.reduce((s, c) => s + (c.from_price || 0) * (c.quantity || 1), 0)
+  const visibleProfit = visible.reduce((s, c) => s + (c.profit_if_sold || 0) * (c.quantity || 1), 0)
+  const visibleSellNow = visible.filter((c) => c.recommendation === "SELL_NOW").length
+
   res.json({
     summary: {
-      totalShopValue: Math.round(totalShopValue * 100) / 100,
-      totalMarketValue: Math.round(totalMarketValue * 100) / 100,
-      cardCount: cards.length,
-      sellNowCount,
+      totalShopValue: Math.round(visibleShopValue * 100) / 100,
+      totalMarketValue: Math.round(visibleMarketValue * 100) / 100,
+      totalProfit: Math.round(visibleProfit * 100) / 100,
+      cardCount: visible.length,
+      sellNowCount: visibleSellNow,
+      hiddenLosers,
+      // unverändert: Werte ohne Filter
+      allShopValue: Math.round(totalShopValue * 100) / 100,
+      allMarketValue: Math.round(totalMarketValue * 100) / 100,
+      allSellNowCount: sellNowCount,
     },
-    cards: result,
+    cards: visible,
   })
 })

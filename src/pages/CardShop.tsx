@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/lib/api"
 import { Link } from "react-router-dom"
-import { Lock, Unlock } from "lucide-react"
+import { Lock, Unlock, TrendingDown } from "lucide-react"
 
 const REC_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   SELL_NOW: { label: "SELL NOW", color: "text-green-400", bg: "bg-green-500/20" },
@@ -38,7 +38,12 @@ type FilterType = "ALL" | "SELL_NOW" | "GOOD" | "HOLD" | "AVOID"
 export function CardShop() {
   const queryClient = useQueryClient()
   const [showStash, setShowStash] = useState(false)
-  const { data, isLoading } = useQuery({ queryKey: ["cardshop", showStash], queryFn: () => api.getCardShop(showStash), refetchInterval: 60_000 })
+  const [showLosers, setShowLosers] = useState(false)
+  const { data, isLoading } = useQuery({
+    queryKey: ["cardshop", showStash, showLosers],
+    queryFn: () => api.getCardShop(showStash, showLosers),
+    refetchInterval: 60_000,
+  })
   const [filter, setFilter] = useState<FilterType>("ALL")
   const stashMutation = useMutation({
     mutationFn: (id: number) => api.toggleStash(id),
@@ -55,7 +60,7 @@ export function CardShop() {
       <p className="text-sm text-muted-foreground">Shop zahlt 80% vom CM-Tiefstpreis. Verkaufe wenn die Karte gerade oben ist.</p>
 
       {/* Summary */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <div className="bg-card border border-border rounded-lg p-4 text-center">
           <div className="text-2xl font-bold">{formatEur(summary.totalShopValue)}</div>
           <div className="text-xs text-muted-foreground">Shop Wert (80%)</div>
@@ -63,6 +68,12 @@ export function CardShop() {
         <div className="bg-card border border-border rounded-lg p-4 text-center">
           <div className="text-2xl font-bold">{formatEur(summary.totalMarketValue)}</div>
           <div className="text-xs text-muted-foreground">Marktwert</div>
+        </div>
+        <div className="bg-card border border-border rounded-lg p-4 text-center">
+          <div className={`text-2xl font-bold ${summary.totalProfit > 0 ? "text-green-400" : summary.totalProfit < 0 ? "text-red-400" : ""}`}>
+            {summary.totalProfit != null ? (summary.totalProfit >= 0 ? "+" : "") + formatEur(summary.totalProfit) : "-"}
+          </div>
+          <div className="text-xs text-muted-foreground">Gewinn ggü. Kauf</div>
         </div>
         <div className="bg-card border border-border rounded-lg p-4 text-center">
           <div className="text-2xl font-bold">{summary.cardCount || 0}</div>
@@ -94,7 +105,19 @@ export function CardShop() {
             </button>
           )
         })}
-        <div className="ml-auto">
+        <div className="ml-auto flex gap-2">
+          <button
+            onClick={() => setShowLosers((v) => !v)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1 ${
+              showLosers ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+            }`}
+            title={showLosers ? "Auch Karten mit Verlust werden gezeigt" : `${summary.hiddenLosers || 0} Karten mit Verlust ausgeblendet`}
+          >
+            <TrendingDown className="w-3 h-3" /> Verlust {showLosers ? "an" : "aus"}
+            {!showLosers && summary.hiddenLosers > 0 && (
+              <span className="ml-1 text-muted-foreground">({summary.hiddenLosers})</span>
+            )}
+          </button>
           <button
             onClick={() => setShowStash((v) => !v)}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1 ${

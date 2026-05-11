@@ -48,7 +48,13 @@ export const api = {
     fetchJSON<any>(`/binders/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteBinder: (id: number) =>
     fetchJSON<any>(`/binders/${id}`, { method: "DELETE" }),
-  getCardShop: (showStash = false) => fetchJSON<any>(`/cardshop${showStash ? "?stash=1" : ""}`),
+  getCardShop: (showStash = false, showLosers = false) => {
+    const params = new URLSearchParams()
+    if (showStash) params.set("stash", "1")
+    if (showLosers) params.set("losers", "1")
+    const qs = params.toString()
+    return fetchJSON<any>(`/cardshop${qs ? `?${qs}` : ""}`)
+  },
   toggleStash: (id: number) => fetchJSON<any>(`/cardshop/${id}/stash`, { method: "POST" }),
   getScans: (limit = 100) => fetchJSON<any>(`/scans?limit=${limit}`),
   getScanUsers: () => fetchJSON<any[]>("/scans/users"),
