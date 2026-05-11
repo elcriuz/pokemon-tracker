@@ -656,7 +656,50 @@ def save_results(results, stats):
     with open(LATEST_FILE, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
 
-    total_value = sum(r.get("value", 0) or 0 for r in results)
+    # Today's batch sum (only scraped cards) — used as fallback when DB is unavailable
+    batch_value = sum(r.get("value", 0) or 0 for r in results)
+
+    # Load previous prices + quantities from DB.
+    # At this point today's prices are NOT yet imported, so prev_prices == "Stand vor heute".
+    prev_prices = {}      # url -> last known value (yesterday or older)
+    quantities = {}       # url -> quantity
+    alert_pct = 10.0
+    alert_eur = 35.0
+    try:
+        db_path = BASE_DIR / "data" / "tracker.db"
+        if db_path.exists():
+            import sqlite3
+            conn = sqlite3.connect(str(db_path))
+            rows = conn.execute("""
+                SELECT c.url, p.value FROM cards c
+                JOIN prices p ON p.card_id = c.id
+                WHERE p.value IS NOT NULL
+                  AND p.scraped_at = (SELECT MAX(p2.scraped_at) FROM prices p2 WHERE p2.card_id = c.id AND p2.value IS NOT NULL)
+            """).fetchall()
+            prev_prices = {r[0]: r[1] for r in rows}
+            quantities = {r[0]: r[1] for r in conn.execute("SELECT url, COALESCE(quantity, 1) FROM cards").fetchall()}
+            thresh = dict(conn.execute("SELECT key, value FROM settings WHERE key IN ('alert_threshold_pct','alert_threshold_eur')").fetchall())
+            if thresh.get("alert_threshold_pct"):
+                alert_pct = float(thresh["alert_threshold_pct"])
+            if thresh.get("alert_threshold_eur"):
+                alert_eur = float(thresh["alert_threshold_eur"])
+            conn.close()
+    except Exception as e:
+        log.warning(f"Vorherige Preise laden fehlgeschlagen: {e}")
+
+    # Gesamtportfolio: heutige Werte über DB-Snapshot legen (für nicht-gescrapte Karten gilt der letzte bekannte Wert)
+    today_values = dict(prev_prices)
+    for r in results:
+        if r.get("value") and not r.get("error"):
+            today_values[r["url"]] = r["value"]
+    if quantities:
+        portfolio_total = sum((today_values.get(u, 0) or 0) * quantities.get(u, 1) for u in quantities)
+        portfolio_prev = sum((prev_prices.get(u, 0) or 0) * quantities.get(u, 1) for u in quantities)
+    else:
+        portfolio_total = batch_value
+        portfolio_prev = 0
+    portfolio_diff = portfolio_total - portfolio_prev
+    portfolio_pct = (portfolio_diff / portfolio_prev * 100) if portfolio_prev else 0.0
 
     summary = f"""
 {'='*50}
@@ -667,37 +710,11 @@ Karten gesamt:   {len(results)} (+ {stats['skipped']} uebersprungen)
   Keine Preise:  {stats['no_prices']}
   Cloudflare:    {stats['cloudflare']}
   Fehler:        {stats['errors']}
-Portfolio-Wert:  EUR {total_value:,.2f}
+Batch-Wert:      EUR {batch_value:,.2f}
+Portfolio-Wert:  EUR {portfolio_total:,.2f} (Vortag EUR {portfolio_prev:,.2f}, Diff EUR {portfolio_diff:+,.2f} / {portfolio_pct:+.2f}%)
 Log-Datei:       {log_file}
 {'='*50}"""
     log.info(summary)
-
-    # Load previous prices from DB for change detection
-    prev_prices = {}
-    alert_pct = 10.0
-    alert_eur = 35.0
-    try:
-        db_path = BASE_DIR / "data" / "tracker.db"
-        if db_path.exists():
-            import sqlite3
-            conn = sqlite3.connect(str(db_path))
-            # Get most recent value per card
-            rows = conn.execute("""
-                SELECT c.url, p.value FROM cards c
-                JOIN prices p ON p.card_id = c.id
-                WHERE p.value IS NOT NULL
-                  AND p.scraped_at = (SELECT MAX(p2.scraped_at) FROM prices p2 WHERE p2.card_id = c.id AND p2.value IS NOT NULL)
-            """).fetchall()
-            prev_prices = {r[0]: r[1] for r in rows}
-            # Get alert thresholds from settings
-            thresh = dict(conn.execute("SELECT key, value FROM settings WHERE key IN ('alert_threshold_pct','alert_threshold_eur')").fetchall())
-            if thresh.get("alert_threshold_pct"):
-                alert_pct = float(thresh["alert_threshold_pct"])
-            if thresh.get("alert_threshold_eur"):
-                alert_eur = float(thresh["alert_threshold_eur"])
-            conn.close()
-    except Exception as e:
-        log.warning(f"Vorherige Preise laden fehlgeschlagen: {e}")
 
     log.info(f"Alert-Schwellen: >{alert_eur:.0f} EUR oder >{alert_pct:.0f}%")
     movers = []
@@ -724,8 +741,13 @@ Log-Datei:       {log_file}
     losers.sort(reverse=True)
 
     # Build Telegram message
+    diff_arrow = "\U0001f4c8" if portfolio_diff > 0 else ("\U0001f4c9" if portfolio_diff < 0 else "\u2796")
+    diff_line = f"{diff_arrow} Vortag: EUR {portfolio_prev:,.2f} (Diff {portfolio_diff:+,.2f} EUR / {portfolio_pct:+.2f}%)"
+    total_cards = len(quantities) if quantities else len(results)
     msg_parts = [f"\U0001f4ca <b>Scrape Report</b> ({now.strftime('%d.%m.%Y %H:%M')})\n"]
-    msg_parts.append(f"\u2705 {stats['ok']}/{len(results)} Karten | Portfolio: EUR {total_value:,.2f}")
+    msg_parts.append(f"\u2705 {stats['ok']}/{len(results)} heute gescrapt ({total_cards} Karten gesamt)")
+    msg_parts.append(f"\U0001f4b0 Portfolio: EUR {portfolio_total:,.2f}")
+    msg_parts.append(diff_line)
 
     if stats["cloudflare"] > 0 or stats["errors"] > 0 or stats["no_prices"] > 0:
         problems = []
