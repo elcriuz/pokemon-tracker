@@ -687,20 +687,36 @@ async def find_cardmarket_url(card_info):
     # Priority 1: full-name + set in URL. Catches single-variant cards whose URL has no
     # number suffix (e.g. "Sabrinas-Gengar-CFTD"), where the existing number-based match
     # would otherwise pick an unrelated card with the same number from another set.
+    # When we have a card number, prefer the slug ending in that number — otherwise
+    # multi-variant sets (e.g. ASC057 vs ASC276 for Pikachu ex) collapse to the first hit.
     if full_name_slug and set_slug and "-" in full_name_slug:
         set_path = f"/singles/{set_slug}/"
-        for url in results:
-            if set_path in url.lower() and full_name_slug in url.split("/")[-1].lower():
-                log.info(f"  CM_MATCH (full+set): {url.split('/')[-1]}")
-                return url
+        matches = [u for u in results if set_path in u.lower() and full_name_slug in u.split("/")[-1].lower()]
+        if matches:
+            if number:
+                num_stripped = number.lstrip("0") or number
+                for u in matches:
+                    slug = u.split("/")[-1].lower()
+                    if slug.endswith(number) or slug.endswith(num_stripped):
+                        log.info(f"  CM_MATCH (full+set+num): {u.split('/')[-1]}")
+                        return u
+            log.info(f"  CM_MATCH (full+set): {matches[0].split('/')[-1]}")
+            return matches[0]
 
     # Priority 2: full-name only (multi-word, distinguishes "Sabrinas-Gengar" from "Gengar-V1").
     # Skipped for single-word names (e.g. "pikachu") since those need set/number to disambiguate.
     if full_name_slug and "-" in full_name_slug and full_name_slug != name_slug_short:
-        for url in results:
-            if full_name_slug in url.split("/")[-1].lower():
-                log.info(f"  CM_MATCH (full name): {url.split('/')[-1]}")
-                return url
+        matches = [u for u in results if full_name_slug in u.split("/")[-1].lower()]
+        if matches:
+            if number:
+                num_stripped = number.lstrip("0") or number
+                for u in matches:
+                    slug = u.split("/")[-1].lower()
+                    if slug.endswith(number) or slug.endswith(num_stripped):
+                        log.info(f"  CM_MATCH (full name+num): {u.split('/')[-1]}")
+                        return u
+            log.info(f"  CM_MATCH (full name): {matches[0].split('/')[-1]}")
+            return matches[0]
 
     # Match by card number + pokemon name in URL (try +/-2 for regional numbering)
     name_slug = name_slug_short
