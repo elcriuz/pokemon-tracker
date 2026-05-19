@@ -137,20 +137,62 @@ LISTING_PRICE_RE = re.compile(
     r'<span class="color-primary[^"]*fw-bold[^"]*">\s*([\d.,]+)\s*€\s*</span>'
 )
 
+LISTING_RE = re.compile(
+    r'fst-italic small">(?P<comment>[^<]+)</span>.*?color-primary[^>]*>\s*(?P<price>[\d.,]+)\s*€',
+    re.DOTALL,
+)
+
+# Seller comments that signal the listing is NOT the card itself (insert/sleeve/case only).
+BAD_LISTING_RE = re.compile(
+    r"(?:"
+    r"\binsert\s*!"
+    r"|\b(?:just\s+(?:the\s+)?|only\s+the\s+)?insert\s+only\b"
+    r"|\bnur\s+(?:der\s+|das\s+|die\s+)?insert\b"
+    r"|\bcase\s+only\b"
+    r"|\bsleeve\s+only\b"
+    r"|\bbox\s+only\b"
+    r"|\bempty\s+(?:case|sleeve|box|holder|capsule)\b"
+    r"|\bohne\s+karte\b"
+    r"|\bleer(?:h[üu]lle)?\b"
+    r"|\bnur\s+(?:h[üu]lle|sleeve|etui|verpackung|umverpackung|case|box|kapsel|magnet(?:halter)?)\b"
+    r"|\bwithout\s+(?:the\s+)?card\b"
+    r"|\bno\s+card\b"
+    r"|\bnot\s+the\s+(?:\w+\s+)?card\b"
+    r"|\bcarte\s+manquante\b"
+    r")",
+    re.IGNORECASE,
+)
+
 
 def extract_min_listing_price(content):
+    from collections import Counter
     prices = []
     for m in LISTING_PRICE_RE.finditer(content):
         p = parse_de_price(m.group(1))
         if p is not None:
             prices.append(p)
-    return min(prices) if prices else None
+    if not prices:
+        return None
+    bad_prices = []
+    for m in LISTING_RE.finditer(content):
+        comment = m.group("comment").strip()
+        if BAD_LISTING_RE.search(comment):
+            p = parse_de_price(m.group("price"))
+            if p is not None:
+                bad_prices.append((p, comment[:80]))
+    if bad_prices:
+        cnt = Counter(prices)
+        for bp, _c in bad_prices:
+            if cnt[bp] > 0:
+                cnt[bp] -= 1
+        cleaned = [p for p, n in cnt.items() for _ in range(n)]
+        for bp, comment in bad_prices:
+            log.info(f"  Listing gefiltert (kein Karten-Listing): {bp:.2f}€ — {comment!r}")
+        if cleaned:
+            return min(cleaned)
+    return min(prices)
 
 
-LISTING_RE = re.compile(
-    r'fst-italic small">(?P<comment>[^<]+)</span>.*?color-primary[^>]*>\s*(?P<price>[\d.,]+)\s*€',
-    re.DOTALL,
-)
 _GRADE_LABEL_PATTERNS = {
     "psa10_low": re.compile(r"^\s*PSA\s*10\b(?!\s*(?:contender|candidate|potential|worthy|ready))", re.IGNORECASE),
     "psa9_low":  re.compile(r"^\s*PSA\s*9\b(?!\d)", re.IGNORECASE),
@@ -163,6 +205,8 @@ def extract_grade_lows(content):
     lows = {}
     for m in LISTING_RE.finditer(content):
         comment = m.group("comment").strip()
+        if BAD_LISTING_RE.search(comment):
+            continue
         price = parse_de_price(m.group("price"))
         if price is None:
             continue
