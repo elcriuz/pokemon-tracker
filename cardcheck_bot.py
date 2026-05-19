@@ -875,11 +875,21 @@ async def scrape_ebay_sold(query):
 
 # ─── Verdict ─────────────────────────────────────────────────
 
+# Wenn Shop- und Marktpreis um mehr als diesen Faktor auseinander liegen, war es fast
+# immer ein Fehlmatch (Bot hat eine andere Karte auf Cardmarket gefunden). Beispiele aus
+# den Logs: shop=350\u20ac vs market=0.10\u20ac \u2192 3500x, shop=480\u20ac vs market=4.94\u20ac \u2192 97x.
+SCAN_MISMATCH_RATIO = 5.0
+
+
 def calculate_verdict(shop_eur, market_eur):
-    """Berechnet DEAL/FAIR/SKIP."""
+    """Berechnet DEAL/FAIR/SKIP \u2014 oder MATCH UNSICHER bei extremer Diskrepanz."""
     if shop_eur is None or market_eur is None or market_eur == 0:
         return None, None
     diff_pct = ((shop_eur - market_eur) / market_eur) * 100
+    if shop_eur > 0 and market_eur > 0:
+        ratio = max(shop_eur / market_eur, market_eur / shop_eur)
+        if ratio >= SCAN_MISMATCH_RATIO:
+            return "MATCH UNSICHER \u26a0\ufe0f", diff_pct
     if diff_pct < -20:
         return "DEAL \u2705", diff_pct
     elif diff_pct <= 10:
@@ -928,7 +938,7 @@ def parse_caption(caption):
 
 # ─── Scan Logging ───────────────────────────────────────────
 
-def _log_scan(user_id, user_name, card_name, set_name, number, language, grade, market_eur, cm_url, duration_sec, via):
+def _log_scan(user_id, user_name, card_name, set_name, number, language, grade, market_eur, cm_url, duration_sec, via, shop_eur=None, confidence=None):
     """Log scan to DB for activity tracking."""
     import sqlite3, os
     db = os.environ.get("CARDCHECK_DB", DB_PATH)
@@ -943,9 +953,14 @@ def _log_scan(user_id, user_name, card_name, set_name, number, language, grade, 
             market_eur REAL, cm_url TEXT,
             duration_sec INTEGER, via TEXT
         )""")
+        # Migrations für neue Spalten (idempotent)
+        for ddl in ("ALTER TABLE scan_log ADD COLUMN shop_eur REAL",
+                    "ALTER TABLE scan_log ADD COLUMN confidence TEXT"):
+            try: conn.execute(ddl)
+            except sqlite3.OperationalError: pass
         conn.execute(
-            "INSERT INTO scan_log (user_id, user_name, card_name, set_name, number, language, grade, market_eur, cm_url, duration_sec, via) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (user_id, user_name, card_name, set_name, number, language, grade, market_eur, cm_url, duration_sec, via))
+            "INSERT INTO scan_log (user_id, user_name, card_name, set_name, number, language, grade, market_eur, cm_url, duration_sec, via, shop_eur, confidence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (user_id, user_name, card_name, set_name, number, language, grade, market_eur, cm_url, duration_sec, via, shop_eur, confidence))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -1098,7 +1113,17 @@ async def _process_photo(msg, context):
         # 5. Verdict
         verdict_line = ""
         verdict, diff_pct = calculate_verdict(shop_eur, market_eur)
-        if verdict and shop_eur:
+        scan_confidence = "HIGH"
+        if verdict and "UNSICHER" in verdict:
+            scan_confidence = "LOW"
+            verdict_line = (
+                f"\n\u26a0\ufe0f <b>MATCH UNSICHER</b> \u2014 Preise passen nicht zusammen"
+                f"\nShop {fmt_eur(shop_eur)} vs Markt {fmt_eur(market_eur)} (Faktor "
+                f"{max(shop_eur / market_eur, market_eur / shop_eur):.0f}x)"
+                f"\nWahrscheinlich falsche Karte erkannt \u2014 Foto neu schicken oder Set-Code "
+                f"als Caption mitgeben (z.B. 'SWSH', 'PFL', 'M2a')."
+            )
+        elif verdict and shop_eur:
             sign = "+" if diff_pct > 0 else ""
             verdict_line = f"\n\u2192 <b>{verdict}</b> ({sign}{diff_pct:.0f}%)"
         elif not shop_price:
@@ -1122,7 +1147,8 @@ async def _process_photo(msg, context):
         # 7. Log scan to DB
         _log_scan(msg.from_user.id, msg.from_user.first_name or "?", name, set_name, number,
                   language, grade, market_eur, link_url, total_sec,
-                  "ximilar" if card.get("ximilar_id") else "quick_cm" if card.get("cm_url_override") else "tcg_api")
+                  "ximilar" if card.get("ximilar_id") else "quick_cm" if card.get("cm_url_override") else "tcg_api",
+                  shop_eur=shop_eur, confidence=scan_confidence)
 
     except Exception as e:
         log.error(f"[{check_id}] ERROR: {e}", exc_info=True)
