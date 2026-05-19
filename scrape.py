@@ -164,33 +164,33 @@ BAD_LISTING_RE = re.compile(
 )
 
 
+_OFFER_SPLIT_RE = re.compile(r'<div class="article-row[^"]*"[^>]*>')
+_OFFER_COMMENT_RE = re.compile(r'fst-italic small">([^<]+)</span>')
+
+
 def extract_min_listing_price(content):
-    from collections import Counter
-    prices = []
-    for m in LISTING_PRICE_RE.finditer(content):
-        p = parse_de_price(m.group(1))
-        if p is not None:
-            prices.append(p)
-    if not prices:
-        return None
-    bad_prices = []
-    for m in LISTING_RE.finditer(content):
-        comment = m.group("comment").strip()
-        if BAD_LISTING_RE.search(comment):
-            p = parse_de_price(m.group("price"))
-            if p is not None:
-                bad_prices.append((p, comment[:80]))
-    if bad_prices:
-        cnt = Counter(prices)
-        for bp, _c in bad_prices:
-            if cnt[bp] > 0:
-                cnt[bp] -= 1
-        cleaned = [p for p, n in cnt.items() for _ in range(n)]
-        for bp, comment in bad_prices:
-            log.info(f"  Listing gefiltert (kein Karten-Listing): {bp:.2f}€ — {comment!r}")
-        if cleaned:
-            return min(cleaned)
-    return min(prices)
+    # See scrape_brightdata.py for explanation: Cardmarket emits mobile+desktop copies
+    # of each price, so split per article-row to count one (price, comment) per offer.
+    blocks = _OFFER_SPLIT_RE.split(content)[1:]
+    if not blocks:
+        prices = [parse_de_price(m.group(1)) for m in LISTING_PRICE_RE.finditer(content)]
+        prices = [p for p in prices if p is not None]
+        return min(prices) if prices else None
+    kept = []
+    for block in blocks:
+        price_m = LISTING_PRICE_RE.search(block)
+        if not price_m:
+            continue
+        price = parse_de_price(price_m.group(1))
+        if price is None:
+            continue
+        comment_m = _OFFER_COMMENT_RE.search(block)
+        comment = comment_m.group(1).strip() if comment_m else ""
+        if comment and BAD_LISTING_RE.search(comment):
+            log.info(f"  Listing gefiltert (kein Karten-Listing): {price:.2f}€ — {comment[:80]!r}")
+            continue
+        kept.append(price)
+    return min(kept) if kept else None
 
 
 _GRADE_LABEL_PATTERNS = {
@@ -306,6 +306,27 @@ def download_image(image_url, card_url, page=None):
 
 
 # ─── DB Lookup für stale grade fallback ──────────────────────
+
+def lookup_last_value(card_url):
+    """Letzten nicht-null `value` aus prices fuer diese URL — Fallback bei Anomalien."""
+    try:
+        import sqlite3
+        db_path = BASE_DIR / "data" / "tracker.db"
+        if not db_path.exists():
+            return None
+        conn = sqlite3.connect(str(db_path))
+        row = conn.execute(
+            "SELECT p.value FROM prices p JOIN cards c ON p.card_id = c.id "
+            "WHERE c.url = ? AND p.value IS NOT NULL "
+            "ORDER BY p.scraped_at DESC LIMIT 1",
+            (card_url,),
+        ).fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception as e:
+        log.warning(f"  lookup_last_value failed: {e}")
+        return None
+
 
 def lookup_last_grade_low(card_url, grade_key):
     """Sucht letzten nicht-null Wert von <grade_key> aus prices fuer diese Karte."""
@@ -488,6 +509,19 @@ def scrape_single_card(page, card, timestamp, is_first):
             value = from_price
     else:
         value = prices.get("trend")
+
+    # Sanity guard: extreme Abweichung von Trend/avg7 → letzten DB-Wert nutzen
+    reference = prices.get("trend") or prices.get("avg7")
+    if value and reference and reference > 0:
+        ratio = value / reference
+        if ratio < 0.3 or ratio > 3.0:
+            last_known = lookup_last_value(card["url"]) or reference
+            log.warning(
+                f"  Extreme Abweichung: value={value:.2f} vs ref={reference:.2f} (ratio {ratio:.2f}) — "
+                f"nutze {last_known:.2f} (vorheriger DB-Wert)"
+            )
+            value = last_known
+            stale_grade = 1
 
     result = {
         "url": card["url"],
