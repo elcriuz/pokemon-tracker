@@ -112,6 +112,94 @@ def fmt_eur(val):
         return f"{val:,.0f}\u20ac".replace(",", ".")
     return f"{val:.2f}\u20ac"
 
+# ─── Match Quality Helpers ─────────────────────────────────
+
+# Words that frame a Pokemon's name but aren't the species: card type suffixes,
+# region/form prefixes, "Team Rocket's", "Dark X", etc. Used by pokemon_tokens() to
+# strip everything down to the actual species so two names can be compared meaningfully.
+_NAME_NOISE = {
+    "ex", "gx", "v", "vmax", "vstar", "vunion", "tag", "team",
+    "mega", "shining", "crystal", "shiny", "radiant", "dark", "light",
+    "alolan", "galarian", "hisuian", "paldean", "primal",
+    "the", "and", "card", "ultra", "rare", "promo", "rocket", "rockets",
+}
+
+
+def pokemon_tokens(name):
+    """Return the set of meaningful tokens in a Pokemon card name.
+    "Mewtwo ex" -> {"mewtwo"}, "Pikachu & Zekrom GX" -> {"pikachu", "zekrom"},
+    "Dark Gengar" -> {"gengar"}, "Team Rocket's Mewtwo ex" -> {"mewtwo"}."""
+    if not name:
+        return set()
+    s = re.sub(r"[^a-zA-Z\s]", " ", name.lower())
+    return {w for w in s.split() if len(w) >= 3 and w not in _NAME_NOISE}
+
+
+def names_overlap(a, b):
+    """True if two card names share at least one species token."""
+    ta, tb = pokemon_tokens(a), pokemon_tokens(b)
+    return bool(ta & tb)
+
+
+def _normalize_set_code(sc):
+    if not sc:
+        return ""
+    return re.sub(r"[^a-z0-9]", "", sc.lower())
+
+
+def validate_url_match(url, pokemon, number, set_codes=None):
+    """Return (name_ok, num_ok, set_ok) for a Cardmarket URL.
+
+    Used to spot wrong-card matches like Vision-said-Kingdra-but-bot-picked-Mewtwo
+    or expected-set-NEO4-but-picked-MEW094. set_codes is a list of acceptable codes
+    (e.g. [vision_set_code, ptcgo_code]); set_ok is True if ANY appears in slug."""
+    slug = url.split("/")[-1].split("?")[0].lower()
+    full_path = url.split("?")[0].lower()
+    slug_tokens = {t for t in re.findall(r"[a-z]{3,}", slug)}
+    name_ok = bool(pokemon_tokens(pokemon) & slug_tokens)
+    num_ok = True
+    if number:
+        nstr = re.sub(r"[^0-9]", "", number)
+        if nstr:
+            cands = {nstr, nstr.lstrip("0") or "0"}
+            num_ok = False
+            for cand in cands:
+                if slug.endswith(cand):
+                    pos = len(slug) - len(cand)
+                    if pos == 0 or not slug[pos - 1].isdigit():
+                        num_ok = True
+                        break
+                    # preceding char is a digit — must be guarded by a known set-code prefix
+                    for sc in (set_codes or []):
+                        scn = _normalize_set_code(sc)
+                        if scn and slug.endswith(scn + cand):
+                            num_ok = True
+                            break
+                    if num_ok:
+                        break
+    set_ok = True
+    if set_codes:
+        norm_codes = [_normalize_set_code(sc) for sc in set_codes if sc]
+        norm_codes = [c for c in norm_codes if len(c) >= 2]
+        if norm_codes:
+            set_ok = any(c in slug or c in full_path for c in norm_codes)
+    return name_ok, num_ok, set_ok
+
+
+def is_confident_match(url, pokemon, number, set_codes=None):
+    """Coarse-grained confidence check: name must appear in slug, number must match.
+    Set-code is informational only — too many CM URLs use a different abbreviation
+    than the PTCGO code (e.g. MEW vs the 151 set) to make it a hard requirement."""
+    if not url:
+        return False
+    name_ok, num_ok, _set_ok = validate_url_match(url, pokemon, number, set_codes)
+    if not name_ok:
+        return False
+    if number and not num_ok:
+        return False
+    return True
+
+
 # ─── Vision: Card Identification ─────────────────────────────
 
 VISION_PROMPT = """Antworte NUR als JSON (kein Markdown):
@@ -524,7 +612,9 @@ async def _get_bd_session():
     if _bd_session is None or _bd_session.closed:
         _bd_session = aiohttp.ClientSession(
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {BD_KEY}"},
-            timeout=aiohttp.ClientTimeout(total=90),
+            # Drop a single slow proxy fast instead of waiting 90s — the scan as a whole
+            # has its own 60s budget and 25s is plenty for the Web Unblocker happy path.
+            timeout=aiohttp.ClientTimeout(total=25),
         )
     return _bd_session
 
@@ -619,7 +709,13 @@ async def find_cardmarket_url(card_info):
     name = card_info.get("name", "")
     set_name = card_info.get("set", "")
     number = card_info.get("number", "").split("/")[0]
-    pokemon = card_info.get("pokemon", name.split(" ex")[0].split(" V")[0].split(" GX")[0].strip())
+    # Use the canonical card name (from Ximilar/CM) as the species token when it's present.
+    # Vision's `pokemon` field is just an OCR hint and is wrong often enough that trusting
+    # it as the slug match key picks "Mewtwo" for a Kingdra photo.
+    if name:
+        pokemon = name.split(" ex")[0].split(" V")[0].split(" GX")[0].strip()
+    else:
+        pokemon = card_info.get("pokemon", "")
 
     # Fall back to Vision's pokemon name when Ximilar/QuickCM didn't identify the card,
     # otherwise queries become " BWP" / " " and CM returns random cards.
@@ -628,47 +724,54 @@ async def find_cardmarket_url(card_info):
     # Search Cardmarket — use vision's set_code (e.g. PRE, WHT) which CM understands
     vision_set_code = card_info.get("vision_set_code", "")
     ptcgo_code = card_info.get("ptcgo_code", "")
+    # If the card number itself encodes a set code (e.g. "SWSH261", "XY39"), use that
+    # as a search hint when no ptcgo_code was supplied. Vision often gets the set wrong
+    # ("SWSD" instead of "SWSH"), so this is more reliable.
+    if number and not ptcgo_code:
+        m = re.match(r"^([A-Za-z]+)\d", number)
+        if m:
+            ptcgo_code = m.group(1).upper()
+    # Two queries cover almost every case at the card fair:
+    #   1. Most specific  (name + setcode + number)  — to land directly on the slug
+    #   2. Broad          (just the name)            — to catch cards filed under a
+    #                                                  different CM set name than what
+    #                                                  Vision/Ximilar reported
+    # Each query costs ~10-25s on the Web Unblocker, so the old fallback-loop chain (5+
+    # queries) was the main reason scans took 5+ minutes.
+    # Cardmarket search returns 0 hits for slug-style queries like "Gengar-SWSH052".
+    # Space-separated terms work: "Gengar SWSH" returns Gengar-SWSH052 + SWSH241,
+    # while plain "Gengar" returns 29 popular Gengars but not the SWSH variants.
     queries = []
-    # For TCG-matched cards with ptcgo_code: construct expected CM slug (e.g. "Latios-ex-DR94")
-    if search_name and ptcgo_code and number:
-        queries.append(f"{search_name.replace(' ', '-')}-{ptcgo_code}{number}")
-    if search_name and vision_set_code:
-        queries.append(f"{search_name} {vision_set_code}")
-    if search_name and ptcgo_code and ptcgo_code != vision_set_code:
+    if search_name and ptcgo_code:
         queries.append(f"{search_name} {ptcgo_code}")
-    if search_name and set_name:
-        queries.append(f"{search_name} {set_name}")
     if search_name:
         queries.append(search_name)
-    if pokemon and pokemon != search_name:
+    elif pokemon:
         queries.append(pokemon)
-    queries = [q for q in queries if q.strip()]
+    # Deduplicate (case-insensitive) and cap at 2 queries.
+    seen_q = set()
+    deduped = []
+    for q in queries:
+        key = q.strip().lower()
+        if key and key not in seen_q:
+            seen_q.add(key)
+            deduped.append(q.strip())
+        if len(deduped) >= 2:
+            break
+    queries = deduped
     if not queries:
         log.info("  CM_SEARCH: no usable query (name/pokemon missing)")
         return None
     results = []
     seen = set()
-    # Run the most specific queries (first 3) in parallel, fall back to the rest sequentially
-    parallel_queries = queries[:3]
-    fallback_queries = queries[3:]
-    log.info(f"  CM_SEARCH: running {len(parallel_queries)} queries in parallel: {parallel_queries}")
-    parallel_results = await asyncio.gather(*[search_cardmarket(q) for q in parallel_queries])
-    for q, urls in zip(parallel_queries, parallel_results):
+    number_lower = (number or "").lower()
+    log.info(f"  CM_SEARCH: running {len(queries)} queries in parallel: {queries}")
+    parallel_results = await asyncio.gather(*[search_cardmarket(q) for q in queries])
+    for q, urls in zip(queries, parallel_results):
         for url in urls:
             if url not in seen:
                 seen.add(url)
                 results.append(url)
-    has_number_match = number and any(number in url.split("/")[-1] for url in results)
-    if not has_number_match:
-        for q in fallback_queries:
-            log.info(f"  CM_SEARCH (fallback): '{q}'")
-            for url in await search_cardmarket(q):
-                if url not in seen:
-                    seen.add(url)
-                    results.append(url)
-            # Stop early if we found a number match
-            if number and any(number in url.split("/")[-1] for url in results):
-                break
 
     log.info(f"  CM_RESULTS: {len(results)} — {[u.split('/')[-1] for u in results[:8]]}")
 
@@ -684,102 +787,112 @@ async def find_cardmarket_url(card_info):
     set_slug = _cm_slug(set_name)
     name_slug_short = pokemon.lower().split()[0] if pokemon else ""
 
-    # Priority 1: full-name + set in URL. Catches single-variant cards whose URL has no
-    # number suffix (e.g. "Sabrinas-Gengar-CFTD"), where the existing number-based match
-    # would otherwise pick an unrelated card with the same number from another set.
-    # When we have a card number, prefer the slug ending in that number — otherwise
-    # multi-variant sets (e.g. ASC057 vs ASC276 for Pikachu ex) collapse to the first hit.
+    # Build candidate number suffixes: literal, digit-only, neighbors for typo tolerance.
+    # ALL lowercase — slug.lower() is compared against these.
+    number_l = (number or "").lower()
+    digit_only = re.sub(r"[^0-9]", "", number) if number else ""
+    try_numbers = []
+    if number_l:
+        try_numbers.append(number_l)
+    if digit_only and digit_only != number_l:
+        try_numbers.append(digit_only)
+        stripped = digit_only.lstrip("0") or "0"
+        if stripped != digit_only:
+            try_numbers.append(stripped)
+    if number and number.isdigit():
+        n = int(number)
+        for d in (-1, 1, -2, 2):
+            try_numbers.append(str(n + d))
+    # Dedupe while preserving order
+    try_numbers = list(dict.fromkeys(try_numbers))
+
+    sc_norm_list = [c for c in [
+        (ptcgo_code or "").lower(), (vision_set_code or "").lower()
+    ] if c and len(c) >= 2]
+
+    def _num_match(slug, tn):
+        if not tn or not slug.endswith(tn):
+            return False
+        pos = len(slug) - len(tn)
+        if pos == 0 or not slug[pos - 1].isdigit():
+            return True
+        # Preceded by a digit — only OK when guarded by a known set-code prefix.
+        return any(slug.endswith(sc + tn) for sc in sc_norm_list)
+
+    # Priority 1: full-name + set path in URL. Catches multi-word/distinctive names like
+    # "Sabrinas-Gengar-CFTD" — single-word names (just "gengar") need number/set to
+    # disambiguate, so they're skipped here.
+    # When a number IS available, only return a match when at least one URL in this
+    # priority also matches the number — otherwise fall through. Without this we'd pick
+    # Charizard-VMAX-S-P104 just because it shares "/Singles/Sword-Shield-Promos/" with
+    # Charizard-VMAX-SWSH261 (the card we actually want).
     if full_name_slug and set_slug and "-" in full_name_slug:
         set_path = f"/singles/{set_slug}/"
         matches = [u for u in results if set_path in u.lower() and full_name_slug in u.split("/")[-1].lower()]
         if matches:
-            if number:
-                num_stripped = number.lstrip("0") or number
-                for u in matches:
-                    slug = u.split("/")[-1].lower()
-                    if slug.endswith(number) or slug.endswith(num_stripped):
-                        log.info(f"  CM_MATCH (full+set+num): {u.split('/')[-1]}")
-                        return u
-            log.info(f"  CM_MATCH (full+set): {matches[0].split('/')[-1]}")
-            return matches[0]
+            if try_numbers:
+                for tn in try_numbers:
+                    for u in matches:
+                        slug = u.split("/")[-1].lower()
+                        if _num_match(slug, tn):
+                            log.info(f"  CM_MATCH (full+set+num): {u.split('/')[-1]}")
+                            return u
+            else:
+                log.info(f"  CM_MATCH (full+set): {matches[0].split('/')[-1]}")
+                return matches[0]
 
-    # Priority 2: full-name only (multi-word, distinguishes "Sabrinas-Gengar" from "Gengar-V1").
-    # Skipped for single-word names (e.g. "pikachu") since those need set/number to disambiguate.
+    # Priority 2: full-name only — same fall-through rule when number is given.
     if full_name_slug and "-" in full_name_slug and full_name_slug != name_slug_short:
         matches = [u for u in results if full_name_slug in u.split("/")[-1].lower()]
         if matches:
-            if number:
-                num_stripped = number.lstrip("0") or number
-                for u in matches:
-                    slug = u.split("/")[-1].lower()
-                    if slug.endswith(number) or slug.endswith(num_stripped):
-                        log.info(f"  CM_MATCH (full name+num): {u.split('/')[-1]}")
-                        return u
-            log.info(f"  CM_MATCH (full name): {matches[0].split('/')[-1]}")
-            return matches[0]
+            if try_numbers:
+                for tn in try_numbers:
+                    for u in matches:
+                        slug = u.split("/")[-1].lower()
+                        if _num_match(slug, tn):
+                            log.info(f"  CM_MATCH (full name+num): {u.split('/')[-1]}")
+                            return u
+            else:
+                log.info(f"  CM_MATCH (full name): {matches[0].split('/')[-1]}")
+                return matches[0]
 
-    # Match by card number + pokemon name in URL (try +/-2 for regional numbering)
+    # Priority 3: short-name + number. Picks "Gengar-SWSH052" over "Gengar-SWSH241" when
+    # number is provided. Lower-case both sides — previously the literal SWSH052/XY39
+    # number never matched the all-lowercase slug.
     name_slug = name_slug_short
-    if number:
-        try_numbers = [number] + ([str(int(number)+d) for d in [-1,1,-2,2]] if number.isdigit() else [])
+    if name_slug and try_numbers:
         for tn in try_numbers:
             for url in results:
                 slug = url.split("/")[-1].lower()
-                if name_slug in slug and slug.endswith(tn):
-                    # Ensure it's an exact number match, not a suffix (e.g. "7" in "107")
-                    pos = len(slug) - len(tn)
-                    if pos > 0 and slug[pos - 1].isdigit():
-                        # Allow if preceding chars are a known set code (e.g. SM678 = SM6 + 78)
-                        sc = (ptcgo_code or vision_set_code or "").lower()
-                        if not (sc and slug.endswith(sc + tn)):
-                            continue  # "MEW107" endswith "7" but it's actually 107
+                if name_slug in slug and _num_match(slug, tn):
                     log.info(f"  CM_MATCH: '{name_slug}'+{tn} → {url.split('/')[-1]}")
                     return url
 
-    # Direct URL construction for cards where search fails (max 2 BD requests)
-    if ptcgo_code and number:
-        name_slug_d = name.replace(" ", "-")
-        set_slug = set_name.replace(" ", "-")
-        direct_urls = [
-            f"https://www.cardmarket.com/en/Pokemon/Products/Singles/{set_slug}/{name_slug_d}-{ptcgo_code}{number}",
-            f"https://www.cardmarket.com/en/Pokemon/Products/Singles/EX-{set_slug}/{name_slug_d}-{ptcgo_code.lower()}{number}",
-        ]
-        for direct_url in direct_urls:
-            log.info(f"  CM_DIRECT: {direct_url}")
-            html = await bd_scrape(direct_url)
-            # Strict check: page title must contain the card name (not a generic search page)
-            if html and "404" not in html[:500]:
-                title_m = re.search(r"<title>(.*?)</title>", html)
-                if title_m and name.split()[0].lower() in title_m.group(1).lower() and "Singles |" not in title_m.group(1):
-                    log.info(f"  CM_DIRECT: FOUND!")
-                    return direct_url
-
     # Try partner sets (e.g. WHT → BLK for twin JP sets)
     partner_sets = card_info.get("ximilar_partner_sets", [])
-    if partner_sets and number:
+    if partner_sets and try_numbers:
         for ps in partner_sets:
             log.info(f"  CM_PARTNER: trying set_code '{ps}'...")
             ps_results = await search_cardmarket(f"{name} {ps}")
-            for url in ps_results:
-                slug = url.split("/")[-1].lower()
-                if name_slug in slug and slug.endswith(number):
-                    pos = len(slug) - len(number)
-                    if pos > 0 and slug[pos - 1].isdigit():
-                        sc = (ptcgo_code or vision_set_code or "").lower()
-                        if not (sc and slug.endswith(sc + number)):
-                            continue
-                    log.info(f"  CM_PARTNER: FOUND {url.split('/')[-1]}")
-                    return url
+            for tn in try_numbers:
+                for url in ps_results:
+                    slug = url.split("/")[-1].lower()
+                    if name_slug in slug and _num_match(slug, tn):
+                        log.info(f"  CM_PARTNER: FOUND {url.split('/')[-1]}")
+                        return url
 
-    # Fallback: scan ALL results for a slug matching the card name (not just the first).
-    # Without this we'd give up on 60 results just because result[0] happened to be unrelated.
-    if results:
+    # Fallback: when no number was given (e.g. user only had a name), take the first
+    # result that mentions the Pokemon. When a number IS given but nothing matched it,
+    # prefer to return None — the bot will warn instead of silently presenting the
+    # wrong card.
+    if results and not number:
         for url in results:
             slug = url.split("/")[-1].lower()
-            if name_slug in slug:
-                log.info(f"  CM_FALLBACK: using {url.split('/')[-1]}")
+            if name_slug and name_slug in slug:
+                log.info(f"  CM_FALLBACK (no number): {url.split('/')[-1]}")
                 return url
-        log.info(f"  CM_FALLBACK: no match — '{name_slug}' not in any of {len(results)} URLs")
+    if number:
+        log.info(f"  CM_NOMATCH: number {number_l} did not match any of {len(results)} results")
     return None
 
 async def scrape_cardmarket_prices(card_info):
@@ -798,6 +911,19 @@ async def scrape_cardmarket_prices(card_info):
     if card_info.get("is_first_edition"):
         params += "&isFirstEd=Y"
 
+    def _confidence_for(url):
+        if not url:
+            return None
+        pokemon = card_info.get("name") or card_info.get("pokemon", "")
+        number = card_info.get("number", "")
+        set_codes = [
+            card_info.get("set_code"),
+            card_info.get("ptcgo_code"),
+            card_info.get("vision_set_code"),
+        ]
+        ok = is_confident_match(url, pokemon, number, set_codes)
+        return "HIGH" if ok else "LOW"
+
     # Fast path: Ximilar CM product URL — scrape directly with filters (1 BD request instead of 2)
     if card_info.get("cm_product_url"):
         product_url = card_info["cm_product_url"] + "&" + params
@@ -810,22 +936,23 @@ async def scrape_cardmarket_prices(card_info):
                 og = re.search(r'property="og:url"[^>]*content="([^"?]+Singles/[^"?]+)"', html)
                 real_url = og.group(1) if og else card_info["cm_product_url"]
                 full_url = f"{real_url}?{params}" if og else product_url
-                return real_url, prices, full_url
+                return real_url, prices, full_url, _confidence_for(real_url)
 
     url = await find_cardmarket_url(card_info)
     if not url:
-        return None, None, None
+        return None, None, None, None
 
+    confidence = _confidence_for(url)
     separator = "&" if "?" in url else "?"
     full_url = f"{url}{separator}{params}"
 
-    log.info(f"  Scraping: {full_url}")
+    log.info(f"  Scraping: {full_url} (confidence={confidence})")
     html = await bd_scrape(full_url)
     if not html:
-        return url, None, full_url
+        return url, None, full_url, confidence
 
     prices = extract_prices(html)
-    return url, prices, full_url
+    return url, prices, full_url, confidence
 
 # ─── eBay Fallback ───────────────────────────────────────────
 
@@ -982,8 +1109,33 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Fire and forget — allows parallel processing of multiple photos
     asyncio.create_task(_process_photo(msg, context))
 
+
+# Hard ceiling on how long a single scan may take. At the card fair some scans ran
+# 5+ minutes which is useless — better to bail out fast and let the user retry with
+# a set-code caption than to keep the user staring at "scraping..." indefinitely.
+SCAN_HARD_TIMEOUT_S = 60
+# When elapsed time crosses this threshold, skip the eBay fallback. eBay adds another
+# 15-30s on top of an already slow scan and rarely produces a usable answer.
+SCAN_EBAY_DEADLINE_S = 35
+
+
 async def _process_photo(msg, context):
     check_id = f"CHK-{int(time.time())}-{msg.message_id}"
+    try:
+        await asyncio.wait_for(_process_photo_inner(msg, context, check_id), timeout=SCAN_HARD_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        log.warning(f"[{check_id}] TIMEOUT nach {SCAN_HARD_TIMEOUT_S}s")
+        try:
+            await msg.reply_text(
+                f"⏱️ Scan zu langsam (>{SCAN_HARD_TIMEOUT_S}s). Schick das Foto bitte nochmal, "
+                f"am besten mit Set-Code als Caption (z.B. 'SWSH', 'PFL', 'M2a').",
+                reply_to_message_id=msg.message_id,
+            )
+        except Exception:
+            pass
+
+
+async def _process_photo_inner(msg, context, check_id):
     try:
         # 1. Download photo
         photo = msg.photo[-1]
@@ -1048,7 +1200,7 @@ async def _process_photo(msg, context):
 
         # 3. Scrape Cardmarket
         t1 = time.time()
-        cm_url, prices, cm_full_url = await scrape_cardmarket_prices(card)
+        cm_url, prices, cm_full_url, url_confidence = await scrape_cardmarket_prices(card)
         scrape_ms = int((time.time() - t1) * 1000)
         log.info(f"[{check_id}] SCRAPE ({scrape_ms}ms): url={cm_full_url} prices={json.dumps({k:v for k,v in (prices or {}).items() if k != 'title'})}")
 
@@ -1094,26 +1246,40 @@ async def _process_photo(msg, context):
         # 4. eBay fallback if no CM prices
         ebay_line = ""
         if not prices or (not prices.get("from") and not prices.get("trend")):
-            log.info(f"[{check_id}] EBAY_FALLBACK: no CM prices, searching eBay...")
-            lang_word = {"jp": "japanese", "en": "english", "de": "german", "kr": "korean"}.get(language, "")
-            ebay_query = f"{name} {number} {set_name} {lang_word}".strip()
-            log.info(f"[{check_id}] EBAY_QUERY: {ebay_query}")
-            ebay = await scrape_ebay_sold(ebay_query)
-            if ebay:
-                median_eur = to_eur(ebay["median_usd"], "USD")
-                ebay_line = f"\neBay Sold ({ebay['count']}x): Median ${ebay['median_usd']:,.0f} ({fmt_eur(median_eur)})"
-                if market_eur is None:
-                    market_eur = median_eur
-                cm_line = "\nCM: keine Daten fuer {lang_label}".format(lang_label=lang_label)
-                log.info(f"[{check_id}] EBAY_RESULT: {ebay['count']} sold, median=${ebay['median_usd']}")
+            elapsed = time.time() - t0
+            if elapsed > SCAN_EBAY_DEADLINE_S:
+                log.info(f"[{check_id}] EBAY_SKIP: bereits {elapsed:.0f}s vergangen — eBay-Fallback ausgelassen")
+                cm_line = "\nCM: keine Daten | eBay: ausgelassen (Scan zu langsam)"
             else:
-                cm_line = f"\nCM: keine Daten | eBay: keine Daten"
-                log.info(f"[{check_id}] EBAY_RESULT: nothing found")
+                log.info(f"[{check_id}] EBAY_FALLBACK: no CM prices, searching eBay...")
+                lang_word = {"jp": "japanese", "en": "english", "de": "german", "kr": "korean"}.get(language, "")
+                ebay_query = f"{name} {number} {set_name} {lang_word}".strip()
+                log.info(f"[{check_id}] EBAY_QUERY: {ebay_query}")
+                ebay = await scrape_ebay_sold(ebay_query)
+                if ebay:
+                    median_eur = to_eur(ebay["median_usd"], "USD")
+                    ebay_line = f"\neBay Sold ({ebay['count']}x): Median ${ebay['median_usd']:,.0f} ({fmt_eur(median_eur)})"
+                    if market_eur is None:
+                        market_eur = median_eur
+                    cm_line = f"\nCM: keine Daten fuer {lang_label}"
+                    log.info(f"[{check_id}] EBAY_RESULT: {ebay['count']} sold, median=${ebay['median_usd']}")
+                else:
+                    cm_line = f"\nCM: keine Daten | eBay: keine Daten"
+                    log.info(f"[{check_id}] EBAY_RESULT: nothing found")
 
         # 5. Verdict
         verdict_line = ""
         verdict, diff_pct = calculate_verdict(shop_eur, market_eur)
-        scan_confidence = "HIGH"
+        scan_confidence = "LOW" if url_confidence == "LOW" else "HIGH"
+        if url_confidence == "LOW" and not (verdict and "UNSICHER" in (verdict or "")):
+            # URL doesn't look like the photographed card (name/number mismatch in slug).
+            # Tell the user before showing potentially misleading numbers.
+            verdict_line = (
+                f"\n\u26a0\ufe0f <b>MATCH UNSICHER</b> \u2014 gefundene Cardmarket-Seite passt nicht "
+                f"eindeutig zur Karte (Nummer/Set stimmt nicht \u00fcberein)."
+                f"\nLink pr\u00fcfen oder Foto mit Set-Code als Caption neu schicken "
+                f"(z.B. 'SWSH', 'PFL', 'M2a')."
+            )
         if verdict and "UNSICHER" in verdict:
             scan_confidence = "LOW"
             verdict_line = (
