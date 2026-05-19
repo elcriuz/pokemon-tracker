@@ -164,7 +164,7 @@ BAD_LISTING_RE = re.compile(
 )
 
 
-_OFFER_SPLIT_RE = re.compile(r'<div class="article-row[^"]*"[^>]*>')
+_OFFER_SPLIT_RE = re.compile(r'<div id="articleRow\d+"')
 _OFFER_COMMENT_RE = re.compile(r'fst-italic small">([^<]+)</span>')
 
 
