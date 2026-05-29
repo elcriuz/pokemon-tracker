@@ -239,8 +239,15 @@ def extract_min_listing_price(content):
         if comment and BAD_LISTING_RE.search(comment):
             log.info(f"  Listing gefiltert (kein Karten-Listing): {price:.2f}€ — {comment[:80]!r}")
             continue
+        if comment and _comment_is_graded(comment):
+            log.info(f"  Listing gefiltert (graded): {price:.2f}€ — {comment[:80]!r}")
+            continue
         kept.append(price)
     return min(kept) if kept else None
+
+
+def _comment_is_graded(comment):
+    return any(pat.match(comment) for pat in _GRADE_LABEL_PATTERNS.values())
 
 
 # Cardmarket offer-listing structure: each offer has a comment span (fst-italic small)
@@ -534,7 +541,8 @@ def process_result(content, card, timestamp):
             "timestamp": timestamp, "error": ERR_NO_PRICES, **prices,
         }, "no_prices"
 
-    # Value-Bestimmung
+    # Value-Bestimmung — niemals auf Trend fallen; letzten DB-Wert halten bis ein
+    # passendes Listing wieder auftaucht.
     stale_grade = 0
     if grade_value:
         value = grade_value
@@ -546,19 +554,27 @@ def process_result(content, card, timestamp):
             stale_grade = 1
             log.info(f"  {grade} heute nicht gelistet → letzten bekannten {grade_key}={last_known} EUR (stale)")
         else:
-            value = prices.get("trend") or prices.get("from")
-            stale_grade = 1
-            log.info(f"  {grade} heute nicht gelistet, kein History-Wert → Fallback Trend={value} (stale)")
+            last_value = lookup_last_value(card["url"])
+            if last_value:
+                value = last_value
+                stale_grade = 1
+                log.info(f"  {grade} heute nicht gelistet, kein {grade_key}-History → letzten value={last_value} EUR (stale)")
+            else:
+                value = prices.get("trend") or prices.get("from")
+                stale_grade = 1
+                log.info(f"  {grade} heute nicht gelistet, keine History → Erst-Fallback Trend={value} (stale)")
     elif prices.get("from"):
-        from_price = prices["from"]
-        psa_prices = [p for p in [prices.get("psa10_low"), prices.get("psa9_low")] if p]
-        if not grade and psa_prices and from_price >= min(psa_prices):
-            log.info(f"  Nur graded Angebote (from={from_price} >= PSA low={min(psa_prices)}), nutze Trend")
-            value = prices.get("trend") or from_price
-        else:
-            value = from_price
+        value = prices["from"]
     else:
-        value = prices.get("trend")
+        last_value = lookup_last_value(card["url"])
+        if last_value:
+            value = last_value
+            stale_grade = 1
+            log.info(f"  Keine passende (ungradete) Listung heute → letzten value={last_value} EUR (stale)")
+        else:
+            value = prices.get("trend")
+            stale_grade = 1
+            log.info(f"  Keine Listung und keine History → Erst-Fallback Trend={value} (stale)")
 
     # Sanity guard: extreme Abweichung von Trend/avg7 deutet auf einen kaputten Listing-Match hin
     # (z.B. "Insert! Not the Pikachu card" für 5€ bei einer 1100€-Karte). In dem Fall nicht
