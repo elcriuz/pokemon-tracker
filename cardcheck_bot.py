@@ -649,18 +649,145 @@ def parse_de_price(s):
         return None
     return float(s.replace(".", "").replace(",", "."))
 
+
+# Cardmarket renders each offer twice (mobile + desktop) inside the same article-row
+# container; splitting on <div id="articleRow..."> gives one block per real offer so we
+# can read each listing's seller country and seller comment alongside its price.
+_BOT_OFFER_SPLIT_RE = re.compile(r'<div id="articleRow\d+"')
+_BOT_LISTING_PRICE_RE = re.compile(
+    r'<span class="color-primary[^"]*fw-bold[^"]*">\s*([\d.,]+)\s*€\s*</span>'
+)
+_BOT_OFFER_COMMENT_RE = re.compile(r'fst-italic small">([^<]+)</span>')
+_BOT_OFFER_LOCATION_RE = re.compile(r'title="Item location:\s*([^"]+)"', re.IGNORECASE)
+
+# Same blacklist as the daily scraper — seller listed only the insert/sleeve/case, not
+# the card itself. Drop those before they poison the from-price.
+_BOT_BAD_LISTING_RE = re.compile(
+    r"(?:"
+    r"\binsert\s*!"
+    r"|\b(?:just\s+(?:the\s+)?|only\s+the\s+)?insert\s+only\b"
+    r"|\bnur\s+(?:der\s+|das\s+|die\s+)?insert\b"
+    r"|\bcase\s+only\b"
+    r"|\bsleeve\s+only\b"
+    r"|\bbox\s+only\b"
+    r"|\bempty\s+(?:case|sleeve|box|holder|capsule)\b"
+    r"|\bohne\s+karte\b"
+    r"|\bleer(?:h[üu]lle)?\b"
+    r"|\bnur\s+(?:h[üu]lle|sleeve|etui|verpackung|umverpackung|case|box|kapsel|magnet(?:halter)?)\b"
+    r"|\bwithout\s+(?:the\s+)?card\b"
+    r"|\bno\s+card\b"
+    r"|\bnot\s+the\s+(?:\w+\s+)?card\b"
+    r"|\bcarte\s+manquante\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# Grade label patterns. Must match the START of the seller comment so that an offhand
+# mention like "PSA10 contender" doesn't get treated as an actual PSA10 listing.
+_BOT_GRADE_LABEL_PATTERNS = {
+    "psa10": re.compile(r"^\s*PSA\s*10\b(?!\s*(?:contender|candidate|potential|worthy|ready))", re.IGNORECASE),
+    "psa9":  re.compile(r"^\s*PSA\s*9\b(?!\d)", re.IGNORECASE),
+    "cgc10": re.compile(r"^\s*CGC\s*(?:Pristine\s*|Black\s*Label\s*)?10\b", re.IGNORECASE),
+    "bgs10": re.compile(r"^\s*BGS\s*(?:Pristine\s*|Black\s*Label\s*)?10\b", re.IGNORECASE),
+}
+
+# UK listings: Cardmarket IOSS covers EU VAT up to 150€, above that the buyer pays
+# import VAT (~20% AT) + ~6-12€ handling = ~22% effective surcharge. Mirror the daily
+# scraper so the bot reflects the same realistic cost when the cheapest CM listing is
+# from the UK.
+_BOT_UK_UPLIFT_THRESHOLD_EUR = 150.0
+_BOT_UK_UPLIFT_FACTOR = 1.22
+
+
+def _bot_is_uk_listing(block):
+    m = _BOT_OFFER_LOCATION_RE.search(block)
+    return bool(m and "united kingdom" in m.group(1).lower())
+
+
+def _bot_apply_uk_uplift(price, block):
+    if price is None or price <= _BOT_UK_UPLIFT_THRESHOLD_EUR:
+        return price, False
+    if _bot_is_uk_listing(block):
+        return round(price * _BOT_UK_UPLIFT_FACTOR, 2), True
+    return price, False
+
+
+def _bot_extract_listing_metrics(html):
+    """Walk article-row blocks once, return (from_price, {grade_key: low}).
+    Applies the bad-listing filter (insert/case-only) and the UK uplift the same way
+    the daily scraper does. Returns (None, {}) if no usable listings found."""
+    blocks = _BOT_OFFER_SPLIT_RE.split(html)[1:]
+    if not blocks:
+        return None, {}
+    raw_min = None
+    eff_min = None
+    grade_lows = {}
+    for block in blocks:
+        price_m = _BOT_LISTING_PRICE_RE.search(block)
+        if not price_m:
+            continue
+        price = parse_de_price(price_m.group(1))
+        if price is None:
+            continue
+        comment_m = _BOT_OFFER_COMMENT_RE.search(block)
+        comment = comment_m.group(1).strip() if comment_m else ""
+        if comment and _BOT_BAD_LISTING_RE.search(comment):
+            log.info(f"  Listing gefiltert (kein Karten-Listing): {price:.2f}€ — {comment[:60]!r}")
+            continue
+        grade_key = None
+        if comment:
+            for key, pat in _BOT_GRADE_LABEL_PATTERNS.items():
+                if pat.match(comment):
+                    grade_key = key
+                    break
+        adjusted, applied = _bot_apply_uk_uplift(price, block)
+        if applied:
+            log.info(f"  UK-Uplift: {price:.2f}€ → {adjusted:.2f}€ (+22% EUSt/Zoll)")
+        if grade_key:
+            if grade_key not in grade_lows or adjusted < grade_lows[grade_key]:
+                grade_lows[grade_key] = adjusted
+            continue
+        # Raw listing: feeds the "from" price
+        if raw_min is None or price < raw_min:
+            raw_min = price
+        if eff_min is None or adjusted < eff_min:
+            eff_min = adjusted
+    return eff_min, grade_lows
+
+
 def extract_prices(html):
     p = {}
+    # Listing-derived numbers (from, PSA/CGC/BGS lows) come from a single article-row
+    # walk so we get UK uplift + bad-listing filtering. Trend/avg averages are scraped
+    # from the Cardmarket header section (label-anchored regex) — those are aggregates
+    # CM publishes itself and don't apply per-listing logic.
+    eff_from, grade_lows = _bot_extract_listing_metrics(html)
+    if eff_from is not None:
+        p["from"] = eff_from
+    for key, low in grade_lows.items():
+        p[key] = low
     for key, pat in [
-        ("from", r"(?:From|ab)[^€]*?([\d.,]+)\s*€"),
         ("trend", r"(?:Price Trend|Preis-Trend)[^€]*?([\d.,]+)\s*€"),
         ("avg7", r"(?:7-days|7-Tages)[^€]*?([\d.,]+)\s*€"),
         ("avg30", r"(?:30-days|30-Tages)[^€]*?([\d.,]+)\s*€"),
+    ]:
+        m = re.search(pat, html, re.I)
+        if m:
+            p[key] = parse_de_price(m.group(1))
+    # Fallback: if listing walk produced no from/grades (e.g. Cardmarket changed markup),
+    # fall back to the old label-anchored regex so we don't regress on price reporting.
+    if "from" not in p:
+        m = re.search(r"(?:From|ab)[^€]*?([\d.,]+)\s*€", html, re.I)
+        if m:
+            p["from"] = parse_de_price(m.group(1))
+    for key, pat in [
         ("psa10", r"PSA\s*10[^€]*?([\d.,]+)\s*€"),
         ("psa9", r"PSA\s*9(?!\d)[^€]*?([\d.,]+)\s*€"),
         ("cgc10", r"CGC\s*10[^€]*?([\d.,]+)\s*€"),
         ("bgs10", r"BGS\s*10[^€]*?([\d.,]+)\s*€"),
     ]:
+        if key in p:
+            continue
         m = re.search(pat, html, re.I)
         if m:
             p[key] = parse_de_price(m.group(1))

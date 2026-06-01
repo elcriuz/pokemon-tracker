@@ -166,6 +166,25 @@ BAD_LISTING_RE = re.compile(
 
 _OFFER_SPLIT_RE = re.compile(r'<div id="articleRow\d+"')
 _OFFER_COMMENT_RE = re.compile(r'fst-italic small">([^<]+)</span>')
+_OFFER_LOCATION_RE = re.compile(r'title="Item location:\s*([^"]+)"', re.IGNORECASE)
+
+# UK-Listings: Cardmarket IOSS deckt EUSt nur bis 150€ Warenwert. Darüber kommen
+# 20% EUSt (AT) + ~6-12€ Postaufschlag = ~22% effektiver Aufschlag.
+UK_UPLIFT_THRESHOLD_EUR = 150.0
+UK_UPLIFT_FACTOR = 1.22
+
+
+def _is_uk_listing(block):
+    m = _OFFER_LOCATION_RE.search(block)
+    return bool(m and "united kingdom" in m.group(1).lower())
+
+
+def _apply_uk_uplift(price, block):
+    if price is None or price <= UK_UPLIFT_THRESHOLD_EUR:
+        return price, False
+    if _is_uk_listing(block):
+        return round(price * UK_UPLIFT_FACTOR, 2), True
+    return price, False
 
 
 _GRADE_LABEL_PATTERNS = {
@@ -204,23 +223,52 @@ def extract_min_listing_price(content):
         if comment and _comment_is_graded(comment):
             log.info(f"  Listing gefiltert (graded): {price:.2f}€ — {comment[:80]!r}")
             continue
-        kept.append(price)
+        adjusted, applied = _apply_uk_uplift(price, block)
+        if applied:
+            log.info(f"  UK-Uplift: {price:.2f}€ → {adjusted:.2f}€ (+{(UK_UPLIFT_FACTOR-1)*100:.0f}% EUSt/Zoll)")
+        kept.append(adjusted)
     return min(kept) if kept else None
 
 
 def extract_grade_lows(content):
+    """Walks article-row blocks so the UK uplift is applied to graded listings too —
+    a PSA10 at 500€ from the UK shows up as ~610€."""
     lows = {}
-    for m in LISTING_RE.finditer(content):
-        comment = m.group("comment").strip()
+    blocks = _OFFER_SPLIT_RE.split(content)[1:]
+    if not blocks:
+        for m in LISTING_RE.finditer(content):
+            comment = m.group("comment").strip()
+            if BAD_LISTING_RE.search(comment):
+                continue
+            price = parse_de_price(m.group("price"))
+            if price is None:
+                continue
+            for key, pat in _GRADE_LABEL_PATTERNS.items():
+                if pat.match(comment):
+                    if key not in lows or price < lows[key]:
+                        lows[key] = price
+                    break
+        return lows
+    for block in blocks:
+        comment_m = _OFFER_COMMENT_RE.search(block)
+        if not comment_m:
+            continue
+        comment = comment_m.group(1).strip()
         if BAD_LISTING_RE.search(comment):
             continue
-        price = parse_de_price(m.group("price"))
+        price_m = LISTING_PRICE_RE.search(block)
+        if not price_m:
+            continue
+        price = parse_de_price(price_m.group(1))
         if price is None:
             continue
+        adjusted, applied = _apply_uk_uplift(price, block)
+        if applied:
+            log.info(f"  UK-Uplift (graded): {price:.2f}€ → {adjusted:.2f}€ — {comment[:40]!r}")
         for key, pat in _GRADE_LABEL_PATTERNS.items():
             if pat.match(comment):
-                if key not in lows or price < lows[key]:
-                    lows[key] = price
+                if key not in lows or adjusted < lows[key]:
+                    lows[key] = adjusted
                 break
     return lows
 
