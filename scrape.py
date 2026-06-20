@@ -485,8 +485,11 @@ def scrape_single_card(page, card, timestamp, is_first):
     time.sleep(wait)
 
     # Check if CF challenge — wait for it to either auto-resolve or manual click
+    # NOTE: nur CF-spezifische Marker matchen. "challenge" alleine kommt auch in
+    # legitimen Set-Namen vor (z.B. "Challenge from the Darkness") → Fehlalarm.
+    CF_MARKERS = ("just a moment", "cloudflare", "checking")
     title = page.title()
-    if "moment" in title.lower() or "challenge" in title.lower():
+    if any(x in title.lower() for x in CF_MARKERS):
         log.warning(f"  Cloudflare Challenge! Warte auf manuellen Click via noVNC...")
         send_telegram(
             f"\u26a0\ufe0f <b>Cloudflare Challenge</b>\n"
@@ -501,7 +504,7 @@ def scrape_single_card(page, card, timestamp, is_first):
                 title = page.title()
             except Exception:
                 break
-            if "moment" not in title.lower() and "challenge" not in title.lower():
+            if not any(x in title.lower() for x in CF_MARKERS):
                 log.info("  Cloudflare geloest!")
                 resolved = True
                 time.sleep(2)  # Extra wait after CF resolve
