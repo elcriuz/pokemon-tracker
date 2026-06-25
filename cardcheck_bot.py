@@ -209,7 +209,7 @@ VISION_PROMPT = """Antworte NUR als JSON (kein Markdown):
   "set_code": "Set-Code von der Karte unten links oder PSA Label (z.B. PRE, WHT, BLK, s11, PFL, m2)",
   "number": "Kartennummer von unten links (z.B. 161/131, 7/102, 94/97) oder null",
   "language": "jp|en|de",
-  "grade": "raw|PSA10|PSA9|PSA8|CGC10|BGS10",
+  "grade": "raw ODER exakter Grade vom Slab-Label inkl. Nachkommastelle (z.B. PSA10, PSA9, PSA8, CGC10, CGC9.5, CGC9, CGC8.5, BGS10, BGS9.5)",
   "is_first_edition": false,
   "shop_price": 130000,
   "shop_currency": "JPY|EUR|USD"
@@ -221,7 +221,7 @@ REGELN:
 - number: IMMER mit Total angeben falls lesbar (z.B. "7/102", "94/97", "161/131"). Steht unten rechts oder links auf der Karte.
 - set_code: Steht unten links auf der Karte vor der Nummer (z.B. "PRE 161/131" → PRE) oder auf dem PSA Label. Alte WotC/EX-era Karten (1999-2007) haben KEINEN Text-Code → null
 - is_first_edition: true wenn links unter dem Kartenbild ein "1" in einem Kreis steht, oder "1st Edition"/"1. Edition" auf der Karte steht
-- grade: PSA/CGC/BGS Label lesen. GEM MT 10=PSA10, MINT 9=PSA9. Kein Slab=raw
+- grade: PSA/CGC/BGS Label EXAKT lesen, inkl. Nachkommastelle. GEM MT 10=PSA10/CGC10, MINT 9=PSA9, "NM-MT+ 8.5"=CGC8.5, "9.5"=CGC9.5/BGS9.5. NICHT auf 10 aufrunden! Kein Slab=raw
 - shop_price: Preistag lesen. Punkte=Tausender (¥130.000=130000). null wenn nicht sichtbar
 - shop_currency: NUR JPY wenn ¥-Symbol oder japanischer Text sichtbar. Sonst EUR als Default."""
 
@@ -472,8 +472,15 @@ async def identify_card(photo_bytes):
             card["cm_product_url"] = ximilar_hint["cm_link"]
             return card
 
+    # If Ximilar returned a usable match (prob>0.75 — the same bar the accept + disagreement
+    # guard below use), the BD-heavy QUICK_CM + hint-retry are pure latency: the pipeline will
+    # either accept this Ximilar match or the guard will veto it. QUICK_CM only earns its
+    # 13-25s when Ximilar actually missed (prob<=0.75 / no result). This turns the slow JP/new-
+    # set scans (Gengar SWSH, Mega Zygarde, Team Rocket's Mewtwo ex) from 25-60s into ~2-5s.
+    ximilar_confident = bool(ximilar_result and ximilar_result["prob"] > 0.75)
+
     # ─── Step 3: Quick CM (fallback when Ximilar has no product URL — JP sets etc.) ───
-    if vision_sc and vision_num and len(vision_sc) <= 6:
+    if vision_sc and vision_num and len(vision_sc) <= 6 and not ximilar_confident:
         search_queries = [f"{pokemon_name} {vision_sc}", f"{vision_sc}{vision_num}"]
         log.info(f"  QUICK_CM: trying {search_queries} in parallel...")
         results_per_query = await asyncio.gather(*[search_cardmarket(q) for q in search_queries])
@@ -493,13 +500,50 @@ async def identify_card(photo_bytes):
     # If Vision had a set_code, retry Ximilar with hint for better accuracy — but KEEP the
     # original match as fallback. Otherwise a garbage hint (e.g. Vision misreads "BLW" as "BLK"
     # which isn't a real PTCGO set) silently destroys a perfectly good Ximilar identification.
-    if ximilar_result and vision_sc and ximilar_result["best"].get("set_code") != vision_sc:
+    if ximilar_result and vision_sc and not ximilar_confident and ximilar_result["best"].get("set_code") != vision_sc:
         log.info(f"  XIMILAR: retrying with set_code hint '{vision_sc}'...")
         hinted = await _ximilar_identify(b64, set_code_hint=vision_sc)
         if hinted and hinted["prob"] > 0.75:
             ximilar_result = hinted
         else:
             log.info(f"  XIMILAR: hinted retry empty/low-conf — keeping original match ({ximilar_result['best'].get('set_code')})")
+
+    # ─── Vision/Ximilar disagreement guard (gpt-4o tiebreak) ───
+    # When Vision read a real species and Ximilar's name shares NO token with it, the
+    # prob>0.75 trust below has historically steamrolled a CORRECT Vision read with a
+    # wrong high-confidence Ximilar match (Mega Zygarde ex→Heatran VMAX, Mewtwo GX→Kingdra).
+    # Break the tie with gpt-4o: only distrust Ximilar when gpt-4o does NOT back it — so the
+    # common "Vision wrong, Ximilar right" case (e.g. Mega Lucario ex) is preserved.
+    if ximilar_result and ximilar_result["prob"] > 0.75:
+        _xbest_name = ximilar_result["best"].get("name", "")
+        _vis_tokens = pokemon_tokens(card.get("pokemon", ""))
+        if _vis_tokens and not (_vis_tokens & pokemon_tokens(_xbest_name)):
+            log.info(f"  DISAGREE: Vision='{card.get('pokemon')}' vs Ximilar='{_xbest_name}' — gpt-4o tiebreak...")
+            try:
+                tb = await openai_client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{"role": "user", "content": [
+                        {"type": "text", "text": f"This is a Pokemon card. Is the main Pokemon/character '{card.get('pokemon')}' or '{_xbest_name}'? Reply ONLY with the correct full card name in English (include ex/GX/V/VMAX/VSTAR/Mega if shown). One line."},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}},
+                    ]}],
+                    max_completion_tokens=20, temperature=0)
+                tb_name = tb.choices[0].message.content.strip().split("\n")[0].strip()
+                log.info(f"  DISAGREE: gpt-4o says '{tb_name}'")
+            except Exception as e:
+                tb_name = ""
+                log.warning(f"  DISAGREE: tiebreak failed: {e}")
+            if tb_name and not (pokemon_tokens(tb_name) & pokemon_tokens(_xbest_name)):
+                # gpt-4o does NOT confirm Ximilar → distrust it. Don't grind through the slow
+                # TCG-API/QUICK_CM fallback again (it already failed and TCG-API rarely has
+                # these brand-new/secret/foreign cards) — return the clean tiebreak species so
+                # the downstream Cardmarket search (find_cardmarket_url uses name/pokemon) can
+                # resolve it. Fast + honest instead of a >60s timeout or a wrong high-conf match.
+                tb_name = re.sub(r"\s*\(.*?\)", "", tb_name).strip(" .,;:!\"'")  # drop "(Illustration Rare)" + stray punctuation
+                log.info(f"  DISAGREE: distrusting Ximilar — returning species '{tb_name}' for CM search")
+                card["pokemon"] = tb_name
+                card["name"] = tb_name
+                card["disagreement"] = True
+                return card
 
     if ximilar_result and ximilar_result["prob"] > 0.75:
         best = ximilar_result["best"]
