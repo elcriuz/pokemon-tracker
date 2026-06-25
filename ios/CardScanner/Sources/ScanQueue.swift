@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import UIKit
 
 /// One queued scan. Fired instantly on capture; resolved in the background.
 struct ScanJob: Identifiable {
@@ -60,6 +61,11 @@ final class ScanQueue: ObservableObject {
             let gen = generation
             Task { [weak self] in
                 guard let self else { return }
+                // Keep the request alive for ~30s if the app gets backgrounded (e.g. user tapped
+                // away) so in-flight Bright-Data scrapes aren't cut. (Tapping a Cardmarket link
+                // now opens in-app via SFSafariViewController, so the app stays foregrounded anyway.)
+                let bg = UIApplication.shared.beginBackgroundTask(withName: "scan")
+                defer { UIApplication.shared.endBackgroundTask(bg) }
                 let result = await self.backend.identify(card: next.hints, imageData: next.image)
                 guard gen == self.generation else { return }   // batch was cleared → drop stale result
                 self.update(next.id) {

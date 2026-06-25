@@ -5,7 +5,7 @@ import AVFoundation
 struct ContentView: View {
     @StateObject private var model = ScannerViewModel()
     @StateObject private var queue = ScanQueue()
-    @State private var showSettings = false
+    @State private var activeSheet: ActiveSheet?
     @State private var shotCount = 0
 
     var body: some View {
@@ -17,7 +17,12 @@ struct ContentView: View {
 
             batchPanel
         }
-        .sheet(isPresented: $showSettings) { SettingsView() }
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .settings: SettingsView()
+            case .safari(let url): SafariView(url: url).ignoresSafeArea()
+            }
+        }
     }
 
     // MARK: - Scanner / camera gating
@@ -112,7 +117,7 @@ struct ContentView: View {
                 if !queue.jobs.isEmpty {
                     Button("Leeren") { queue.clear() }.font(.caption)
                 }
-                Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                Button { activeSheet = .settings } label: { Image(systemName: "gearshape") }
             }
             if queue.jobs.isEmpty {
                 Text("Karten abfeuern → Reports erscheinen hier, sobald sie fertig sind.")
@@ -121,7 +126,9 @@ struct ContentView: View {
             }
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    ForEach(queue.jobs) { JobRow(job: $0) }
+                    ForEach(queue.jobs) { job in
+                        JobRow(job: job) { activeSheet = .safari($0) }
+                    }
                 }
             }
         }
@@ -131,9 +138,20 @@ struct ContentView: View {
     }
 }
 
+private enum ActiveSheet: Identifiable {
+    case settings
+    case safari(URL)
+    var id: String {
+        switch self {
+        case .settings: return "settings"
+        case .safari(let u): return u.absoluteString
+        }
+    }
+}
+
 private struct JobRow: View {
     let job: ScanJob
-    @Environment(\.openURL) private var openURL
+    var onOpenLink: (URL) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -156,7 +174,7 @@ private struct JobRow: View {
         if job.status == .failed {
             Text("Server nicht erreichbar").font(.caption2).foregroundStyle(.red)
         } else if let r = job.result, let cm = r.cmUrl, let url = URL(string: cm) {
-            Button { openURL(url) } label: { Image(systemName: "arrow.up.forward.square") }
+            Button { onOpenLink(url) } label: { Image(systemName: "arrow.up.forward.square") }
         } else if job.status == .processing {
             ProgressView().scaleEffect(0.7)
         } else {
