@@ -1,5 +1,5 @@
 import SwiftUI
-import UIKit
+import Foundation
 
 /// One queued scan. Fired instantly on capture; resolved in the background.
 struct ScanJob: Identifiable {
@@ -24,30 +24,32 @@ struct ScanJob: Identifiable {
 final class ScanQueue: ObservableObject {
     @Published private(set) var jobs: [ScanJob] = []
 
-    /// Backend for cloud IDs + real prices (see AppConfig); nil = on-device-only demo.
-    var backend = BackendClient(endpoint: AppConfig.backendURL)
+    var backend = BackendClient()
     private let maxConcurrent = 4
 
     private var running = 0
-    private var pending: [(id: UUID, image: UIImage?)] = []
+    private var pending: [(id: UUID, hints: RecognizedCard, image: Data?)] = []
     private var counter = 0
+    private var generation = 0   // bumped on clear() so orphaned in-flight Tasks no-op
 
     var doneCount: Int { jobs.lazy.filter { $0.status == .done }.count }
     var inFlight: Int { jobs.lazy.filter { $0.status == .queued || $0.status == .processing }.count }
 
     /// Fire-and-forget — never blocks the shutter.
-    func enqueue(hints: RecognizedCard, image: UIImage?) {
+    func enqueue(hints: RecognizedCard, imageData: Data?) {
         counter += 1
         let job = ScanJob(index: counter, hints: hints)
         jobs.insert(job, at: 0)               // newest on top
-        pending.append((job.id, image))
+        pending.append((job.id, hints, imageData))
         drain()
     }
 
     func clear() {
+        generation += 1
         jobs.removeAll()
         pending.removeAll()
         counter = 0
+        running = 0
     }
 
     private func drain() {
@@ -55,15 +57,17 @@ final class ScanQueue: ObservableObject {
             let next = pending.removeFirst()
             running += 1
             update(next.id) { $0.status = .processing }
-            let hints = jobs.first { $0.id == next.id }?.hints ?? RecognizedCard()
-            Task {
-                let result = await backend.identify(card: hints, image: next.image)
-                update(next.id) {
+            let gen = generation
+            Task { [weak self] in
+                guard let self else { return }
+                let result = await self.backend.identify(card: next.hints, imageData: next.image)
+                guard gen == self.generation else { return }   // batch was cleared → drop stale result
+                self.update(next.id) {
                     $0.result = result
-                    $0.status = .done
+                    $0.status = (result.via == "unreachable") ? .failed : .done
                 }
-                running -= 1
-                drain()
+                self.running -= 1
+                self.drain()
             }
         }
     }

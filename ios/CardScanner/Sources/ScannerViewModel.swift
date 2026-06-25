@@ -1,16 +1,12 @@
 import SwiftUI
 import UIKit
+import AVFoundation
 import VisionKit
 
 @MainActor
 final class ScannerViewModel: ObservableObject {
     @Published var live = RecognizedCard()
-    @Published var result: IdentifiedCard?
-    @Published var isResolving = false
-    @Published var lastImage: UIImage?
-
-    /// Backend for cloud fallback + real prices (see AppConfig).
-    var backend = BackendClient(endpoint: AppConfig.backendURL)
+    @Published var cameraStatus: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
 
     /// Set by `DataScannerView` so the UI can grab a high-res still for the backend call.
     var capturePhoto: (() async -> UIImage?)?
@@ -20,17 +16,31 @@ final class ScannerViewModel: ObservableObject {
         live = CardRecognizer.recognize(texts: texts, barcodes: barcodes)
     }
 
-    func resolve() async {
-        isResolving = true
-        defer { isResolving = false }
-        let image = await capturePhoto?()
-        lastImage = image
-        result = await backend.identify(card: live, image: image)
+    func requestCameraAccessIfNeeded() {
+        guard cameraStatus == .notDetermined else { return }
+        AVCaptureDevice.requestAccess(for: .video) { granted in
+            Task { @MainActor in
+                self.cameraStatus = granted ? .authorized : .denied
+            }
+        }
     }
 
-    /// Simulator demo (no camera): feed sample OCR through the on-device recognizer.
-    func runDemo(_ sample: [String], barcodes: [String] = []) {
-        setAll(texts: sample, barcodes: barcodes)
-        result = nil
+    /// Capture a DOWNSCALED JPEG — never keep full-sensor UIImages around, or a rapid-fire
+    /// batch of 12MP stills (~30-50MB each) gets the app jetsam-killed.
+    func captureData() async -> Data? {
+        guard let image = await capturePhoto?() else { return nil }
+        return image.downscaledJPEG(maxEdge: 1280, quality: 0.6)
+    }
+}
+
+extension UIImage {
+    func downscaledJPEG(maxEdge: CGFloat, quality: CGFloat) -> Data? {
+        let longest = max(size.width, size.height)
+        guard longest > 0 else { return jpegData(compressionQuality: quality) }
+        let scale = longest > maxEdge ? maxEdge / longest : 1
+        let newSize = CGSize(width: size.width * scale, height: size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: newSize)
+        let resized = renderer.image { _ in draw(in: CGRect(origin: .zero, size: newSize)) }
+        return resized.jpegData(compressionQuality: quality)
     }
 }

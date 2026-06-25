@@ -19,7 +19,7 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        # Prototype: allow cleartext HTTP to the LAN backend (http://192.168.1.91:8088).
+        # Prototype: allow cleartext HTTP to the LAN backend (http://<host>:8088).
         # In production use HTTPS and drop this.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
@@ -30,6 +30,6 @@ targets:
         MARKETING_VERSION: "0.1"
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"
-        CODE_SIGNING_ALLOWED: NO
-        CODE_SIGNING_REQUIRED: NO
-        CODE_SIGN_IDENTITY: ""
+        # Device signing: pick your Team in Xcode → Signing & Capabilities (automatic).
+        CODE_SIGN_STYLE: Automatic
+        # DEVELOPMENT_TEAM: ABCDE12345   # optional: hier eintragen, dann fragt Xcode nicht
