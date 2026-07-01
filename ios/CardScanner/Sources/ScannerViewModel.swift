@@ -1,20 +1,10 @@
 import SwiftUI
 import UIKit
 import AVFoundation
-import VisionKit
 
 @MainActor
 final class ScannerViewModel: ObservableObject {
-    @Published var live = RecognizedCard()
     @Published var cameraStatus: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
-
-    /// Set by `DataScannerView` so the UI can grab a high-res still for the backend call.
-    var capturePhoto: (() async -> UIImage?)?
-
-    /// Called by the scanner delegate with the FULL current set of recognized items.
-    func setAll(texts: [String], barcodes: [String]) {
-        live = CardRecognizer.recognize(texts: texts, barcodes: barcodes)
-    }
 
     func requestCameraAccessIfNeeded() {
         guard cameraStatus == .notDetermined else { return }
@@ -24,16 +14,10 @@ final class ScannerViewModel: ObservableObject {
             }
         }
     }
-
-    /// Capture a DOWNSCALED JPEG — never keep full-sensor UIImages around, or a rapid-fire
-    /// batch of 12MP stills (~30-50MB each) gets the app jetsam-killed.
-    func captureData() async -> Data? {
-        guard let image = await capturePhoto?() else { return nil }
-        return image.downscaledJPEG(maxEdge: 1280, quality: 0.6)
-    }
 }
 
 extension UIImage {
+    /// Downscaled JPEG — never send full-sensor stills; caps upload size + memory for rapid batches.
     func downscaledJPEG(maxEdge: CGFloat, quality: CGFloat) -> Data? {
         let longest = max(size.width, size.height)
         guard longest > 0 else { return jpegData(compressionQuality: quality) }

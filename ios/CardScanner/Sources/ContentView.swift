@@ -6,16 +6,17 @@ struct ContentView: View {
     @StateObject private var model = ScannerViewModel()
     @StateObject private var queue = ScanQueue()
     @State private var activeSheet: ActiveSheet?
-    @State private var shotCount = 0
+    @State private var showScanner = false
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack(alignment: .bottom) {
-                scannerLayer
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
+            scannerLayer
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             batchPanel
+        }
+        .fullScreenCover(isPresented: $showScanner) {
+            DocumentScannerView(onScans: handleScans, onFinish: { showScanner = false })
+                .ignoresSafeArea()
         }
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
@@ -28,17 +29,12 @@ struct ContentView: View {
     // MARK: - Scanner / camera gating
 
     @ViewBuilder private var scannerLayer: some View {
-        if !DataScannerViewController.isSupported {
-            SimulatorDemoView(queue: queue)                                   // Simulator: kein Kamera-HW
+        if !VNDocumentCameraViewController.isSupported {
+            SimulatorDemoView(queue: queue)                                   // Simulator / kein Kamera-HW
         } else {
             switch model.cameraStatus {
             case .authorized:
-                if DataScannerViewController.isAvailable {
-                    DataScannerView(model: model).ignoresSafeArea(edges: .top)
-                    shutterBar
-                } else {
-                    infoView("Scanner nicht verfügbar", "Dieses Gerät unterstützt den Live-Scanner nicht.")
-                }
+                scanCallToAction
             case .notDetermined:
                 infoView("Kamera wird gestartet…", "Bitte den Kamerazugriff erlauben.")
                     .onAppear { model.requestCameraAccessIfNeeded() }
@@ -48,38 +44,32 @@ struct ContentView: View {
         }
     }
 
-    private var shutterBar: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.live.name ?? "Karte anvisieren…").font(.subheadline).bold()
-                Text(liveDetail).font(.caption).foregroundStyle(.secondary)
+    private var scanCallToAction: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "doc.viewfinder").font(.system(size: 52)).foregroundStyle(.tint)
+            Text("Karten scannen").font(.title3).bold()
+            Text("Tippen zum Scannen — die Kartenkontur wird automatisch erkannt. Mehrere Karten nacheinander scannen, dann sichern.")
+                .font(.footnote).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center).padding(.horizontal, 24)
+            Button { showScanner = true } label: {
+                Label("Scannen", systemImage: "camera.fill").font(.headline).frame(maxWidth: .infinity)
             }
-            Spacer()
-            if shotCount > 0 {
-                Text("\(shotCount)").font(.caption).monospaced().foregroundStyle(.secondary)
-            }
-            Button {
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()   // sofortiges Feedback
-                Task {
-                    let data = await model.captureData()
-                    guard model.live.hasUsableHints || data != nil else { return }
-                    shotCount += 1
-                    queue.enqueue(hints: model.live, imageData: data)
-                }
-            } label: {
-                Image(systemName: "camera.circle.fill")
-                    .font(.system(size: 60))
-                    .symbolRenderingMode(.hierarchical)
-            }
+            .buttonStyle(.borderedProminent)
+            .padding(.horizontal, 40)
         }
-        .padding()
-        .background(.ultraThinMaterial, in: Capsule())
-        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground))
     }
 
-    private var liveDetail: String {
-        [model.live.collectorNumber, model.live.grade == "raw" ? nil : model.live.grade]
-            .compactMap { $0 }.joined(separator: " · ")
+    /// Native scanner returned cropped card images → OCR hints (background) + enqueue each.
+    private func handleScans(_ images: [UIImage]) {
+        for image in images {
+            Task.detached(priority: .userInitiated) {
+                let hints = OnDeviceOCR.recognize(image)
+                let data = image.downscaledJPEG(maxEdge: 1400, quality: 0.7)
+                await MainActor.run { queue.enqueue(hints: hints, imageData: data) }
+            }
+        }
     }
 
     private func infoView(_ title: String, _ subtitle: String) -> some View {

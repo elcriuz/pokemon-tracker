@@ -17,6 +17,7 @@ import base64
 import logging
 import os
 import sqlite3
+import time
 
 from aiohttp import web
 
@@ -84,6 +85,7 @@ async def identify_handler(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
 
+    t0 = time.time()
     img_b64 = data.get("imageBase64")
     if img_b64:
         # Voller Pfad: Engine erkennt die Karte vom Foto.
@@ -111,6 +113,8 @@ async def identify_handler(request: web.Request) -> web.Response:
         }
         source = "hints"
 
+    t_id = time.time()
+
     # Optionale Caption-artige Overrides vom Geraet
     if data.get("language"):
         card["language"] = data["language"]
@@ -119,6 +123,7 @@ async def identify_handler(request: web.Request) -> web.Response:
 
     cm_url, prices, full_url, conf = await bot.scrape_cardmarket_prices(card)
     prices = prices or {}
+    t_scrape = time.time()
 
     name_out = (card.get("name") or card.get("pokemon") or "Unbekannte Karte").strip()
     resp = {
@@ -132,7 +137,8 @@ async def identify_handler(request: web.Request) -> web.Response:
         "confidence": "LOW" if conf == "LOW" else "HIGH",
         "via": _via(card) + ("+ondevice" if source == "hints" else ""),
     }
-    log.info(f"identify[{source}] -> {resp['name']} #{resp['number']} {resp['grade']} "
+    log.info(f"identify[{source}] ({int((t_id-t0)*1000)}ms id + {int((t_scrape-t_id)*1000)}ms scrape "
+             f"= {int((t_scrape-t0)*1000)}ms) -> {resp['name']} #{resp['number']} {resp['grade']} "
              f"market={resp['marketEur']} conf={resp['confidence']} via={resp['via']}")
     return web.json_response(resp)
 
