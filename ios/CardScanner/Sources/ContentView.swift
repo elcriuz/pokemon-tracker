@@ -205,6 +205,7 @@ private struct JobRow: View {
 private struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var url = AppConfig.backendURLString
+    @State private var token = AppConfig.apiToken
     @State private var testResult: String?
     @State private var testing = false
 
@@ -233,6 +234,13 @@ private struct SettingsView: View {
                         .disabled(testing || trimmed.isEmpty || !isValid)
                     if let t = testResult { Text(t).font(.caption) }
                 }
+                Section("Auth-Token") {
+                    TextField("Bearer-Token (für öffentlichen Zugang)", text: $token)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Text("Wird als Authorization-Bearer-Header gesendet. Leer lassen = ohne Token (nur LAN).")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section {
                     Button("Auf Standard zurücksetzen") { url = AppConfig.defaultBackend }
                 }
@@ -243,6 +251,7 @@ private struct SettingsView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Fertig") {
                         AppConfig.backendURLString = trimmed
+                        AppConfig.apiToken = token
                         dismiss()
                     }
                     .disabled(!isValid)

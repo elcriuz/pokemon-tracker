@@ -15,6 +15,8 @@ laeuft auf demselben Host, liest Keys aus derselben DB. Nur aiohttp (schon insta
 """
 import base64
 import logging
+import os
+import sqlite3
 
 from aiohttp import web
 
@@ -22,6 +24,34 @@ import cardcheck_bot as bot
 
 log = logging.getLogger("cardcheck-api")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+
+def load_api_token():
+    """Shared secret for the public endpoint — stored in DB settings (key: cardcheck_api_token),
+    never in the repo. If empty, auth is disabled (LAN-only use)."""
+    db = os.environ.get("CARDCHECK_DB", "/opt/pokemon-tracker/data/tracker.db")
+    try:
+        conn = sqlite3.connect(db)
+        row = conn.execute("SELECT value FROM settings WHERE key='cardcheck_api_token'").fetchone()
+        conn.close()
+        return (row[0] or "").strip() if row else ""
+    except Exception:
+        return ""
+
+
+API_TOKEN = load_api_token()
+if API_TOKEN:
+    log.info("API auth enabled (token required)")
+else:
+    log.info("API auth DISABLED (no cardcheck_api_token in DB) — do not expose publicly")
+
+
+def _authorized(request: web.Request) -> bool:
+    if not API_TOKEN:
+        return True
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:].strip() if auth.startswith("Bearer ") else request.headers.get("X-Auth-Token", "").strip()
+    return token == API_TOKEN
 
 
 def _market_price(card, prices):
@@ -47,6 +77,8 @@ def _via(card):
 
 
 async def identify_handler(request: web.Request) -> web.Response:
+    if not _authorized(request):
+        return web.json_response({"error": "unauthorized"}, status=401)
     try:
         data = await request.json()
     except Exception:

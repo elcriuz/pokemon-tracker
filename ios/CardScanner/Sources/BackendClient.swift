@@ -39,6 +39,9 @@ struct BackendClient {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !AppConfig.apiToken.isEmpty {
+            req.setValue("Bearer \(AppConfig.apiToken)", forHTTPHeaderField: "Authorization")
+        }
 
         var body: [String: Any] = ["grade": card.grade]
         body["name"] = card.name
