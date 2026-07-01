@@ -30,27 +30,75 @@ final class ScanQueue: ObservableObject {
     // Dauer EINER Karte statt Summe. Backend/Bright-Data drosseln serverseitig (BD-Semaphore).
     private let maxConcurrent = 16
 
+    /// Ab diesem Marktwert (€) gilt eine Karte als "High" — für den High-Filter am Tresen.
+    static let highValueThreshold = 20.0
+
     private var running = 0
     private var pending: [(id: UUID, hints: RecognizedCard, image: Data?)] = []
+    private var images: [UUID: Data] = [:]   // fürs erneute Preis-Suchen (Retry) aufbewahrt
     private var counter = 0
     private var generation = 0   // bumped on clear() so orphaned in-flight Tasks no-op
 
     var doneCount: Int { jobs.lazy.filter { $0.status == .done }.count }
     var inFlight: Int { jobs.lazy.filter { $0.status == .queued || $0.status == .processing }.count }
 
+    // MARK: - Ankauf-Summary (Cardshop-Tresen)
+
+    /// Karten mit gültigem Marktpreis (>0) — zählen in die Summe.
+    var pricedJobs: [ScanJob] { jobs.filter { ($0.result?.marketEur ?? 0) > 0 } }
+    /// Gesamt-Cardmarket-Marktwert aller bepreisten Karten.
+    var totalMarketEur: Double { jobs.reduce(0) { $0 + ($1.result?.marketEur ?? 0) } }
+    /// Ankaufswert = Marktwert × Satz (was der Shop auszahlt).
+    func totalBuyEur(ratePercent: Int) -> Double { totalMarketEur * Double(ratePercent) / 100 }
+    /// Fertig verarbeitet (erkannt oder Fehler) — für den Fortschrittsbalken.
+    var processedCount: Int { jobs.lazy.filter { $0.status == .done || $0.status == .failed }.count }
+    /// Verarbeitet, aber ohne Preis (kein CM-Treffer) oder Serverfehler — braucht Nacharbeit.
+    var noPriceCount: Int {
+        jobs.lazy.filter { ($0.status == .done || $0.status == .failed) && ($0.result?.marketEur ?? 0) <= 0 }.count
+    }
+    var highValueCount: Int { jobs.lazy.filter { ($0.result?.marketEur ?? 0) >= ScanQueue.highValueThreshold }.count }
+
     /// Fire-and-forget — never blocks the shutter.
     func enqueue(hints: RecognizedCard, imageData: Data?) {
         counter += 1
         let job = ScanJob(index: counter, hints: hints)
         jobs.insert(job, at: 0)               // newest on top
+        images[job.id] = imageData
         pending.append((job.id, hints, imageData))
         drain()
+    }
+
+    /// Erneuter Backend-Versuch für eine Karte ohne Preis/Fehler — nutzt das aufbewahrte Bild.
+    func retry(_ id: UUID) {
+        guard let job = jobs.first(where: { $0.id == id }) else { return }
+        update(id) { $0.status = .queued; $0.result = nil }
+        pending.append((id, job.hints, images[id]))
+        drain()
+    }
+
+    /// Manuell eingetragener Preis (€) — z.B. wenn Cardmarket keinen Treffer hatte. Zählt in die Summe.
+    func setManualPrice(_ id: UUID, eur: Double) {
+        update(id) { job in
+            let base = job.result
+            job.result = IdentifiedCard(
+                name: base?.name ?? job.hints.name ?? "Karte",
+                set: base?.set,
+                number: base?.number ?? job.hints.collectorNumber,
+                grade: base?.grade ?? (job.hints.isGraded ? job.hints.grade : nil),
+                language: base?.language ?? job.hints.language,
+                marketEur: eur,
+                cmUrl: base?.cmUrl,
+                confidence: base?.confidence ?? "HIGH",
+                via: "manual")
+            job.status = .done
+        }
     }
 
     func clear() {
         generation += 1
         jobs.removeAll()
         pending.removeAll()
+        images.removeAll()
         counter = 0
         running = 0
     }

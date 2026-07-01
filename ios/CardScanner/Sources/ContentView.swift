@@ -6,21 +6,52 @@ struct ContentView: View {
     @StateObject private var queue = ScanQueue()
     @State private var activeSheet: ActiveSheet?
     @State private var shotCount = 0
+    @State private var panelHeight: CGFloat = 360    // Ankauf-Panel — per Handle aufziehbar (Bulk)
+    @State private var dragStart: CGFloat? = nil
 
     private var hasCamera: Bool { AVCaptureDevice.default(for: .video) != nil }
 
     var body: some View {
-        VStack(spacing: 0) {
-            scannerLayer
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            batchPanel
+        GeometryReader { geo in
+            let maxPanel = max(320, geo.size.height - 220)   // Kamera nie ganz verdecken
+            VStack(spacing: 0) {
+                scannerLayer
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                dragHandle
+                AnkaufSummaryView(
+                    queue: queue,
+                    onOpenSettings: { activeSheet = .settings },
+                    onOpenLink: { activeSheet = .safari($0) })
+                    .frame(height: min(panelHeight, maxPanel))
+            }
         }
+        .ignoresSafeArea(.keyboard)
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
             case .settings: SettingsView()
             case .safari(let url): SafariView(url: url).ignoresSafeArea()
             }
         }
+    }
+
+    /// Griff zum Aufziehen des Ankauf-Panels (großer Stapel) — ziehen oder tippen zum Umschalten.
+    private var dragHandle: some View {
+        Capsule()
+            .fill(Color.secondary.opacity(0.4))
+            .frame(width: 40, height: 5)
+            .frame(maxWidth: .infinity)
+            .frame(height: 22)
+            .background(Color(.secondarySystemBackground))
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture()
+                    .onChanged { v in
+                        if dragStart == nil { dragStart = panelHeight }
+                        panelHeight = min(max(300, (dragStart ?? panelHeight) - v.translation.height), 900)
+                    }
+                    .onEnded { _ in dragStart = nil }
+            )
+            .onTapGesture { withAnimation(.snappy) { panelHeight = panelHeight > 440 ? 360 : 640 } }
     }
 
     // MARK: - Live camera + shutter
@@ -102,37 +133,6 @@ struct ContentView: View {
         .padding().frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(.systemBackground))
     }
 
-    // MARK: - Batch list
-
-    private var batchPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
-                Text("Batch").font(.headline)
-                Spacer()
-                Text("\(queue.doneCount) fertig · \(queue.inFlight) in Arbeit")
-                    .font(.caption).foregroundStyle(.secondary)
-                if !queue.jobs.isEmpty {
-                    Button("Leeren") { queue.clear() }.font(.caption)
-                }
-                Button { activeSheet = .settings } label: { Image(systemName: "gearshape") }
-            }
-            if queue.jobs.isEmpty {
-                Text("Karten abfeuern → Reports erscheinen hier, sobald sie fertig sind.")
-                    .font(.footnote).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(queue.jobs) { job in
-                        JobRow(job: job) { activeSheet = .safari($0) }
-                    }
-                }
-            }
-        }
-        .padding()
-        .frame(height: 300)
-        .background(Color(.secondarySystemBackground))
-    }
 }
 
 private enum ActiveSheet: Identifiable {
@@ -143,58 +143,6 @@ private enum ActiveSheet: Identifiable {
         case .settings: return "settings"
         case .safari(let u): return u.absoluteString
         }
-    }
-}
-
-private struct JobRow: View {
-    let job: ScanJob
-    var onOpenLink: (URL) -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Text("#\(job.index)").font(.caption).monospaced().foregroundStyle(.secondary)
-            statusDot
-            VStack(alignment: .leading, spacing: 2) {
-                Text(job.result?.name ?? job.hints.name ?? "wird erkannt…").bold()
-                if let r = job.result {
-                    Text(detailLine(r)).font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            Spacer()
-            trailing
-        }
-        .padding(10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    @ViewBuilder private var trailing: some View {
-        if job.status == .failed {
-            Text("Server nicht erreichbar").font(.caption2).foregroundStyle(.red)
-        } else if let r = job.result, let cm = r.cmUrl, let url = URL(string: cm) {
-            Button { onOpenLink(url) } label: { Image(systemName: "arrow.up.forward.square") }
-        } else if job.status == .processing {
-            ProgressView().scaleEffect(0.7)
-        } else {
-            Text(job.status.rawValue).font(.caption2).foregroundStyle(.secondary)
-        }
-    }
-
-    private func detailLine(_ r: IdentifiedCard) -> String {
-        var parts: [String] = []
-        if let n = r.number { parts.append("#\(n)") }
-        if let g = r.grade, g != "raw" { parts.append(g) }
-        if let p = r.marketEur { parts.append(String(format: "%.2f €", p)) }
-        else if job.status == .done { parts.append("kein Preis") }
-        if r.via.contains("on-device") { parts.append("nur On-Device") }
-        return parts.joined(separator: " · ")
-    }
-
-    private var statusDot: some View {
-        Circle()
-            .fill(job.status == .done ? Color.green
-                  : job.status == .failed ? .red
-                  : job.status == .processing ? .orange : .gray)
-            .frame(width: 8, height: 8)
     }
 }
 

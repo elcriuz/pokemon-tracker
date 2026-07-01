@@ -7,6 +7,17 @@ enum AppConfig {
     static let defaultBackend = "http://192.168.1.91:8088/api/identify"
     private static let urlKey = "backendURL"
     private static let tokenKey = "apiToken"
+    private static let buyRateKey = "buyRatePercent"
+
+    /// Ankaufssatz in Prozent des Cardmarket-Marktwerts (was der Shop dem Kunden auszahlt).
+    /// Shops kaufen unterschiedlich an — daher am Tresen schnell umstellbar. Default 80 %.
+    static var buyRatePercent: Int {
+        get {
+            let v = UserDefaults.standard.object(forKey: buyRateKey) as? Int
+            return v ?? 80
+        }
+        set { UserDefaults.standard.set(min(100, max(1, newValue)), forKey: buyRateKey) }
+    }
 
     static var backendURLString: String {
         get { UserDefaults.standard.string(forKey: urlKey) ?? defaultBackend }
