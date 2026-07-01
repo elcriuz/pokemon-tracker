@@ -25,6 +25,8 @@ final class CardCameraController: UIViewController, AVCaptureVideoDataOutputSamp
     private let outlineLayer = CAShapeLayer()
     private let sessionQueue = DispatchQueue(label: "cam.session")
     private var photoContinuation: CheckedContinuation<UIImage?, Never>?
+    private var frameCount = 0
+    private var smoothed: [CGPoint]?   // last corners (normalized, bottom-left origin) for jitter smoothing
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -91,30 +93,45 @@ final class CardCameraController: UIViewController, AVCaptureVideoDataOutputSamp
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         guard let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let request = VNDetectRectanglesRequest { [weak self] req, _ in
-            let best = (req.results as? [VNRectangleObservation])?.max { $0.confidence < $1.confidence }
-            DispatchQueue.main.async { self?.drawOutline(best) }
+        frameCount += 1
+        if frameCount % 3 != 0 { return }   // ~10fps: genug fuers Overlay, weniger Zappeln/Last
+        // Document Segmentation = ML-basiert, findet gezielt die Karte (kein Hintergrund-Rechteck).
+        let request = VNDetectDocumentSegmentationRequest { [weak self] req, _ in
+            let obs = (req.results as? [VNRectangleObservation])?.first
+            DispatchQueue.main.async { self?.update(obs) }
         }
-        request.minimumAspectRatio = 0.5      // Pokemon cards ~0.72
-        request.maximumAspectRatio = 0.85
-        request.minimumSize = 0.2
-        request.maximumObservations = 1
-        request.quadratureTolerance = 25
         try? VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .right, options: [:]).perform([request])
     }
 
-    private func drawOutline(_ obs: VNRectangleObservation?) {
-        guard let obs, let pl = previewLayer else { outlineLayer.path = nil; return }
+    private func update(_ obs: VNRectangleObservation?) {
+        guard let obs, obs.confidence > 0.5 else {
+            smoothed = nil
+            outlineLayer.path = nil
+            return
+        }
+        let target = [obs.topLeft, obs.topRight, obs.bottomRight, obs.bottomLeft]
+        if let s = smoothed, s.count == 4 {
+            // exponentielle Glaettung gegen Zittern
+            smoothed = zip(s, target).map { CGPoint(x: $0.x * 0.55 + $1.x * 0.45, y: $0.y * 0.55 + $1.y * 0.45) }
+        } else {
+            smoothed = target
+        }
+        drawOutline(smoothed!)
+    }
+
+    private func drawOutline(_ corners: [CGPoint]) {
+        guard let pl = previewLayer, corners.count == 4 else { return }
         func pt(_ p: CGPoint) -> CGPoint {
             pl.layerPointConverted(fromCaptureDevicePoint: CGPoint(x: p.x, y: 1 - p.y))
         }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         let path = UIBezierPath()
-        path.move(to: pt(obs.topLeft))
-        path.addLine(to: pt(obs.topRight))
-        path.addLine(to: pt(obs.bottomRight))
-        path.addLine(to: pt(obs.bottomLeft))
+        path.move(to: pt(corners[0]))
+        for c in corners.dropFirst() { path.addLine(to: pt(c)) }
         path.close()
         outlineLayer.path = path.cgPath
+        CATransaction.commit()
     }
 }
 
