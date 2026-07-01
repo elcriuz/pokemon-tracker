@@ -656,27 +656,33 @@ async def _get_bd_session():
     if _bd_session is None or _bd_session.closed:
         _bd_session = aiohttp.ClientSession(
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {BD_KEY}"},
-            # Drop a single slow proxy fast instead of waiting 90s — the scan as a whole
-            # has its own 60s budget and 25s is plenty for the Web Unblocker happy path.
-            timeout=aiohttp.ClientTimeout(total=25),
+            # Bright Data's Web Unblocker on Cardmarket routinely needs ~20-25s per page; 25s
+            # timed out on the edge and dropped valid pages (no price). 40s covers the real latency.
+            timeout=aiohttp.ClientTimeout(total=40),
         )
     return _bd_session
 
 async def bd_scrape(url):
+    # Bright Data on Cardmarket is slow + flaky (intermittent timeouts / block pages). Retry once
+    # on failure so a single bad response doesn't drop a valid, priced page.
     async with _bd_semaphore:
-        try:
-            session = await _get_bd_session()
-            async with session.post("https://api.brightdata.com/request",
-                json={"zone": BD_ZONE, "url": url, "format": "raw"}) as resp:
-                if resp.status != 200:
-                    return None
-                return await resp.text()
-        except asyncio.TimeoutError:
-            log.warning(f"  BD timeout: {url[:80]}")
-            return None
-        except Exception as e:
-            log.warning(f"  BD error: {e}")
-            return None
+        for attempt in range(2):
+            try:
+                session = await _get_bd_session()
+                async with session.post("https://api.brightdata.com/request",
+                    json={"zone": BD_ZONE, "url": url, "format": "raw"}) as resp:
+                    if resp.status == 200:
+                        html = await resp.text()
+                        if html and len(html) > 2000:   # sanity: not an empty/block page
+                            return html
+                        log.warning(f"  BD attempt {attempt+1}: 200 but short body ({len(html or '')})")
+                    else:
+                        log.warning(f"  BD attempt {attempt+1}: status {resp.status}")
+            except asyncio.TimeoutError:
+                log.warning(f"  BD timeout attempt {attempt+1}: {url[:80]}")
+            except Exception as e:
+                log.warning(f"  BD error attempt {attempt+1}: {e}")
+        return None
 
 def bd_scrape_sync(url):
     """Sync version for use in run_in_executor contexts."""

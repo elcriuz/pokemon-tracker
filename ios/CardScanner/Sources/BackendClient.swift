@@ -15,8 +15,8 @@ struct BackendClient {
     /// Fast reachability is instead offered via the "Verbindung testen" button (GET /health).
     private static let session: URLSession = {
         let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 60
-        cfg.timeoutIntervalForResource = 90
+        cfg.timeoutIntervalForRequest = 100   // Cardmarket-Scrape via Bright Data ist langsam (~50-65s)
+        cfg.timeoutIntervalForResource = 120
         cfg.waitsForConnectivity = false
         return URLSession(configuration: cfg)
     }()

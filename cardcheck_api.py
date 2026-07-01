@@ -13,11 +13,17 @@ POST /api/identify
 Nutzt dieselbe Engine wie der Telegram-Bot (cardcheck_bot.identify_card + scrape_cardmarket_prices),
 laeuft auf demselben Host, liest Keys aus derselben DB. Nur aiohttp (schon installiert) — keine neue Dependency.
 """
+import asyncio
 import base64
 import logging
 import os
 import sqlite3
 import time
+
+# Cardmarket-Scrape kann 30-300s dauern (Bright Data). Ohne Deckel läuft die iOS-App ins
+# Timeout und zeigt "Server nicht erreichbar". Nach diesem Budget geben wir die Erkennung
+# ohne Preis zurück (mit CM-Link zum Selber-Nachschauen) statt weiter zu hängen.
+SCRAPE_BUDGET_S = 70
 
 from aiohttp import web
 
@@ -115,13 +121,21 @@ async def identify_handler(request: web.Request) -> web.Response:
 
     t_id = time.time()
 
-    # Optionale Caption-artige Overrides vom Geraet
-    if data.get("language"):
+    # WICHTIG: Sprache NICHT mit dem On-Device-Hint ueberschreiben. Beim Bild-Pfad kennt die
+    # Engine (Vision/Ximilar) die Sprache genau (z.B. jp); der On-Device-OCR-Hint raet oft
+    # "en" (liest kein Kana) -> falscher CM-Sprachfilter -> KEIN Preis. Nur wenn die Engine
+    # gar keine Sprache hat, den Hint als Fallback nehmen.
+    if data.get("language") and not card.get("language"):
         card["language"] = data["language"]
-    if data.get("grade") and data["grade"] != "raw":
+    if data.get("grade") and data["grade"] != "raw" and card.get("grade", "raw") == "raw":
         card["grade"] = data["grade"]
 
-    cm_url, prices, full_url, conf = await bot.scrape_cardmarket_prices(card)
+    try:
+        cm_url, prices, full_url, conf = await asyncio.wait_for(
+            bot.scrape_cardmarket_prices(card), timeout=SCRAPE_BUDGET_S)
+    except asyncio.TimeoutError:
+        log.info(f"scrape budget {SCRAPE_BUDGET_S}s exceeded — returning ID without price")
+        cm_url, prices, full_url, conf = None, {}, None, None
     prices = prices or {}
     t_scrape = time.time()
 
