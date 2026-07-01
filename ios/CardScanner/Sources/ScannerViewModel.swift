@@ -6,6 +6,9 @@ import AVFoundation
 final class ScannerViewModel: ObservableObject {
     @Published var cameraStatus: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
 
+    /// Set by CameraScannerView so the shutter can grab the current still.
+    var capturePhoto: (() async -> UIImage?)?
+
     func requestCameraAccessIfNeeded() {
         guard cameraStatus == .notDetermined else { return }
         AVCaptureDevice.requestAccess(for: .video) { granted in

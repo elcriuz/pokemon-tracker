@@ -1,22 +1,19 @@
 import SwiftUI
-import VisionKit
 import AVFoundation
 
 struct ContentView: View {
     @StateObject private var model = ScannerViewModel()
     @StateObject private var queue = ScanQueue()
     @State private var activeSheet: ActiveSheet?
-    @State private var showScanner = false
+    @State private var shotCount = 0
+
+    private var hasCamera: Bool { AVCaptureDevice.default(for: .video) != nil }
 
     var body: some View {
         VStack(spacing: 0) {
             scannerLayer
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             batchPanel
-        }
-        .fullScreenCover(isPresented: $showScanner) {
-            DocumentScannerView(onScans: handleScans, onFinish: { showScanner = false })
-                .ignoresSafeArea()
         }
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
@@ -26,15 +23,18 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Scanner / camera gating
+    // MARK: - Live camera + shutter
 
     @ViewBuilder private var scannerLayer: some View {
-        if !VNDocumentCameraViewController.isSupported {
+        if !hasCamera {
             SimulatorDemoView(queue: queue)                                   // Simulator / kein Kamera-HW
         } else {
             switch model.cameraStatus {
             case .authorized:
-                scanCallToAction
+                ZStack(alignment: .bottom) {
+                    CameraScannerView(model: model).ignoresSafeArea(edges: .top)
+                    shutterBar
+                }
             case .notDetermined:
                 infoView("Kamera wird gestartet…", "Bitte den Kamerazugriff erlauben.")
                     .onAppear { model.requestCameraAccessIfNeeded() }
@@ -44,26 +44,33 @@ struct ContentView: View {
         }
     }
 
-    private var scanCallToAction: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "doc.viewfinder").font(.system(size: 52)).foregroundStyle(.tint)
-            Text("Karten scannen").font(.title3).bold()
-            Text("Tippen zum Scannen — die Kartenkontur wird automatisch erkannt. Mehrere Karten nacheinander scannen, dann sichern.")
-                .font(.footnote).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center).padding(.horizontal, 24)
-            Button { showScanner = true } label: {
-                Label("Scannen", systemImage: "camera.fill").font(.headline).frame(maxWidth: .infinity)
+    private var shutterBar: some View {
+        HStack(alignment: .center) {
+            Text("\(shotCount) fotografiert")
+                .font(.caption).foregroundStyle(.white)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(.black.opacity(0.4), in: Capsule())
+            Spacer()
+            Button {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                capture()
+            } label: {
+                Image(systemName: "camera.circle.fill")
+                    .font(.system(size: 68)).symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.white)
             }
-            .buttonStyle(.borderedProminent)
-            .padding(.horizontal, 40)
+            Spacer()
+            Color.clear.frame(width: 60)   // balance the shot chip
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground))
+        .padding()
     }
 
-    /// Native scanner returned cropped card images → OCR hints (background) + enqueue each.
-    private func handleScans(_ images: [UIImage]) {
-        for image in images {
+    /// Fire-and-forget: capture the still, then OCR + enqueue in the background — the user keeps
+    /// shooting while card 1 is already being scanned. Reports stream into the batch list below.
+    private func capture() {
+        shotCount += 1
+        Task {
+            guard let image = await model.capturePhoto?() else { return }
             Task.detached(priority: .userInitiated) {
                 let hints = OnDeviceOCR.recognize(image)
                 let data = image.downscaledJPEG(maxEdge: 1400, quality: 0.7)
