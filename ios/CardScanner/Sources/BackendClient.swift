@@ -9,12 +9,14 @@ import UIKit
 ///   request : { name?, number?, setCode?, grade, certBarcode?, language?, imageBase64? }
 ///   response: { name, set?, number?, grade?, language?, marketEur?, cmUrl?, confidence, via }
 struct BackendClient {
-    /// Dedicated session: short connect/first-byte timeout (fail fast when the host is unreachable,
-    /// e.g. phone not on the same WLAN/Tailscale) but a long total budget for slow Cardmarket scrapes.
+    /// Dedicated session. NOTE: timeoutIntervalForRequest is an *idle* timer (reset on new data).
+    /// The backend sends nothing until its Cardmarket scrape finishes (10-40s), so this MUST be
+    /// large enough to cover a whole scrape — a short value silently kills legit slow responses.
+    /// Fast reachability is instead offered via the "Verbindung testen" button (GET /health).
     private static let session: URLSession = {
         let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 8
-        cfg.timeoutIntervalForResource = 60
+        cfg.timeoutIntervalForRequest = 60
+        cfg.timeoutIntervalForResource = 90
         cfg.waitsForConnectivity = false
         return URLSession(configuration: cfg)
     }()
