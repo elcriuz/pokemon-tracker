@@ -648,7 +648,7 @@ async def identify_card(photo_bytes):
 # ─── Bright Data Scraping ────────────────────────────────────
 
 # Limit concurrent BD requests to avoid throttling when processing multiple cards
-_bd_semaphore = asyncio.Semaphore(8)
+_bd_semaphore = asyncio.Semaphore(20)
 _bd_session = None
 
 async def _get_bd_session():

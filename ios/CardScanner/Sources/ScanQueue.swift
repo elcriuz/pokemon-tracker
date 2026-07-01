@@ -26,7 +26,9 @@ final class ScanQueue: ObservableObject {
     @Published private(set) var jobs: [ScanJob] = []
 
     var backend = BackendClient()
-    private let maxConcurrent = 4
+    // Hoch, damit ein ganzer Stapel (z.B. 20 Karten) quasi gleichzeitig laeuft: Wall-Clock ~=
+    // Dauer EINER Karte statt Summe. Backend/Bright-Data drosseln serverseitig (BD-Semaphore).
+    private let maxConcurrent = 16
 
     private var running = 0
     private var pending: [(id: UUID, hints: RecognizedCard, image: Data?)] = []
