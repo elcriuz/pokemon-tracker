@@ -8,3 +8,7 @@ portfolio.csv
 *.db
 *.db-wal
 *.db-shm
+__pycache__/
+.claude/
+cardvision-venv/
+data/cardindex/

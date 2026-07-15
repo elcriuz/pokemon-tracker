@@ -7,6 +7,7 @@ Laeuft als Telegram Bot, nutzt GPT Vision + Bright Data + Cardmarket/eBay.
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from io import BytesIO
@@ -81,6 +82,14 @@ if XIMILAR_KEY:
     log.info("Ximilar enabled — hybrid identification (Vision + Ximilar)")
 else:
     log.info("Ximilar disabled — using Vision + TCG API + gpt-4o pipeline")
+
+# Cardvision — self-hosted MobileCLIP image-retrieval service (replaces Ximilar's image match).
+# When Ximilar is off, _ximilar_identify() delegates to the local cardvision service, which
+# returns catalog candidates that feed the SAME downstream (number cross-ref, CM search).
+CARDVISION_URL = os.environ.get("CARDVISION_URL", "http://127.0.0.1:8099")
+USE_CARDVISION = os.environ.get("USE_CARDVISION", "1") == "1"
+if not XIMILAR_KEY and USE_CARDVISION:
+    log.info(f"Cardvision enabled — image retrieval via {CARDVISION_URL}")
 
 # ─── Currency ────────────────────────────────────────────────
 
@@ -364,9 +373,47 @@ async def _attempt_tcg_match(tcg_cards, card, b64, vision_number_raw):
     return False
 
 
+async def _visual_index_identify(b64, k=6):
+    """Query the local cardvision MobileCLIP service and return a Ximilar-shaped result
+    (best/alternatives/prob) so the existing downstream logic works unchanged.
+    Cosine score is calibrated to a pseudo-prob for the >0.75/0.80 trust gates."""
+    try:
+        payload = json.dumps({"image_b64": b64, "k": k}).encode()
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{CARDVISION_URL}/candidates", data=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=12)) as resp:
+                if resp.status != 200:
+                    log.warning(f"  CARDVISION: HTTP {resp.status}")
+                    return None
+                data = await resp.json()
+    except Exception as e:
+        log.warning(f"  CARDVISION: {e}")
+        return None
+    cands = data.get("candidates", [])
+    if not cands:
+        return None
+
+    def _mk(c):
+        sid = c.get("set_id", "")
+        return {"name": c.get("name", ""), "set": sid, "set_code": sid,
+                "card_number": str(c.get("number", "")), "lang": c.get("lang", ""),
+                "full_name": f"{c.get('name','')} {sid}#{c.get('number','')}", "links": {}}
+
+    best = cands[0]
+    cos = float(best.get("score", 0.0))
+    prob = max(0.0, min(1.0, (cos - 0.55) / 0.30))   # cos 0.55->0, 0.85->1.0
+    log.info(f"  CARDVISION: top1={_mk(best)['full_name']} cos={cos:.3f} prob={prob:.2f} [{data.get('crop_mode')}]")
+    return {"best": _mk(best), "alternatives": [_mk(c) for c in cands[1:]],
+            "prob": prob, "cm_link": "", "tags": {}, "cardvision_cos": cos}
+
+
 async def _ximilar_identify(b64, set_code_hint=""):
-    """Identify card via Ximilar API. Returns best match dict or None."""
+    """Identify card via Ximilar API — or, when Ximilar is off, via the local cardvision
+    image-retrieval service (set_code_hint is Ximilar-only and ignored by cardvision)."""
     if not XIMILAR_KEY:
+        if USE_CARDVISION and not set_code_hint:
+            return await _visual_index_identify(b64)
         return None
     try:
         body = {"records": [{"_base64": b64}], "lang": True, "slab_grade": True}
