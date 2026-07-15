@@ -393,7 +393,8 @@ def download_image(image_url, card_url):
 def load_portfolio():
     """Laedt Karten aus DB (bevorzugt) oder portfolio.csv als Fallback."""
     db_path = BASE_DIR / "data" / "tracker.db"
-    if db_path.exists():
+    prefer_csv = os.environ.get("SCRAPE_PORTFOLIO_SOURCE", "").lower() == "csv"
+    if db_path.exists() and not prefer_csv:
         try:
             import sqlite3
             conn = sqlite3.connect(str(db_path))
@@ -405,6 +406,21 @@ def load_portfolio():
                 return [{"url": r["url"], "name": r["name"] or "", "grade": (r["grade"] or "").upper(), "notes": r["notes"] or ""} for r in rows]
         except Exception as e:
             log.warning(f"  DB-Ladevorgang fehlgeschlagen, Fallback auf CSV: {e}")
+
+    cards = []
+    with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            url = row.get("url", "").strip()
+            if url:
+                cards.append({
+                    "url": url,
+                    "name": row.get("name", "").strip(),
+                    "grade": row.get("grade", "").strip().upper(),
+                    "notes": row.get("notes", "").strip(),
+                })
+    log.info(f"  {len(cards)} Karten aus portfolio.csv geladen")
+    return cards
 
 
 def filter_due_cards(cards):
@@ -480,21 +496,6 @@ def filter_due_cards(cards):
     except Exception as e:
         log.warning(f"  filter_due_cards failed ({e}), scrape all")
         return cards, {"due": len(cards), "skipped": 0, "by_tier": {}}
-
-    cards = []
-    with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            url = row.get("url", "").strip()
-            if url:
-                cards.append({
-                    "url": url,
-                    "name": row.get("name", "").strip(),
-                    "grade": row.get("grade", "").strip().upper(),
-                    "notes": row.get("notes", "").strip(),
-                })
-    return cards
-
 
 def load_resume_state():
     if RESUME_FILE.exists():
@@ -933,6 +934,13 @@ def import_to_db(results):
     try:
         import sqlite3
         conn = sqlite3.connect(str(db_path))
+        # Standalone cron/bot runs may start before the Express server has applied
+        # its schema migrations. Keep the direct importer self-sufficient.
+        try:
+            conn.execute("ALTER TABLE prices ADD COLUMN stale_grade INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
         # Build URL → card_id lookup
         card_rows = conn.execute("SELECT id, url FROM cards").fetchall()
         url_to_id = {r[1]: r[0] for r in card_rows}

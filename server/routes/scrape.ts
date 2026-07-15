@@ -129,7 +129,9 @@ scrapeRouter.post("/cards", (req, res) => {
 
   const engine: ScrapeEngine = reqEngine === "brightdata" ? "brightdata" : "patchright"
   const script = engine === "brightdata" ? "scrape_brightdata.py" : "scrape.py"
-  const env = engine === "brightdata" ? { ...process.env } : { ...process.env, DISPLAY: ":99" }
+  const env = engine === "brightdata"
+    ? { ...process.env, SCRAPE_PORTFOLIO_SOURCE: "csv" }
+    : { ...process.env, DISPLAY: ":99" }
 
   const db = getDb()
   const cards = db.prepare(`SELECT url, name, grade, notes FROM cards WHERE id IN (${cardIds.map(() => "?").join(",")})`)

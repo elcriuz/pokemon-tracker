@@ -53,7 +53,7 @@ export function Dashboard() {
     refetchInterval: scrapeStatus?.isRunning ? 5_000 : 60_000,
   })
 
-  const [scrapeEngine, setScrapeEngine] = useState<"patchright" | "brightdata">("patchright")
+  const [scrapeEngine, setScrapeEngine] = useState<"patchright" | "brightdata">("brightdata")
   const scrapeMutation = useMutation({
     mutationFn: () => api.triggerScrape(scrapeEngine),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["scrapeStatus"] }),

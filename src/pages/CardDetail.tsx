@@ -16,7 +16,7 @@ export function CardDetail() {
   const { data: card, isLoading } = useQuery({ queryKey: ["card", cardId], queryFn: () => api.getCard(cardId) })
   const { data: prices } = useQuery({ queryKey: ["cardPrices", cardId], queryFn: () => api.getCardPrices(cardId) })
   const [showEdit, setShowEdit] = useState(false)
-  const [scrapeEngine, setScrapeEngine] = useState<"patchright" | "brightdata">("patchright")
+  const [scrapeEngine, setScrapeEngine] = useState<"patchright" | "brightdata">("brightdata")
 
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteCard(cardId),
