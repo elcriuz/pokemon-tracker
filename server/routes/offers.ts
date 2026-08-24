@@ -54,11 +54,13 @@ offersRouter.get("/", (req, res) => {
     const daysListed = r.first_seen
       ? Math.floor((Date.now() - new Date(r.first_seen).getTime()) / 86_400_000)
       : null
-    // Abstand zum guenstigsten Angebot im GLEICHEN Zustand. Der Produkt-Trend
-    // taugt dafuer nicht: er mischt alle Zustaende und laesst gespielte Karten
-    // grundsaetzlich "zu guenstig" aussehen.
-    const vsBest = r.best_same && r.price ? r.price / r.best_same - 1 : null
-    return { ...r, signals, days_listed: daysListed, vs_best: vsBest }
+    // Gemessen wird gegen den MEDIAN der zustandsgleichen Angebote — dieselbe
+    // Bezugsgroesse wie in den Signalen. Gegen das guenstigste Angebot zu messen
+    // waere irrefuehrend: ein einzelner Ausreisser nach unten laesst einen
+    // marktgerechten Preis dann wie Wucher aussehen (Flamara: +323% gegen das
+    // billigste Angebot, aber nur +31% gegen das Mittelfeld).
+    const vsMedian = r.median_same && r.price ? r.price / r.median_same - 1 : null
+    return { ...r, signals, days_listed: daysListed, vs_median: vsMedian }
   })
 
   const filtered = signal

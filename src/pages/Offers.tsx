@@ -66,8 +66,9 @@ export function Offers() {
           <h1 className="text-2xl font-semibold">Meine Angebote</h1>
           <p className="text-sm text-muted-foreground mt-1">
             <strong>Rang</strong> = Käufersicht (gleiche Sprache, mindestens gleicher Zustand).
-            <strong> Günstigster</strong> und <strong>vs. Vergleich</strong> zählen nur Angebote im
-            <em> exakt gleichen</em> Zustand — sonst wirkt jede gespielte Karte zu billig.
+            <strong> Günstigster</strong> und <strong>vs. Mittelfeld</strong> zählen nur Angebote im
+            <em> exakt gleichen</em> Zustand. Gemessen wird am Median, nicht am billigsten
+            Angebot — ein einzelner Ausreißer soll keinen Alarm auslösen.
           </p>
         </div>
         <div className="flex gap-6 text-right">
@@ -116,7 +117,8 @@ export function Offers() {
                 Günstigster ({"gl. Zustand"})
               </th>
               <th className="text-right py-2 px-3 font-medium">Trend</th>
-              <th className="text-right py-2 px-3 font-medium">vs. Vergleich</th>
+              <th className="text-right py-2 px-3 font-medium"
+                  title="Abstand zum Median der Angebote im gleichen Zustand">vs. Mittelfeld</th>
               <th className="text-left py-2 pl-3 font-medium">Signal</th>
             </tr>
           </thead>
@@ -156,12 +158,13 @@ export function Offers() {
                   {formatEur(i.market_trend)}
                 </td>
                 <td className="py-2.5 px-3 text-right tabular-nums">
-                  {i.vs_best == null ? (
+                  {i.vs_median == null ? (
                     <span className="text-muted-foreground">–</span>
                   ) : (
-                    <span className={i.vs_best < -0.1 ? "text-sky-400"
-                                   : i.vs_best > 0.1 ? "text-amber-400" : "text-muted-foreground"}>
-                      {i.vs_best > 0 ? "+" : ""}{(i.vs_best * 100).toFixed(0)}%
+                    <span className={i.vs_median < -0.15 ? "text-sky-400"
+                                   : i.vs_median > 0.6 ? "text-violet-400"
+                                   : "text-muted-foreground"}>
+                      {i.vs_median > 0 ? "+" : ""}{(i.vs_median * 100).toFixed(0)}%
                     </span>
                   )}
                 </td>
