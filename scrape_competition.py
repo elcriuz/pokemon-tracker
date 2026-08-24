@@ -136,9 +136,20 @@ def bd_fetch(url: str, api_key: str, zone: str, timeout: int = 150) -> str:
                        f"({len(last)} Bytes)")
 
 
-def rank_for(my_price: float, competitors: list[dict], me: str) -> dict:
-    """Rang unter vergleichbaren Angeboten. Eigene Angebote zaehlen nicht als Konkurrenz."""
+def rank_for(my_price: float, competitors: list[dict], me: str,
+             my_condition: str = "") -> dict:
+    """Zwei Sichten auf denselben Abruf.
+
+    rank/best_price = Kaeufersicht: Wer "EX oder besser" sucht, sieht auch alle
+    NM- und MT-Angebote. Dafuer ist der Rang das richtige Mass.
+
+    best_same/competitors_same = Preisfindung: Nur Angebote im GLEICHEN Zustand.
+    Ohne diese Trennung wirkt eine gespielte Karte automatisch "zu guenstig",
+    weil sie gegen neuwertige verglichen wird (echter Fall: einzige EX-Karte
+    unter 24 NM/MT-Angeboten, angeblich 21% zu billig).
+    """
     others = [c for c in competitors if c["seller"].lower() != me.lower()]
+    same = [c for c in others if my_condition and c["condition"] == my_condition]
     below = sum(1 for c in others if c["price"] < my_price)
     best = min((c["price"] for c in others), default=None)
 
@@ -154,6 +165,8 @@ def rank_for(my_price: float, competitors: list[dict], me: str) -> dict:
         "competitors_below": below,
         "competitors_total": len(others),
         "best_price": best,
+        "best_same": min((c["price"] for c in same), default=None),
+        "competitors_same": len(same),
     }
 
 
@@ -225,7 +238,7 @@ def main() -> int:
                 continue
 
             for listing_id, _u, pname, _c, _l, my_price in listings:
-                res = rank_for(my_price, competitors, me)
+                res = rank_for(my_price, competitors, me, condition)
                 rank_txt = f"Rang {res['rank']}" if res["rank"] else f">{SHOWN_LIMIT}"
                 log.info("  [%d/%d] %-36s %8.2f € | %-8s von %2d | best %s",
                          i, len(todo), pname[:36], my_price, rank_txt,
@@ -237,6 +250,7 @@ def main() -> int:
                         """UPDATE listing_snapshots
                            SET rank = ?, rank_capped = ?, competitors_below = ?,
                                competitors_total = ?, best_price = ?,
+                               best_same = ?, competitors_same = ?,
                                market_trend = ?, market_avg7 = ?, market_avg30 = ?,
                                market_avg1 = ?, market_available = ?
                            WHERE listing_id = ? AND captured_at = (
@@ -244,6 +258,7 @@ def main() -> int:
                                WHERE listing_id = ?)""",
                         (res["rank"], res["rank_capped"], res["competitors_below"],
                          res["competitors_total"], res["best_price"],
+                         res["best_same"], res["competitors_same"],
                          market.get("trend"), market.get("avg7"), market.get("avg30"),
                          market.get("avg1"), market.get("available_items"),
                          listing_id, listing_id),

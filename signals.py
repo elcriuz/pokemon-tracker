@@ -21,13 +21,18 @@ DB_PATH = ROOT / "data" / "tracker.db"
 
 log = logging.getLogger("signals")
 
+# Unter so vielen zustandsgleichen Angeboten ist ein Preisvergleich nicht belastbar.
+MIN_COMPARABLES = 2
+
 RAISE, LOWER, SELL_NOW, UNDERCUT = "raise", "lower", "sell_now", "undercut"
+UNDERPRICED = "underpriced"
 
 LABELS = {
     RAISE:    ("📈", "Preis anheben"),
     LOWER:    ("📉", "Preis senken"),
     SELL_NOW: ("🔥", "Jetzt verkaufen"),
     UNDERCUT: ("⚔️", "Unterboten"),
+    UNDERPRICED: ("💸", "Zu günstig"),
 }
 
 
@@ -45,6 +50,7 @@ def latest_snapshots(db) -> list[dict]:
         SELECT l.id, l.product_name, l.game, l.condition, l.language, l.price,
                l.first_seen, l.product_url,
                s.captured_at, s.rank, s.rank_capped, s.competitors_total, s.best_price,
+               s.best_same, s.competitors_same,
                s.market_trend, s.market_avg7, s.market_avg30, s.market_avg1,
                s.market_available
         FROM listings l
@@ -55,7 +61,8 @@ def latest_snapshots(db) -> list[dict]:
     """).fetchall()
     cols = ["id", "name", "game", "condition", "language", "price", "first_seen",
             "url", "captured_at", "rank", "rank_capped", "competitors_total",
-            "best_price", "trend", "avg7", "avg30", "avg1", "available"]
+            "best_price", "best_same", "competitors_same",
+            "trend", "avg7", "avg30", "avg1", "available"]
     out = []
     for r in rows:
         d = dict(zip(cols, r))
@@ -93,19 +100,44 @@ def evaluate(d: dict, cfg: dict) -> list[dict]:
     if price is None or price < cfg["min_price"]:
         return out
 
-    # 1) Markt zieht an und ich haenge unter dem Trend -> Geld liegen lassen.
-    if all(v is not None for v in (avg7, avg30, trend)) and avg30 > 0:
+    # 1) Markt zieht an und ich unterbiete den vergleichbaren Markt deutlich.
+    #
+    # Verglichen wird gegen best_price, NICHT gegen den Produkt-Trend: der Trend
+    # gilt fuer alle Zustaende gemeinsam und wird von NM-Ware dominiert. Eine
+    # GD-Karte daran zu messen wuerde absurde Zielpreise liefern (echter Fall:
+    # 680-€-Angebot, Trend 2075 €, vergleichbarer Markt aber 650 €).
+    # Preisvergleiche laufen ueber best_same (gleicher Zustand), nicht best_price
+    # (= "mindestens so gut"). Unter zwei Vergleichsangeboten ist die Datenlage zu
+    # duenn fuer eine Empfehlung — dann lieber schweigen als falsch raten.
+    best = d.get("best_same") if (d.get("competitors_same") or 0) >= MIN_COMPARABLES else None
+    if (best and avg7 is not None and avg30 is not None and avg30 > 0):
         uptrend = avg7 > avg30 * (1 + cfg["raise_uptrend"] / 100)
-        below = price < trend * (1 - cfg["raise_below"] / 100)
-        if uptrend and below:
+        undercutting = price < best * (1 - cfg["raise_below"] / 100)
+        if uptrend and undercutting:
             out.append({
                 "kind": RAISE,
-                "suggested": round(trend * 0.95, 2),
+                "suggested": round(best * 0.99, 2),
                 "detail": (f"Markt +{(avg7/avg30-1)*100:.0f}% (7T über 30T), "
-                           f"dein Preis {(1-price/trend)*100:.0f}% unter Trend {trend:.2f} €"),
+                           f"du liegst {(1-price/best)*100:.0f}% unter dem günstigsten "
+                           f"{d['condition']}-Angebot ({best:.2f} €, "
+                           f"{d['competitors_same']} Vergleichsangebote)"),
             })
 
-    # 2) Ladenhueter im fallenden Markt -> runter, bevor es schlimmer wird.
+    # 2) Deutlich unter dem vergleichbaren Markt — unabhaengig von der Marktrichtung.
+    #
+    # Das ist der haeufigste Fall: Angebote werden guenstig reingestellt und bleiben
+    # dann stehen, waehrend niemand mitbekommt, dass der vergleichbare Markt viel
+    # hoeher liegt. Braucht keinen Aufwaertstrend, der Abstand allein genuegt.
+    if best and price < best * (1 - cfg["underpriced"] / 100):
+        out.append({
+            "kind": UNDERPRICED,
+            "suggested": round(best * 0.99, 2),
+            "detail": (f"{(1-price/best)*100:.0f}% unter dem günstigsten "
+                       f"{d['condition']}-Angebot ({best:.2f} €, "
+                       f"{d['competitors_same']} Vergleichsangebote), {rank_text(d)}"),
+        })
+
+    # 3) Ladenhueter im fallenden Markt -> runter, bevor es schlimmer wird.
     age = days_since(d["first_seen"])
     if (age is not None and age > cfg["lower_days"]
             and d["rank"] is not None and d["rank"] > cfg["lower_rank"]
@@ -119,21 +151,24 @@ def evaluate(d: dict, cfg: dict) -> list[dict]:
                        + f", Markt fällt ({avg7:.2f} € < {avg30:.2f} €)"),
         })
 
-    # 3) Kurzfristiger Ausschlag nach oben bei sinkendem Angebot -> Spitze mitnehmen.
+    # 4) Kurzfristiger Ausschlag nach oben bei sinkendem Angebot -> Spitze mitnehmen.
     if avg1 is not None and avg30 is not None and avg30 > 0:
         spike = avg1 > avg30 * (1 + cfg["sellnow_spike"] / 100)
         supply_down = (d["available"] is not None and d["prev_available"] is not None
                        and d["available"] < d["prev_available"])
         if spike and supply_down:
+            # Zielpreis wieder aus dem vergleichbaren Markt, nicht aus avg1 —
+            # avg1 mischt alle Zustaende.
+            best_now = best
             out.append({
                 "kind": SELL_NOW,
-                "suggested": round(avg1 * 0.98, 2),
+                "suggested": round(best_now * 0.99, 2) if best_now else None,
                 "detail": (f"Tagesschnitt {avg1:.2f} € liegt {(avg1/avg30-1)*100:.0f}% "
                            f"über dem 30-Tage-Schnitt, Angebot schrumpft "
                            f"({d['prev_available']} → {d['available']})"),
             })
 
-    # 4) Jemand hat mich unterboten -> ich bin nicht mehr vorne.
+    # 5) Jemand hat mich unterboten -> ich bin nicht mehr vorne.
     if (d["rank"] is not None and d["prev_rank"] is not None
             and d["prev_rank"] <= 3 and d["rank"] > d["prev_rank"]):
         out.append({
@@ -217,6 +252,7 @@ def main() -> int:
         "lower_rank": get(db, "sig_lower_rank", 5),
         "sellnow_spike": get(db, "sig_sellnow_spike_pct", 20),
         "min_price": get(db, "sig_min_price_eur", 2),
+        "underpriced": get(db, "sig_underpriced_pct", 15),
         "repeat_days": get(db, "sig_repeat_days", 14),
     }
 

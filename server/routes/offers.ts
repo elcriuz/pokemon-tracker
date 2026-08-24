@@ -24,7 +24,7 @@ offersRouter.get("/", (req, res) => {
            l.condition, l.language, l.is_foil, l.price, l.quantity, l.comment,
            l.first_seen, l.card_id,
            s.captured_at, s.rank, s.rank_capped, s.competitors_below,
-           s.competitors_total, s.best_price,
+           s.competitors_total, s.best_price, s.best_same, s.competitors_same,
            s.market_trend, s.market_avg7, s.market_avg30, s.market_avg1,
            s.market_available
     FROM listings l
@@ -54,9 +54,11 @@ offersRouter.get("/", (req, res) => {
     const daysListed = r.first_seen
       ? Math.floor((Date.now() - new Date(r.first_seen).getTime()) / 86_400_000)
       : null
-    // Abstand zum Markttrend: das Mass dafuer, ob wir unter Wert anbieten.
-    const vsTrend = r.market_trend && r.price ? r.price / r.market_trend - 1 : null
-    return { ...r, signals, days_listed: daysListed, vs_trend: vsTrend }
+    // Abstand zum guenstigsten Angebot im GLEICHEN Zustand. Der Produkt-Trend
+    // taugt dafuer nicht: er mischt alle Zustaende und laesst gespielte Karten
+    // grundsaetzlich "zu guenstig" aussehen.
+    const vsBest = r.best_same && r.price ? r.price / r.best_same - 1 : null
+    return { ...r, signals, days_listed: daysListed, vs_best: vsBest }
   })
 
   const filtered = signal

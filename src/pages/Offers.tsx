@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/lib/api"
-import { TrendingUp, TrendingDown, Flame, Swords, ExternalLink, X } from "lucide-react"
+import { TrendingUp, TrendingDown, Flame, Swords, Banknote, ExternalLink, X } from "lucide-react"
 
 /** Die vier Handlungssignale. Farbe kodiert Richtung, nicht Wichtigkeit. */
 const SIGNAL_CONFIG: Record<string, { label: string; icon: any; color: string; bg: string }> = {
@@ -9,6 +9,7 @@ const SIGNAL_CONFIG: Record<string, { label: string; icon: any; color: string; b
   lower:    { label: "Senken",        icon: TrendingDown, color: "text-amber-400",   bg: "bg-amber-500/15" },
   sell_now: { label: "Jetzt raus",    icon: Flame,        color: "text-orange-400",  bg: "bg-orange-500/20" },
   undercut: { label: "Unterboten",    icon: Swords,       color: "text-red-400",     bg: "bg-red-500/15" },
+  underpriced: { label: "Zu günstig", icon: Banknote,     color: "text-sky-400",     bg: "bg-sky-500/15" },
 }
 
 function formatEur(val: number | null) {
@@ -61,8 +62,9 @@ export function Offers() {
         <div>
           <h1 className="text-2xl font-semibold">Meine Angebote</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Rang und Bestpreis gelten nur für <strong>vergleichbare</strong> Angebote —
-            gleiche Sprache, mindestens gleicher Zustand.
+            <strong>Rang</strong> = Käufersicht (gleiche Sprache, mindestens gleicher Zustand).
+            <strong> Günstigster</strong> und <strong>vs. Vergleich</strong> zählen nur Angebote im
+            <em> exakt gleichen</em> Zustand — sonst wirkt jede gespielte Karte zu billig.
           </p>
         </div>
         <div className="flex gap-6 text-right">
@@ -107,9 +109,11 @@ export function Offers() {
               <th className="text-left py-2 pr-3 font-medium">Karte</th>
               <th className="text-right py-2 px-3 font-medium">Mein Preis</th>
               <th className="text-right py-2 px-3 font-medium">Rang</th>
-              <th className="text-right py-2 px-3 font-medium">Günstigster</th>
+              <th className="text-right py-2 px-3 font-medium" title="Günstigstes Angebot im gleichen Zustand">
+                Günstigster ({"gl. Zustand"})
+              </th>
               <th className="text-right py-2 px-3 font-medium">Trend</th>
-              <th className="text-right py-2 px-3 font-medium">vs. Trend</th>
+              <th className="text-right py-2 px-3 font-medium">vs. Vergleich</th>
               <th className="text-left py-2 pl-3 font-medium">Signal</th>
             </tr>
           </thead>
@@ -136,18 +140,25 @@ export function Offers() {
                   <RankBadge rank={i.rank} capped={i.rank_capped} total={i.competitors_total} />
                 </td>
                 <td className="py-2.5 px-3 text-right tabular-nums text-muted-foreground">
-                  {formatEur(i.best_price)}
+                  {i.competitors_same ? (
+                    <>
+                      {formatEur(i.best_same)}
+                      <span className="text-[10px] ml-1 opacity-60">({i.competitors_same})</span>
+                    </>
+                  ) : (
+                    <span title="Kein Angebot im gleichen Zustand – Preisvergleich nicht möglich">–</span>
+                  )}
                 </td>
                 <td className="py-2.5 px-3 text-right tabular-nums text-muted-foreground">
                   {formatEur(i.market_trend)}
                 </td>
                 <td className="py-2.5 px-3 text-right tabular-nums">
-                  {i.vs_trend == null ? (
+                  {i.vs_best == null ? (
                     <span className="text-muted-foreground">–</span>
                   ) : (
-                    <span className={i.vs_trend < -0.1 ? "text-emerald-400"
-                                   : i.vs_trend > 0.1 ? "text-red-400" : "text-muted-foreground"}>
-                      {i.vs_trend > 0 ? "+" : ""}{(i.vs_trend * 100).toFixed(0)}%
+                    <span className={i.vs_best < -0.1 ? "text-sky-400"
+                                   : i.vs_best > 0.1 ? "text-amber-400" : "text-muted-foreground"}>
+                      {i.vs_best > 0 ? "+" : ""}{(i.vs_best * 100).toFixed(0)}%
                     </span>
                   )}
                 </td>

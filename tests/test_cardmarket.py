@@ -142,9 +142,25 @@ def test_competition():
     fake = [{"price": 3.0, "seller": "A", "condition": "NM"},
             {"price": 3.5, "seller": "packgehabt", "condition": "NM"},
             {"price": 5.0, "seller": "B", "condition": "NM"}]
-    r2 = sc.rank_for(4.00, fake, "packgehabt")
+    r2 = sc.rank_for(4.00, fake, "packgehabt", "NM")
     check("Rang zaehlt nur fremde Angebote",
           r2["rank"] == 2 and r2["competitors_total"] == 2 and r2["best_price"] == 3.0)
+
+    # Der Fall, der ein 630-Euro-Fehlsignal ausgeloest hat: die einzige EX-Karte
+    # unter lauter NM-Ware ist nicht "zu guenstig", sie ist schlechter erhalten.
+    mixed = [{"price": 799.0, "seller": "A", "condition": "MT"},
+             {"price": 800.0, "seller": "B", "condition": "NM"},
+             {"price": 840.0, "seller": "C", "condition": "NM"}]
+    r3 = sc.rank_for(630.0, mixed, "packgehabt", "EX")
+    check("bessere Zustaende zaehlen nicht als Preisvergleich",
+          r3["best_same"] is None and r3["competitors_same"] == 0,
+          f"best_same={r3['best_same']}")
+    check("Rang beruecksichtigt sie trotzdem (Kaeufersicht)", r3["rank"] == 1)
+
+    r4 = sc.rank_for(630.0, mixed + [{"price": 700.0, "seller": "D", "condition": "EX"}],
+                     "packgehabt", "EX")
+    check("gleicher Zustand wird als Vergleich erkannt",
+          r4["best_same"] == 700.0 and r4["competitors_same"] == 1)
 
     check("Sprach-ID Deutsch", "language=3" in sc.build_url("u", "NM", "de"))
     check("Sprach-ID Japanisch", "language=7" in sc.build_url("u", "NM", "ja"))
@@ -165,6 +181,7 @@ def base_listing(**kw):
          "language": "de", "price": 10.0, "first_seen": datetime.now().isoformat(),
          "url": "http://x", "captured_at": datetime.now().isoformat(),
          "rank": 3, "rank_capped": 0, "competitors_total": 20, "best_price": 9.0,
+         "best_same": 10.0, "competitors_same": 6,
          "trend": 10.0, "avg7": 10.0, "avg30": 10.0, "avg1": 10.0,
          "available": 100, "prev_rank": 3, "prev_available": 100}
     d.update(kw)
@@ -172,7 +189,7 @@ def base_listing(**kw):
 
 
 CFG = {"raise_uptrend": 5, "raise_below": 10, "lower_days": 30, "lower_rank": 5,
-       "sellnow_spike": 20, "min_price": 2, "repeat_days": 14}
+       "sellnow_spike": 20, "min_price": 2, "repeat_days": 14, "underpriced": 15}
 
 
 def kinds(d):
@@ -184,10 +201,17 @@ def test_signals():
     check("ruhiger Markt loest nichts aus", kinds(base_listing()) == set())
 
     # Markt +10%, mein Preis 20% unter Trend
-    check("steigender Markt + zu billig -> anheben",
-          sg.RAISE in kinds(base_listing(avg7=11.0, avg30=10.0, trend=12.5, price=10.0)))
+    check("steigender Markt + unter dem Vergleichsmarkt -> anheben",
+          sg.RAISE in kinds(base_listing(avg7=11.0, avg30=10.0, price=8.0, best_same=10.0)))
     check("steigender Markt bei marktgerechtem Preis -> kein Signal",
-          sg.RAISE not in kinds(base_listing(avg7=11.0, avg30=10.0, trend=10.2, price=10.0)))
+          sg.RAISE not in kinds(base_listing(avg7=11.0, avg30=10.0, price=9.9, best_same=10.0)))
+
+    check("deutlich unter Vergleichsmarkt -> zu günstig",
+          sg.UNDERPRICED in kinds(base_listing(price=7.0, best_same=10.0)))
+    check("zu wenig Vergleichsangebote -> kein Preissignal",
+          kinds(base_listing(price=7.0, best_same=10.0, competitors_same=1)) == set())
+    check("ohne zustandsgleichen Vergleich -> kein Preissignal",
+          kinds(base_listing(price=7.0, best_same=None, competitors_same=0)) == set())
 
     old = (datetime.now() - timedelta(days=45)).isoformat()
     check("Ladenhueter im fallenden Markt -> senken",
@@ -199,6 +223,8 @@ def test_signals():
 
     check("Preisspitze + schrumpfendes Angebot -> jetzt verkaufen",
           sg.SELL_NOW in kinds(base_listing(avg1=13.0, avg30=10.0, available=60, prev_available=100)))
+    check("Cent-Regel greift vor allen Preissignalen",
+          kinds(base_listing(price=1.0, best_same=10.0)) == set())
     check("Preisspitze bei wachsendem Angebot -> kein Signal",
           sg.SELL_NOW not in kinds(base_listing(avg1=13.0, avg30=10.0, available=140, prev_available=100)))
 
@@ -209,10 +235,9 @@ def test_signals():
     check("hinten schon vorher -> kein Undercut-Alarm",
           sg.UNDERCUT not in kinds(base_listing(prev_rank=9, rank=14)))
 
-    check("Cent-Artikel loesen keinen Alarm aus",
-          kinds(base_listing(price=1.0, avg7=11.0, avg30=10.0, trend=12.5)) == set())
     check("fehlende Marktdaten -> kein Signal",
-          kinds(base_listing(trend=None, avg7=None, avg30=None, avg1=None)) == set())
+          kinds(base_listing(trend=None, avg7=None, avg30=None, avg1=None,
+                             best_same=None, competitors_same=0)) == set())
 
 
 def test_signal_dedup():
