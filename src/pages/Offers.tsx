@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/lib/api"
-import { TrendingUp, TrendingDown, Flame, Swords, Banknote, Snowflake, ExternalLink, X } from "lucide-react"
+import { TrendingUp, TrendingDown, Flame, Swords, Banknote, Snowflake, ExternalLink, X, Check, Loader2 } from "lucide-react"
 
 /** Die vier Handlungssignale. Farbe kodiert Richtung, nicht Wichtigkeit. */
 const SIGNAL_CONFIG: Record<string, { label: string; icon: any; color: string; bg: string }> = {
@@ -54,6 +54,14 @@ export function Offers() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["offers"] }),
   })
 
+  const [error, setError] = useState("")
+  const apply = useMutation({
+    mutationFn: (v: { listingId: number; price: number; signalId: number }) =>
+      api.applyPrice(v.listingId, v.price, v.signalId),
+    onSuccess: () => { setError(""); queryClient.invalidateQueries({ queryKey: ["offers"] }) },
+    onError: (e: any) => setError(e?.message ?? "Preisänderung fehlgeschlagen"),
+  })
+
   if (isLoading) return <div className="p-6 text-muted-foreground">Lade Angebote…</div>
 
   const items = (data?.items ?? []).filter((i: any) => !onlySignals || i.signals.length > 0)
@@ -88,6 +96,15 @@ export function Offers() {
           </div>
         </div>
       </div>
+
+      {error && (
+        <div className="text-sm text-red-400 border-l-2 border-red-400/60 pl-3">{error}</div>
+      )}
+      {apply.isPending && (
+        <div className="text-sm text-muted-foreground border-l-2 border-border pl-3">
+          Preis wird bei Cardmarket gesetzt — das dauert etwa eine halbe Minute.
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2">
         <button onClick={() => setGame("")}
@@ -179,6 +196,19 @@ export function Offers() {
                           <Icon className="w-3 h-3" />
                           {cfg.label}
                           {sig.suggested_price ? ` → ${formatEur(sig.suggested_price)}` : ""}
+                          {sig.suggested_price ? (
+                            <button
+                              onClick={() => apply.mutate({
+                                listingId: i.id, price: sig.suggested_price, signalId: sig.id,
+                              })}
+                              disabled={apply.isPending}
+                              className="ml-1 opacity-60 hover:opacity-100 disabled:opacity-30"
+                              title={`Preis auf ${formatEur(sig.suggested_price)} setzen`}>
+                              {apply.isPending && apply.variables?.signalId === sig.id
+                                ? <Loader2 className="w-3 h-3 animate-spin" />
+                                : <Check className="w-3 h-3" />}
+                            </button>
+                          ) : null}
                           <button onClick={() => dismiss.mutate(sig.id)}
                             className="opacity-40 hover:opacity-100 ml-0.5" title="Signal abhaken">
                             <X className="w-3 h-3" />

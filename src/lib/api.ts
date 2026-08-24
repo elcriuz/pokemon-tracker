@@ -66,6 +66,12 @@ export const api = {
     return fetchJSON<any>(`/offers${qs}`)
   },
 
+  applyPrice: (listingId: number, price: number, signalId?: number) =>
+    fetchJSON<any>(`/offers/${listingId}/price`, {
+      method: "POST",
+      body: JSON.stringify({ price, signal_id: signalId }),
+    }),
+
   dismissSignal: (id: number) =>
     fetchJSON<any>(`/offers/signals/${id}/dismiss`, { method: "POST" }),
 

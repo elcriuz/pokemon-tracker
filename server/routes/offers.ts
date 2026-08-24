@@ -1,5 +1,11 @@
 import { Router } from "express"
+import { execFile } from "child_process"
+import path from "path"
+import { fileURLToPath } from "url"
 import { getDb } from "../db"
+
+const __dirname_ = path.dirname(fileURLToPath(import.meta.url))
+const REPRICE = path.join(__dirname_, "..", "..", "reprice.py")
 
 export const offersRouter = Router()
 
@@ -97,4 +103,50 @@ offersRouter.get("/history/:id", (req, res) => {
     FROM listing_snapshots WHERE listing_id = ? ORDER BY captured_at
   `).all(req.params.id)
   res.json({ items: rows })
+})
+
+
+/**
+ * Preis eines eigenen Angebots aendern.
+ *
+ * Die eigentliche Arbeit macht reprice.py ueber die angemeldete Browser-Sitzung;
+ * hier wird nur geprueft, angestossen und das Ergebnis zurueckgegeben. Jeder
+ * Aufruf entspricht einem bewussten Klick — es gibt bewusst keinen Weg, das
+ * fuer viele Angebote auf einmal auszuloesen.
+ */
+offersRouter.post("/:id/price", (req, res) => {
+  const db = getDb()
+  const price = Number(req.body?.price)
+  const signalId = req.body?.signal_id ? Number(req.body.signal_id) : null
+
+  if (!Number.isFinite(price) || price <= 0 || price > 100_000) {
+    return res.status(400).json({ error: "Kein gültiger Preis" })
+  }
+
+  const listing = db.prepare(
+    "SELECT cm_article_id, product_name, price, game FROM listings WHERE id = ? AND active = 1"
+  ).get(req.params.id) as any
+  if (!listing?.cm_article_id) {
+    return res.status(404).json({ error: "Angebot nicht gefunden" })
+  }
+
+  execFile("python3", [REPRICE, "--article", String(listing.cm_article_id),
+                       "--price", price.toFixed(2), "--game", listing.game],
+    { timeout: 180_000 }, (err, stdout, stderr) => {
+      const out = `${stdout}\n${stderr}`.trim()
+      if (err) {
+        // Der Skript-Text ist fuer Menschen geschrieben — direkt durchreichen,
+        // statt ihn hinter einer generischen Fehlermeldung zu verstecken.
+        const line = out.split("\n").filter((l) => l.includes("ERROR")).pop()
+        return res.status(422).json({
+          error: line?.replace(/^.*ERROR\s+/, "") || "Preisänderung fehlgeschlagen",
+          detail: out.slice(-800),
+        })
+      }
+      if (signalId) {
+        db.prepare("UPDATE signals SET applied_at = datetime('now') WHERE id = ?").run(signalId)
+      }
+      const now = db.prepare("SELECT price FROM listings WHERE id = ?").get(req.params.id) as any
+      res.json({ ok: true, price: now?.price ?? price, was: listing.price })
+    })
 })
