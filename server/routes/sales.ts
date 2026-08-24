@@ -21,12 +21,14 @@ salesRouter.get("/", (req, res) => {
 
   const orders = db.prepare(`
     SELECT o.*,
-           COALESCE(o.arrived_at, o.sent_at, o.paid_at) AS sold_at,
+           -- Verkauft ist eine Bestellung, wenn sie bezahlt wurde. Ankunft ist
+           -- nur der Abschluss des Versands und kann Wochen spaeter liegen.
+           COALESCE(o.paid_at, o.sent_at, o.arrived_at) AS sold_at,
            (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS positions,
            (SELECT SUM(amount) FROM order_items WHERE order_id = o.id) AS cards
     FROM orders o
     WHERE ${where.join(" AND ")}
-    ORDER BY COALESCE(o.arrived_at, o.sent_at, o.paid_at) DESC
+    ORDER BY COALESCE(o.paid_at, o.sent_at, o.arrived_at) DESC
   `).all(...params) as any[]
 
   const withFees = orders.map((o) => {
