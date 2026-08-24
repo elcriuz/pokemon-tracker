@@ -21,6 +21,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 START_URL = os.environ.get("START_URL", "https://www.cardmarket.com/de/Pokemon")
+CDP_PORT = int(os.environ.get("CDP_PORT", "9222"))
 
 os.environ.setdefault("DISPLAY", ":99")
 
@@ -43,6 +44,9 @@ def main() -> int:
                 "--no-first-run",
                 "--disable-session-crashed-bubble",
                 "--disable-dev-shm-usage",
+                # Damit andere Skripte die angemeldete Sitzung mitbenutzen koennen,
+                # ohne das Profil zu sperren. Nur auf localhost erreichbar.
+                f"--remote-debugging-port={CDP_PORT}",
             ],
         )
         page = context.pages[0] if context.pages else context.new_page()
@@ -51,7 +55,8 @@ def main() -> int:
         except Exception as e:
             print(f"Startseite nicht geladen: {e}", flush=True)
 
-        print("Browser offen. Anmelden ueber http://192.168.1.91:6080/vnc.html", flush=True)
+        print(f"Browser offen (CDP auf :{CDP_PORT}). "
+              f"Anmelden ueber http://192.168.1.91:6080/vnc.html", flush=True)
 
         # Offen halten, bis der Dienst gestoppt wird. Schliesst jemand das letzte
         # Fenster im noVNC, beenden wir uns — systemd startet dann neu.
