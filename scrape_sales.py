@@ -123,6 +123,26 @@ def parse_order_list(page_html: str) -> list[dict]:
     return [{"cm_order_id": k, "game": v} for k, v in seen.items()]
 
 
+def strip_query(url: str) -> str:
+    """Portfolio-URLs tragen Filter-Parameter (?language=1&minCondition=3),
+    Bestell-URLs nicht. Ohne Abschneiden findet die Zuordnung nie etwas."""
+    return url.split("?", 1)[0].rstrip("/")
+
+
+def card_index(db: sqlite3.Connection) -> dict[str, int]:
+    return {strip_query(u): i for i, u in db.execute("SELECT id, url FROM cards")}
+
+
+def game_from_items(items: list[dict], fallback: str) -> str:
+    """Das Spiel steht im Produktpfad. Die Bestell-URL sagt es nicht — sie
+    lautet immer /de/Pokemon/Orders/..., egal was verkauft wurde."""
+    games = [it["product_url"].split("/")[4] for it in items
+             if it["product_url"].count("/") >= 5]
+    if not games:
+        return fallback
+    return max(set(games), key=games.count)
+
+
 def ensure_schema(db: sqlite3.Connection) -> None:
     """Die Tabellen legt sonst der Node-Server an; hier fuer den Cron-Fall."""
     db.executescript("""
@@ -217,6 +237,7 @@ def main() -> int:
         log.info("%d Bestellungen gesamt, %d zu holen", len(found), len(todo))
 
         now = datetime.now().isoformat(timespec="seconds")
+        cards = card_index(db)
         neu = akt = 0
         for i, o in enumerate(todo, 1):
             page.goto(f"{BASE}/de/{o['game']}/Orders/{o['cm_order_id']}",
@@ -231,7 +252,8 @@ def main() -> int:
 
             row = db.execute("SELECT id FROM orders WHERE cm_order_id = ?",
                              (o["cm_order_id"],)).fetchone()
-            vals = (o["game"], buyer, o["state"], d["item_value"], d["shipping"],
+            game = game_from_items(d["items"], o["game"])
+            vals = (game, buyer, o["state"], d["item_value"], d["shipping"],
                     d["total"], d["paid_at"], d["sent_at"], d["arrived_at"], now)
             if row:
                 db.execute("""UPDATE orders SET game=?, buyer=?, state=?, item_value=?,
@@ -249,12 +271,11 @@ def main() -> int:
             # Positionen immer frisch — sonst verdoppeln sie sich bei Updates.
             db.execute("DELETE FROM order_items WHERE order_id = ?", (order_id,))
             for it in d["items"]:
-                card = db.execute("SELECT id FROM cards WHERE url = ?",
-                                  (it["product_url"],)).fetchone()
+                card_id = cards.get(strip_query(it["product_url"]))
                 db.execute("""INSERT INTO order_items (order_id, card_id, cm_article_id,
                     product_url, name, expansion, number, condition, language, price,
                     amount, comment) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (order_id, card[0] if card else None, it["cm_article_id"],
+                    (order_id, card_id, it["cm_article_id"],
                      it["product_url"], it["name"], it["expansion"], it["number"],
                      it["condition"], it["language"], it["price"], it["amount"],
                      it["comment"]))
