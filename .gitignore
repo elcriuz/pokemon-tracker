@@ -12,3 +12,4 @@ __pycache__/
 .claude/
 cardvision-venv/
 data/cardindex/
+.work/

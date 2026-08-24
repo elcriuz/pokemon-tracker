@@ -48,6 +48,14 @@ export const api = {
     fetchJSON<any>(`/binders/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteBinder: (id: number) =>
     fetchJSON<any>(`/binders/${id}`, { method: "DELETE" }),
+  getOffers: (game = "") => {
+    const qs = game ? `?game=${encodeURIComponent(game)}` : ""
+    return fetchJSON<any>(`/offers${qs}`)
+  },
+
+  dismissSignal: (id: number) =>
+    fetchJSON<any>(`/offers/signals/${id}/dismiss`, { method: "POST" }),
+
   getCardShop: (showStash = false, showLosers = false) => {
     const params = new URLSearchParams()
     if (showStash) params.set("stash", "1")

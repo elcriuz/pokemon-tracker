@@ -86,6 +86,88 @@ function initSchema(db: Database.Database) {
     );
   `)
 
+  // Cardmarket-Modul: eigene Angebote + Wettbewerbsposition
+  //
+  // listings sind bewusst NICHT an cards gekoppelt (card_id ist nullable):
+  // Auf Cardmarket landen auch Doppelte und getradete Karten, die nie im
+  // Portfolio waren. Verknuepft wird ueber product_url, wenn es passt.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS listings (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      card_id       INTEGER REFERENCES cards(id) ON DELETE SET NULL,
+      cm_article_id TEXT    UNIQUE,
+      game          TEXT    NOT NULL DEFAULT 'Pokemon',
+      product_url   TEXT    NOT NULL,
+      product_name  TEXT    NOT NULL DEFAULT '',
+      expansion     TEXT    NOT NULL DEFAULT '',
+      kind          TEXT    NOT NULL DEFAULT 'single',
+      condition     TEXT    NOT NULL DEFAULT '',
+      language      TEXT    NOT NULL DEFAULT '',
+      is_foil       INTEGER NOT NULL DEFAULT 0,
+      is_signed     INTEGER NOT NULL DEFAULT 0,
+      is_playset    INTEGER NOT NULL DEFAULT 0,
+      price         REAL,
+      quantity      INTEGER NOT NULL DEFAULT 1,
+      comment       TEXT    NOT NULL DEFAULT '',
+      first_seen    TEXT    NOT NULL DEFAULT (datetime('now')),
+      last_seen     TEXT    NOT NULL DEFAULT (datetime('now')),
+      active        INTEGER NOT NULL DEFAULT 1,
+      gone_at       TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_listings_active ON listings(active);
+    CREATE INDEX IF NOT EXISTS idx_listings_game ON listings(game);
+    CREATE INDEX IF NOT EXISTS idx_listings_card ON listings(card_id);
+    CREATE INDEX IF NOT EXISTS idx_listings_url ON listings(product_url);
+
+    -- Ein Snapshot je Angebot und Lauf: eigener Preis plus Marktumfeld.
+    -- best_price/rank beziehen sich immer auf VERGLEICHBARE Angebote
+    -- (gleicher Zustand, gleiche Sprache) - sonst vergleicht man NM-DE
+    -- gegen PO-EN und das Signal ist wertlos.
+    CREATE TABLE IF NOT EXISTS listing_snapshots (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      listing_id        INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      captured_at       TEXT    NOT NULL,
+      my_price          REAL,
+      rank              INTEGER,
+      competitors_below INTEGER,
+      competitors_total INTEGER,
+      best_price        REAL,
+      rank_capped       INTEGER NOT NULL DEFAULT 0,
+      market_trend      REAL,
+      market_avg7       REAL,
+      market_avg30      REAL,
+      market_avg1       REAL,
+      market_available  INTEGER,
+      UNIQUE(listing_id, captured_at)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lsnap_listing ON listing_snapshots(listing_id);
+    CREATE INDEX IF NOT EXISTS idx_lsnap_captured ON listing_snapshots(captured_at);
+  `)
+
+  // Erkannte Handlungssignale. Bewusst persistent statt nur berechnet: nur so
+  // laesst sich unterscheiden, was Christoph schon gesehen hat — sonst meldet
+  // Telegram jeden Tag dieselbe Karte.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS signals (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      listing_id      INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      kind            TEXT    NOT NULL,
+      created_at      TEXT    NOT NULL,
+      my_price        REAL,
+      suggested_price REAL,
+      detail          TEXT    NOT NULL DEFAULT '',
+      notified_at     TEXT,
+      dismissed_at    TEXT,
+      applied_at      TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_signals_listing ON signals(listing_id);
+    CREATE INDEX IF NOT EXISTS idx_signals_open
+      ON signals(kind, dismissed_at, created_at);
+  `)
+
   // Add columns if missing (migration for existing DBs)
   try { db.exec("ALTER TABLE cards ADD COLUMN image TEXT NOT NULL DEFAULT ''") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN purchase_price REAL") } catch {}
@@ -97,6 +179,9 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE scrape_runs ADD COLUMN engine TEXT NOT NULL DEFAULT 'patchright'") } catch {}
   try { db.exec("ALTER TABLE prices ADD COLUMN stale_grade INTEGER NOT NULL DEFAULT 0") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN watch INTEGER NOT NULL DEFAULT 0") } catch {}
+  try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN rank_capped INTEGER NOT NULL DEFAULT 0") } catch {}
+  try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN market_avg1 REAL") } catch {}
+  try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN market_available INTEGER") } catch {}
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
@@ -111,4 +196,13 @@ function initSchema(db: Database.Database) {
   insert.run("scrape_threshold_mid", "15")
   insert.run("scrape_interval_mid_days", "3")
   insert.run("scrape_interval_cold_days", "7")
+  insert.run("cardmarket_user", "")
+  insert.run("cardmarket_games", "Pokemon,Magic")
+  insert.run("sig_raise_uptrend_pct", "5")     // avg7 muss avg30 um X% schlagen
+  insert.run("sig_raise_below_trend_pct", "10") // ... und mein Preis X% unter Trend liegen
+  insert.run("sig_lower_days", "30")            // ab wann ein Angebot als Ladenhueter gilt
+  insert.run("sig_lower_rank", "5")             // ... und ab welchem Rang
+  insert.run("sig_sellnow_spike_pct", "20")     // avg1 ueber avg30 = kurzfristiger Hype
+  insert.run("sig_min_price_eur", "2")          // unter diesem Wert lohnt kein Alarm
+  insert.run("sig_repeat_days", "14")           // gleiches Signal fruehestens wieder nach X Tagen
 }

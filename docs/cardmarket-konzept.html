@@ -1,0 +1,426 @@
+<title>Cardmarket-Modul — Konzept</title>
+<style>
+  :root {
+    --ground:      #FBFAF8;
+    --panel:       #FFFFFF;
+    --panel-alt:   #F2F1ED;
+    --ink:         #16191C;
+    --ink-soft:    #5A6169;
+    --ink-faint:   #8D949B;
+    --rule:        #E0DED8;
+    --accent:      #A8741A;
+    --accent-soft: #F3E7CE;
+    --up:          #2C6E52;
+    --down:        #A83C32;
+    --shadow:      0 1px 2px rgba(22,25,28,.06), 0 8px 24px -16px rgba(22,25,28,.24);
+
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground:      #101316;
+      --panel:       #171B1F;
+      --panel-alt:   #1E2328;
+      --ink:         #E8E6E1;
+      --ink-soft:    #A0A6AC;
+      --ink-faint:   #6E767D;
+      --rule:        #2A3036;
+      --accent:      #D9A441;
+      --accent-soft: #33290F;
+      --up:          #4FA57C;
+      --down:        #D4655A;
+      --shadow:      0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#101316; --panel:#171B1F; --panel-alt:#1E2328;
+    --ink:#E8E6E1; --ink-soft:#A0A6AC; --ink-faint:#6E767D; --rule:#2A3036;
+    --accent:#D9A441; --accent-soft:#33290F; --up:#4FA57C; --down:#D4655A;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+  :root[data-theme="light"] {
+    --ground:#FBFAF8; --panel:#FFFFFF; --panel-alt:#F2F1ED;
+    --ink:#16191C; --ink-soft:#5A6169; --ink-faint:#8D949B; --rule:#E0DED8;
+    --accent:#A8741A; --accent-soft:#F3E7CE; --up:#2C6E52; --down:#A83C32;
+    --shadow: 0 1px 2px rgba(22,25,28,.06), 0 8px 24px -16px rgba(22,25,28,.24);
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 56px 24px 88px;
+    display: flex;
+    flex-direction: column;
+    gap: 52px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(30px, 5.2vw, 42px);
+    line-height: 1.12;
+    font-weight: 600;
+    text-wrap: balance;
+    margin: 10px 0 0;
+  }
+  .standfirst {
+    font-family: var(--serif);
+    font-size: 19px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    margin-top: 14px;
+    max-width: 60ch;
+  }
+  h2 {
+    font-family: var(--serif);
+    font-size: 23px;
+    font-weight: 600;
+    margin: 0 0 4px;
+    text-wrap: balance;
+  }
+  .sec-note { color: var(--ink-soft); font-size: 15px; margin: 0 0 20px; max-width: 64ch; }
+  section { display: flex; flex-direction: column; }
+  p { margin: 0 0 12px; max-width: 66ch; }
+  p:last-child { margin-bottom: 0; }
+  strong { font-weight: 640; }
+  code {
+    font-family: var(--mono);
+    font-size: .86em;
+    background: var(--panel-alt);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  /* Kernproblem */
+  .pains { display: grid; gap: 12px; }
+  .pain {
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 14px;
+    align-items: start;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 16px 18px;
+    box-shadow: var(--shadow);
+  }
+  .pain .arrow { font-family: var(--mono); font-size: 20px; line-height: 1.3; font-weight: 700; }
+  .pain.u .arrow { color: var(--up); }
+  .pain.d .arrow { color: var(--down); }
+  .pain .t { font-weight: 620; margin-bottom: 2px; }
+  .pain .d2 { color: var(--ink-soft); font-size: 15px; }
+
+  /* Architektur */
+  .arch { display: flex; flex-direction: column; gap: 10px; }
+  .lane {
+    display: grid;
+    grid-template-columns: 128px 1fr;
+    gap: 0;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--panel);
+  }
+  .lane .src {
+    background: var(--panel-alt);
+    padding: 14px 14px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    border-right: 1px solid var(--rule);
+    display: flex;
+    align-items: center;
+  }
+  .lane .body { padding: 14px 18px; }
+  .lane .body b { display: block; font-weight: 620; margin-bottom: 3px; }
+  .lane .body span { color: var(--ink-soft); font-size: 15px; }
+  .lane.live { border-color: var(--accent); }
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 99px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    margin-left: 8px;
+    vertical-align: 2px;
+  }
+
+  /* Signal-Tabelle */
+  .tbl-scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; min-width: 520px; }
+  th, td { text-align: left; padding: 11px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 500;
+    border-bottom-width: 1.5px;
+  }
+  td.sig { white-space: nowrap; font-weight: 620; }
+  td.rule-cell { font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 99px; margin-right: 7px; vertical-align: 1px; }
+  .dot.up { background: var(--up); }
+  .dot.down { background: var(--down); }
+  .dot.buy { background: var(--accent); }
+
+  /* Phasen */
+  .phases { display: flex; flex-direction: column; gap: 0; }
+  .ph {
+    display: grid;
+    grid-template-columns: 30px 1fr auto;
+    gap: 16px;
+    align-items: baseline;
+    padding: 15px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .ph:first-child { border-top: 1px solid var(--rule); }
+  .ph .n { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 600; }
+  .ph .txt b { font-weight: 620; }
+  .ph .txt span { display: block; color: var(--ink-soft); font-size: 14.5px; margin-top: 2px; }
+  .ph .eff {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    white-space: nowrap;
+    letter-spacing: .03em;
+  }
+
+  /* Risiken */
+  .risks { display: grid; gap: 10px; }
+  .risk {
+    border-left: 2px solid var(--rule);
+    padding: 2px 0 2px 16px;
+  }
+  .risk b { font-weight: 620; display: block; }
+  .risk span { color: var(--ink-soft); font-size: 15px; }
+  .risk.hot { border-left-color: var(--accent); }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 18px;
+    color: var(--ink-faint);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .03em;
+  }
+  @media (max-width: 560px) {
+    .lane { grid-template-columns: 1fr; }
+    .lane .src { border-right: none; border-bottom: 1px solid var(--rule); }
+    .ph { grid-template-columns: 24px 1fr; }
+    .ph .eff { grid-column: 2; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">Pokémon Tracker · Erweiterung</div>
+    <h1>Cardmarket-Modul: verkaufen, ohne den Trend zu verschlafen</h1>
+    <p class="standfirst">
+      Deine Angebote, der Markt und deine Wunschliste an einem Ort — überwacht auf
+      Container&nbsp;103, rund um die Uhr, ohne dass dein Laptop läuft.
+    </p>
+  </header>
+
+  <section>
+    <h2>Das Problem</h2>
+    <p class="sec-note">Beides kostet Geld, nur auf unterschiedliche Weise.</p>
+    <div class="pains">
+      <div class="pain u">
+        <div class="arrow">↗</div>
+        <div>
+          <div class="t">Der Markt zieht an, dein Preis nicht mit</div>
+          <div class="d2">Du hast günstig eingestellt, die Karte steigt — und verkauft sich sofort weit unter Wert.</div>
+        </div>
+      </div>
+      <div class="pain d">
+        <div class="arrow">↘</div>
+        <div>
+          <div class="t">Der Markt fällt, dein Angebot bleibt liegen</div>
+          <div class="d2">Dein Preis war mal marktgerecht, jetzt ist er zu hoch. Die Karte liegt monatelang und wird immer weniger wert.</div>
+        </div>
+      </div>
+      <div class="pain d">
+        <div class="arrow">◇</div>
+        <div>
+          <div class="t">Die Wantlist kann nicht beobachten</div>
+          <div class="d2">Cardmarket sagt dir, was du suchst — aber nicht, ob 34&nbsp;€ heute günstig sind oder ob du noch zwei Wochen warten solltest.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Wie es ohne deinen Laptop läuft</h2>
+    <p class="sec-note">
+      Zwei getrennte Wege, die Grenze verläuft am Login. Beide laufen auf Container&nbsp;103 —
+      die Infrastruktur dafür steht bereits.
+    </p>
+    <div class="arch">
+      <div class="lane live">
+        <div class="src">Bright Data</div>
+        <div class="body">
+          <b>Öffentliche Marktdaten <span class="tag">läuft schon</span></b>
+          <span>Preistrends, Konkurrenzangebote, Angebotstiefe. Braucht keine Anmeldung, skaliert, täglich&nbsp;06:30 per Cron.</span>
+        </div>
+      </div>
+      <div class="lane live">
+        <div class="src">Chromium + noVNC</div>
+        <div class="body">
+          <b>Dein Konto <span class="tag">Profil vorhanden</span></b>
+          <span>Eigene Angebote und Verkäufe aus dem eingeloggten Bereich — über den persistenten Browser auf dem Container, von deiner Heim-IP.</span>
+        </div>
+      </div>
+      <div class="lane">
+        <div class="src">Einmalig</div>
+        <div class="body">
+          <b>Anmeldung per Fernzugriff</b>
+          <span>Du loggst dich einmal über noVNC ein (geht auch vom Handy), die Sitzung bleibt im Profil. Läuft sie ab, meldet sich der Bot per Telegram.</span>
+        </div>
+      </div>
+    </div>
+    <p style="margin-top:16px; color:var(--ink-soft); font-size:15px;">
+      <strong>Warum kein Bright&nbsp;Data für den Login-Bereich:</strong> Der Web&nbsp;Unlocker wechselt
+      ständig die IP und hält keine Sitzung. Mit Login liefe dein Passwort über einen Dritten und die
+      Anmeldung käme aus einem Rechenzentrum — das stärkste Sperrsignal überhaupt. Der Container-Browser
+      sieht dagegen aus wie du zu Hause.
+    </p>
+  </section>
+
+  <section>
+    <h2>Die Signale</h2>
+    <p class="sec-note">
+      Rechnen lässt sich das aus Feldern, die der Scraper längst liefert:
+      <code>avg1</code>, <code>avg7</code>, <code>avg30</code>, <code>trend</code>,
+      <code>from_price</code> und <code>available_items</code> — 13.593 Preispunkte seit April.
+    </p>
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr><th>Signal</th><th>Auslöser</th><th>Was du tust</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="sig"><span class="dot up"></span>Anheben</td>
+            <td class="rule-cell">avg7 &gt; avg30 + 5 %<br>und dein Preis &lt; trend − 10 %</td>
+            <td>Preis nachziehen, bevor jemand das Schnäppchen macht</td>
+          </tr>
+          <tr>
+            <td class="sig"><span class="dot down"></span>Senken</td>
+            <td class="rule-cell">&gt; 30 Tage gelistet<br>und Rang &gt; 5 und avg7 &lt; avg30</td>
+            <td>Runter auf Platz 2–3, bevor der Markt weiter fällt</td>
+          </tr>
+          <tr>
+            <td class="sig"><span class="dot up"></span>Jetzt raus</td>
+            <td class="rule-cell">avg1 &gt; avg30 + 20 %<br>und Angebotstiefe fällt</td>
+            <td>Spitze mitnehmen — kurzfristiger Hype</td>
+          </tr>
+          <tr>
+            <td class="sig"><span class="dot buy"></span>Zuschlagen</td>
+            <td class="rule-cell">Watchlist: from_price &lt; Zielpreis<br>oder &lt; avg30 − 12 %</td>
+            <td>Kaufen, Link kommt direkt mit</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:16px; color:var(--ink-soft); font-size:15px;">
+      Die Schwellen sind Startwerte und pro Karte übersteuerbar — bei einer Chase-Karte willst du
+      früher reagieren als bei einem 3-€-Common.
+    </p>
+  </section>
+
+  <section>
+    <h2>Umpreisen mit einem Klick</h2>
+    <p>
+      Das System rechnet den Zielpreis aus und legt ihn dir vor — im Web-Dashboard und als
+      Telegram-Nachricht. Erst dein Klick schreibt ihn über den Container-Browser auf Cardmarket.
+      Weil die Ausführung serverseitig läuft, genügt dafür dein Handy; nichts hängt am MacBook.
+    </p>
+    <p>
+      Vollautomatik bewusst nicht: Ein Parsing-Fehler würde sonst eine 200-€-Karte für 20&nbsp;€
+      weggeben. Der Klick ist billig, der Fehler wäre teuer.
+    </p>
+  </section>
+
+  <section>
+    <h2>Reihenfolge</h2>
+    <p class="sec-note">Jede Stufe ist für sich nützlich — du kannst nach jeder aufhören.</p>
+    <div class="phases">
+      <div class="ph">
+        <div class="n">01</div>
+        <div class="txt"><b>Angebote sichtbar machen</b><span>Eigene Listings einlesen, neue Tabellen, Seite „Meine Angebote“ mit Position im Wettbewerb</span></div>
+        <div class="eff">Fundament</div>
+      </div>
+      <div class="ph">
+        <div class="n">02</div>
+        <div class="txt"><b>Signale + Telegram</b><span>Die vier Regeln oben auf deinen Bestand, tägliche Meldung nach dem Scrape</span></div>
+        <div class="eff">der eigentliche Nutzen</div>
+      </div>
+      <div class="ph">
+        <div class="n">03</div>
+        <div class="txt"><b>Watchlist</b><span>Singles und Sealed mit Zielpreis, Preisverlauf und Kaufsignal</span></div>
+        <div class="eff">ersetzt die Wantlist</div>
+      </div>
+      <div class="ph">
+        <div class="n">04</div>
+        <div class="txt"><b>Umpreisen per Klick</b><span>Bestätigen im Dashboard, Ausführung über den Container-Browser</span></div>
+        <div class="eff">Komfort</div>
+      </div>
+      <div class="ph">
+        <div class="n">05</div>
+        <div class="txt"><b>Verkäufe und Marge</b><span>Erlös minus Provision, Versand und Einstand — echte Marge pro Karte und Monat</span></div>
+        <div class="eff">zeigt, ob sich’s rechnet</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Was schiefgehen kann</h2>
+    <div class="risks">
+      <div class="risk hot">
+        <b>Cardmarket untersagt automatisiertes Auslesen</b>
+        <span>Steht so in den Nutzungsbedingungen. Das Risiko liegt bei dir. Wir halten es klein:
+        moderate Frequenz, keine parallelen Zugriffe im Login-Bereich, deine eigene IP — technisch
+        das, was ein Browser-Plugin auch tut.</span>
+      </div>
+      <div class="risk">
+        <b>Sitzung läuft ab</b>
+        <span>Telegram-Meldung, du loggst dich per noVNC neu ein. Kein stiller Ausfall.</span>
+      </div>
+      <div class="risk">
+        <b>Cardmarket ändert das Layout</b>
+        <span>Der Parser bricht. Ein täglicher Plausibilitätscheck schlägt Alarm, statt still falsche
+        Zahlen zu schreiben — sonst preist du auf Basis von Müll um.</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Baut auf Bestehendem auf · 207 Karten · 13.593 Preispunkte seit 07.04.2026 · Container 103
+  </footer>
+
+</div>
