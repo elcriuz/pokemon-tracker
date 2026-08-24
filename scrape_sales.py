@@ -224,8 +224,10 @@ def main() -> int:
             h = page.content()
             text = re.sub(r"[ \t]+", " ", page.inner_text("body"))
             d = parse_order_detail(text, h)
-            buyer_m = re.search(r"Verkauf #\d+\s*\n\s*([^\n]+)", text)
-            buyer = buyer_m.group(1).strip() if buyer_m else ""
+            # Die Ueberschrift "Verkauf #<id>" steht zweimal untereinander, der
+            # Kaeufername erst danach — sonst faengt man die Ueberschrift selbst.
+            buyer_m = re.search(r"Verkauf #(\d+)\s*\n\s*Verkauf #\1\s*\n\s*([^\n]+)", text)
+            buyer = buyer_m.group(2).strip() if buyer_m else ""
 
             row = db.execute("SELECT id FROM orders WHERE cm_order_id = ?",
                              (o["cm_order_id"],)).fetchone()
