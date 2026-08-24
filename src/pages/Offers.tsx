@@ -31,7 +31,9 @@ function RankBadge({ rank, capped, total }: { rank: number | null; capped: numbe
   const color = rank === 1 ? "text-amber-400" : rank <= 3 ? "text-emerald-400" : "text-muted-foreground"
   return (
     <span className={`text-sm font-medium ${color}`} title={rank === 1 ? "Günstigster – prüfen, ob zu billig" : ""}>
-      {rank}{total ? <span className="text-muted-foreground text-xs">/{total}</span> : null}
+      {rank}
+      {/* total zaehlt nur die fremden Angebote — das eigene gehoert dazu. */}
+      {total ? <span className="text-muted-foreground text-xs">/{total + 1}</span> : null}
     </span>
   )
 }

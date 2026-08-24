@@ -80,9 +80,16 @@ def latest_snapshots(db) -> list[dict]:
 
 
 def rank_text(d: dict) -> str:
-    """'Rang 7 von 40' — oder nur 'Rang 7', wenn die Gesamtzahl fehlt."""
-    if d["competitors_total"]:
-        return f"Rang {d['rank']} von {d['competitors_total']}"
+    """'Rang 7 von 40' — die Gesamtzahl schliesst das eigene Angebot mit ein.
+
+    competitors_total zaehlt nur die FREMDEN Angebote, sonst kaeme "Rang 50 von 49"
+    heraus. Steht man nicht unter den angezeigten 50, gibt es keinen Rang.
+    """
+    if d.get("rank_capped") or d.get("rank") is None:
+        return "schlechter als Platz 50"
+    total = d.get("competitors_total")
+    if total:
+        return f"Rang {d['rank']} von {total + 1}"
     return f"Rang {d['rank']}"
 
 

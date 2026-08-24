@@ -254,6 +254,19 @@ def test_signals():
                              best_same=None, competitors_same=0)) == set())
 
 
+def test_rank_text():
+    print("\nRang-Darstellung")
+    check("Gesamtzahl schliesst das eigene Angebot ein",
+          sg.rank_text({"rank": 3, "competitors_total": 20, "rank_capped": 0})
+          == "Rang 3 von 21")
+    check("kein 'Rang 50 von 49'",
+          sg.rank_text({"rank": 50, "competitors_total": 49, "rank_capped": 0})
+          == "Rang 50 von 50")
+    check("ausserhalb der Anzeige wird benannt, nicht als None gezeigt",
+          sg.rank_text({"rank": None, "competitors_total": 50, "rank_capped": 1})
+          == "schlechter als Platz 50")
+
+
 def test_signal_dedup():
     print("\nSignal-Wiedervorlage")
     db = sqlite3.connect(":memory:")
@@ -317,6 +330,7 @@ if __name__ == "__main__":
     test_offers_persistence()
     test_competition()
     test_signals()
+    test_rank_text()
     test_signal_dedup()
     test_watchlist()
     test_blocked_detection()
