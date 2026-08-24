@@ -137,7 +137,8 @@ offersRouter.post("/:id/price", (req, res) => {
       if (err) {
         // Der Skript-Text ist fuer Menschen geschrieben — direkt durchreichen,
         // statt ihn hinter einer generischen Fehlermeldung zu verstecken.
-        const line = out.split("\n").filter((l) => l.includes("ERROR")).pop()
+        // Die ERSTE Fehlerzeile nennt die Ursache; spaetere sind nur Hinweise.
+        const line = out.split("\n").filter((l) => l.includes("ERROR"))[0]
         return res.status(422).json({
           error: line?.replace(/^.*ERROR\s+/, "") || "Preisänderung fehlgeschlagen",
           detail: out.slice(-800),
