@@ -48,6 +48,11 @@ export const api = {
     fetchJSON<any>(`/binders/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteBinder: (id: number) =>
     fetchJSON<any>(`/binders/${id}`, { method: "DELETE" }),
+  getSales: (game = "") =>
+    fetchJSON<any>(`/sales${game ? `?game=${encodeURIComponent(game)}` : ""}`),
+
+  getSaleItems: (id: number) => fetchJSON<any>(`/sales/${id}/items`),
+
   getWatchlist: () => fetchJSON<any>("/watchlist"),
 
   addWatchlistItem: (body: any) =>

@@ -187,6 +187,41 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_wsnap_item ON watchlist_snapshots(watchlist_id);
   `)
 
+  // Verkaeufe aus dem eingeloggten Bereich (scrape_sales.py legt sie sonst selbst an).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS orders (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      cm_order_id  TEXT    NOT NULL UNIQUE,
+      game         TEXT    NOT NULL DEFAULT '',
+      buyer        TEXT    NOT NULL DEFAULT '',
+      state        TEXT    NOT NULL DEFAULT '',
+      item_value   REAL,
+      shipping     REAL,
+      total        REAL,
+      paid_at      TEXT,
+      sent_at      TEXT,
+      arrived_at   TEXT,
+      fetched_at   TEXT    NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS order_items (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id      INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      card_id       INTEGER REFERENCES cards(id) ON DELETE SET NULL,
+      cm_article_id TEXT,
+      product_url   TEXT    NOT NULL DEFAULT '',
+      name          TEXT    NOT NULL DEFAULT '',
+      expansion     TEXT    NOT NULL DEFAULT '',
+      number        TEXT    NOT NULL DEFAULT '',
+      condition     TEXT    NOT NULL DEFAULT '',
+      language      TEXT    NOT NULL DEFAULT '',
+      price         REAL,
+      amount        INTEGER NOT NULL DEFAULT 1,
+      comment       TEXT    NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+    CREATE INDEX IF NOT EXISTS idx_orders_state ON orders(state);
+  `)
+
   // Erkannte Handlungssignale. Bewusst persistent statt nur berechnet: nur so
   // laesst sich unterscheiden, was Christoph schon gesehen hat — sonst meldet
   // Telegram jeden Tag dieselbe Karte.
@@ -289,5 +324,6 @@ function initSchema(db: Database.Database) {
   insert.run("sig_underpriced_pct", "15")       // unter dem guenstigsten Zustandsgleichen
   insert.run("sig_overpriced_pct", "60")        // ueber dem Median der Zustandsgleichen
   insert.run("sig_buy_below_median_pct", "12")  // Kaufsignal ohne gesetzten Zielpreis
+  insert.run("cm_commission_pct", "5")          // Cardmarket-Provision auf den Artikelwert
   insert.run("sig_repeat_days", "14")           // gleiches Signal fruehestens wieder nach X Tagen
 }
