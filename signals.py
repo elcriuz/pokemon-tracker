@@ -26,6 +26,7 @@ MIN_COMPARABLES = 2
 
 RAISE, LOWER, SELL_NOW, UNDERCUT = "raise", "lower", "sell_now", "undercut"
 UNDERPRICED = "underpriced"
+OVERPRICED = "overpriced"
 
 LABELS = {
     RAISE:    ("📈", "Preis anheben"),
@@ -33,6 +34,7 @@ LABELS = {
     SELL_NOW: ("🔥", "Jetzt verkaufen"),
     UNDERCUT: ("⚔️", "Unterboten"),
     UNDERPRICED: ("💸", "Zu günstig"),
+    OVERPRICED: ("🧊", "Zu teuer"),
 }
 
 
@@ -50,7 +52,7 @@ def latest_snapshots(db) -> list[dict]:
         SELECT l.id, l.product_name, l.game, l.condition, l.language, l.price,
                l.first_seen, l.product_url,
                s.captured_at, s.rank, s.rank_capped, s.competitors_total, s.best_price,
-               s.best_same, s.competitors_same,
+               s.best_same, s.median_same, s.competitors_same,
                s.market_trend, s.market_avg7, s.market_avg30, s.market_avg1,
                s.market_available
         FROM listings l
@@ -61,7 +63,7 @@ def latest_snapshots(db) -> list[dict]:
     """).fetchall()
     cols = ["id", "name", "game", "condition", "language", "price", "first_seen",
             "url", "captured_at", "rank", "rank_capped", "competitors_total",
-            "best_price", "best_same", "competitors_same",
+            "best_price", "best_same", "median_same", "competitors_same",
             "trend", "avg7", "avg30", "avg1", "available"]
     out = []
     for r in rows:
@@ -137,7 +139,23 @@ def evaluate(d: dict, cfg: dict) -> list[dict]:
                        f"{d['competitors_same']} Vergleichsangebote), {rank_text(d)}"),
         })
 
-    # 3) Ladenhueter im fallenden Markt -> runter, bevor es schlimmer wird.
+    # 3) Deutlich ueber dem zustandsgleichen Markt -> wird so nie verkauft.
+    #
+    # Verglichen wird gegen den MEDIAN, nicht gegen das guenstigste Angebot:
+    # ueber dem Billigsten zu liegen ist voellig normal, deutlich ueber der
+    # Mitte des Feldes dagegen heisst, dass zuerst alle anderen wegverkauft
+    # werden. Braucht keine Standzeit — der Abstand steht ab Tag eins fest.
+    med = d.get("median_same") if (d.get("competitors_same") or 0) >= MIN_COMPARABLES else None
+    if med and price > med * (1 + cfg["overpriced"] / 100):
+        out.append({
+            "kind": OVERPRICED,
+            "suggested": round(med, 2),
+            "detail": (f"{(price/med-1)*100:.0f}% über dem Mittelfeld der "
+                       f"{d['condition']}-Angebote ({med:.2f} €, "
+                       f"{d['competitors_same']} Vergleichsangebote), {rank_text(d)}"),
+        })
+
+    # 4) Ladenhueter im fallenden Markt -> runter, bevor es schlimmer wird.
     age = days_since(d["first_seen"])
     if (age is not None and age > cfg["lower_days"]
             and d["rank"] is not None and d["rank"] > cfg["lower_rank"]
@@ -151,7 +169,7 @@ def evaluate(d: dict, cfg: dict) -> list[dict]:
                        + f", Markt fällt ({avg7:.2f} € < {avg30:.2f} €)"),
         })
 
-    # 4) Kurzfristiger Ausschlag nach oben bei sinkendem Angebot -> Spitze mitnehmen.
+    # 5) Kurzfristiger Ausschlag nach oben bei sinkendem Angebot -> Spitze mitnehmen.
     if avg1 is not None and avg30 is not None and avg30 > 0:
         spike = avg1 > avg30 * (1 + cfg["sellnow_spike"] / 100)
         supply_down = (d["available"] is not None and d["prev_available"] is not None
@@ -168,7 +186,7 @@ def evaluate(d: dict, cfg: dict) -> list[dict]:
                            f"({d['prev_available']} → {d['available']})"),
             })
 
-    # 5) Jemand hat mich unterboten -> ich bin nicht mehr vorne.
+    # 6) Jemand hat mich unterboten -> ich bin nicht mehr vorne.
     if (d["rank"] is not None and d["prev_rank"] is not None
             and d["prev_rank"] <= 3 and d["rank"] > d["prev_rank"]):
         out.append({
@@ -253,6 +271,7 @@ def main() -> int:
         "sellnow_spike": get(db, "sig_sellnow_spike_pct", 20),
         "min_price": get(db, "sig_min_price_eur", 2),
         "underpriced": get(db, "sig_underpriced_pct", 15),
+        "overpriced": get(db, "sig_overpriced_pct", 60),
         "repeat_days": get(db, "sig_repeat_days", 14),
     }
 

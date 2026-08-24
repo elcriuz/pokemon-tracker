@@ -162,6 +162,12 @@ def test_competition():
     check("gleicher Zustand wird als Vergleich erkannt",
           r4["best_same"] == 700.0 and r4["competitors_same"] == 1)
 
+    ex3 = [{"price": p, "seller": f"S{p}", "condition": "EX"} for p in (10.0, 20.0, 60.0)]
+    r5 = sc.rank_for(15.0, ex3, "packgehabt", "EX")
+    check("Median statt Mittelwert (Ausreisser verzerren nicht)",
+          r5["median_same"] == 20.0 and r5["best_same"] == 10.0,
+          f"median={r5['median_same']}")
+
     check("Sprach-ID Deutsch", "language=3" in sc.build_url("u", "NM", "de"))
     check("Sprach-ID Japanisch", "language=7" in sc.build_url("u", "NM", "ja"))
     check("Zustand NM", "minCondition=2" in sc.build_url("u", "NM", "de"))
@@ -181,7 +187,7 @@ def base_listing(**kw):
          "language": "de", "price": 10.0, "first_seen": datetime.now().isoformat(),
          "url": "http://x", "captured_at": datetime.now().isoformat(),
          "rank": 3, "rank_capped": 0, "competitors_total": 20, "best_price": 9.0,
-         "best_same": 10.0, "competitors_same": 6,
+         "best_same": 10.0, "median_same": 11.0, "competitors_same": 6,
          "trend": 10.0, "avg7": 10.0, "avg30": 10.0, "avg1": 10.0,
          "available": 100, "prev_rank": 3, "prev_available": 100}
     d.update(kw)
@@ -189,7 +195,8 @@ def base_listing(**kw):
 
 
 CFG = {"raise_uptrend": 5, "raise_below": 10, "lower_days": 30, "lower_rank": 5,
-       "sellnow_spike": 20, "min_price": 2, "repeat_days": 14, "underpriced": 15}
+       "sellnow_spike": 20, "min_price": 2, "repeat_days": 14, "underpriced": 15,
+       "overpriced": 60}
 
 
 def kinds(d):
@@ -206,6 +213,12 @@ def test_signals():
     check("steigender Markt bei marktgerechtem Preis -> kein Signal",
           sg.RAISE not in kinds(base_listing(avg7=11.0, avg30=10.0, price=9.9, best_same=10.0)))
 
+    check("deutlich über dem Mittelfeld -> zu teuer",
+          sg.OVERPRICED in kinds(base_listing(price=20.0, median_same=11.0)))
+    check("etwas über dem Mittelfeld -> kein Signal",
+          sg.OVERPRICED not in kinds(base_listing(price=13.0, median_same=11.0)))
+    check("teuer, aber zu wenig Vergleichsangebote -> kein Signal",
+          sg.OVERPRICED not in kinds(base_listing(price=20.0, median_same=11.0, competitors_same=1)))
     check("deutlich unter Vergleichsmarkt -> zu günstig",
           sg.UNDERPRICED in kinds(base_listing(price=7.0, best_same=10.0)))
     check("zu wenig Vergleichsangebote -> kein Preissignal",

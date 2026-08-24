@@ -24,7 +24,7 @@ offersRouter.get("/", (req, res) => {
            l.condition, l.language, l.is_foil, l.price, l.quantity, l.comment,
            l.first_seen, l.card_id,
            s.captured_at, s.rank, s.rank_capped, s.competitors_below,
-           s.competitors_total, s.best_price, s.best_same, s.competitors_same,
+           s.competitors_total, s.best_price, s.best_same, s.median_same, s.competitors_same,
            s.market_trend, s.market_avg7, s.market_avg30, s.market_avg1,
            s.market_available
     FROM listings l

@@ -135,6 +135,7 @@ function initSchema(db: Database.Database) {
       best_price        REAL,
       rank_capped       INTEGER NOT NULL DEFAULT 0,
       best_same         REAL,
+      median_same       REAL,
       competitors_same  INTEGER,
       market_trend      REAL,
       market_avg7       REAL,
@@ -183,6 +184,7 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE cards ADD COLUMN watch INTEGER NOT NULL DEFAULT 0") } catch {}
   try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN rank_capped INTEGER NOT NULL DEFAULT 0") } catch {}
   try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN best_same REAL") } catch {}
+  try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN median_same REAL") } catch {}
   try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN competitors_same INTEGER") } catch {}
   try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN market_avg1 REAL") } catch {}
   try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN market_available INTEGER") } catch {}
@@ -208,6 +210,7 @@ function initSchema(db: Database.Database) {
   insert.run("sig_lower_rank", "5")             // ... und ab welchem Rang
   insert.run("sig_sellnow_spike_pct", "20")     // avg1 ueber avg30 = kurzfristiger Hype
   insert.run("sig_min_price_eur", "2")          // unter diesem Wert lohnt kein Alarm
-  insert.run("sig_underpriced_pct", "15")       // Abstand zum guenstigsten Vergleichbaren
+  insert.run("sig_underpriced_pct", "15")       // unter dem guenstigsten Zustandsgleichen
+  insert.run("sig_overpriced_pct", "60")        // ueber dem Median der Zustandsgleichen
   insert.run("sig_repeat_days", "14")           // gleiches Signal fruehestens wieder nach X Tagen
 }

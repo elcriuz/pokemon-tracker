@@ -159,13 +159,21 @@ def rank_for(my_price: float, competitors: list[dict], me: str,
     capped = (not found_me
               and len(competitors) >= SHOWN_LIMIT
               and all(c["price"] <= my_price for c in others))
+    same_prices = sorted(c["price"] for c in same)
+    median_same = None
+    if same_prices:
+        n = len(same_prices)
+        median_same = (same_prices[n // 2] if n % 2
+                       else (same_prices[n // 2 - 1] + same_prices[n // 2]) / 2)
+
     return {
         "rank": None if capped else below + 1,
         "rank_capped": 1 if capped else 0,
         "competitors_below": below,
         "competitors_total": len(others),
         "best_price": best,
-        "best_same": min((c["price"] for c in same), default=None),
+        "best_same": same_prices[0] if same_prices else None,
+        "median_same": median_same,
         "competitors_same": len(same),
     }
 
@@ -250,7 +258,7 @@ def main() -> int:
                         """UPDATE listing_snapshots
                            SET rank = ?, rank_capped = ?, competitors_below = ?,
                                competitors_total = ?, best_price = ?,
-                               best_same = ?, competitors_same = ?,
+                               best_same = ?, median_same = ?, competitors_same = ?,
                                market_trend = ?, market_avg7 = ?, market_avg30 = ?,
                                market_avg1 = ?, market_available = ?
                            WHERE listing_id = ? AND captured_at = (
@@ -258,7 +266,7 @@ def main() -> int:
                                WHERE listing_id = ?)""",
                         (res["rank"], res["rank_capped"], res["competitors_below"],
                          res["competitors_total"], res["best_price"],
-                         res["best_same"], res["competitors_same"],
+                         res["best_same"], res["median_same"], res["competitors_same"],
                          market.get("trend"), market.get("avg7"), market.get("avg30"),
                          market.get("avg1"), market.get("available_items"),
                          listing_id, listing_id),

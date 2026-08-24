@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/lib/api"
-import { TrendingUp, TrendingDown, Flame, Swords, Banknote, ExternalLink, X } from "lucide-react"
+import { TrendingUp, TrendingDown, Flame, Swords, Banknote, Snowflake, ExternalLink, X } from "lucide-react"
 
 /** Die vier Handlungssignale. Farbe kodiert Richtung, nicht Wichtigkeit. */
 const SIGNAL_CONFIG: Record<string, { label: string; icon: any; color: string; bg: string }> = {
@@ -10,6 +10,7 @@ const SIGNAL_CONFIG: Record<string, { label: string; icon: any; color: string; b
   sell_now: { label: "Jetzt raus",    icon: Flame,        color: "text-orange-400",  bg: "bg-orange-500/20" },
   undercut: { label: "Unterboten",    icon: Swords,       color: "text-red-400",     bg: "bg-red-500/15" },
   underpriced: { label: "Zu günstig", icon: Banknote,     color: "text-sky-400",     bg: "bg-sky-500/15" },
+  overpriced:  { label: "Zu teuer",   icon: Snowflake,    color: "text-violet-400",  bg: "bg-violet-500/15" },
 }
 
 function formatEur(val: number | null) {
