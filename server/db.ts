@@ -149,13 +149,52 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_lsnap_captured ON listing_snapshots(captured_at);
   `)
 
+  // Eigene Wunschliste. Cardmarkets Wantlist sagt nur "ich suche das" — hier
+  // kommt dazu, was es kosten darf und wie sich der Preis seither entwickelt.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS watchlist (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_url  TEXT    NOT NULL,
+      name         TEXT    NOT NULL DEFAULT '',
+      game         TEXT    NOT NULL DEFAULT 'Pokemon',
+      kind         TEXT    NOT NULL DEFAULT 'single',
+      condition    TEXT    NOT NULL DEFAULT 'NM',
+      language     TEXT    NOT NULL DEFAULT 'de',
+      target_price REAL,
+      max_price    REAL,
+      note         TEXT    NOT NULL DEFAULT '',
+      active       INTEGER NOT NULL DEFAULT 1,
+      last_error   TEXT,
+      created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(product_url, condition, language)
+    );
+
+    -- Preisverlauf des Wunschzettels. Genau das kann Cardmarket nicht: sehen,
+    -- ob 34 Euro heute guenstig sind oder ob es letzte Woche 28 waren.
+    CREATE TABLE IF NOT EXISTS watchlist_snapshots (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      watchlist_id INTEGER NOT NULL REFERENCES watchlist(id) ON DELETE CASCADE,
+      captured_at  TEXT    NOT NULL,
+      best_price   REAL,
+      median_price REAL,
+      offers_count INTEGER,
+      market_trend REAL,
+      market_avg7  REAL,
+      market_avg30 REAL,
+      UNIQUE(watchlist_id, captured_at)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_wsnap_item ON watchlist_snapshots(watchlist_id);
+  `)
+
   // Erkannte Handlungssignale. Bewusst persistent statt nur berechnet: nur so
   // laesst sich unterscheiden, was Christoph schon gesehen hat — sonst meldet
   // Telegram jeden Tag dieselbe Karte.
   db.exec(`
     CREATE TABLE IF NOT EXISTS signals (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      listing_id      INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      listing_id      INTEGER REFERENCES listings(id) ON DELETE CASCADE,
+      watchlist_id    INTEGER REFERENCES watchlist(id) ON DELETE CASCADE,
       kind            TEXT    NOT NULL,
       created_at      TEXT    NOT NULL,
       my_price        REAL,
@@ -171,6 +210,42 @@ function initSchema(db: Database.Database) {
       ON signals(kind, dismissed_at, created_at);
   `)
 
+  // signals war zuerst nur fuer eigene Angebote gedacht (listing_id NOT NULL).
+  // Kaufsignale der Watchlist haengen an keinem Angebot — die Spalte muss also
+  // optional werden. SQLite kann NOT NULL nicht nachtraeglich loesen, deshalb
+  // einmalig neu aufbauen. Die Tabelle ist jung, bestehende Zeilen wandern mit.
+  try {
+    const cols = db.prepare("PRAGMA table_info(signals)").all() as any[]
+    if (cols.length && !cols.some((c) => c.name === "watchlist_id")) {
+      db.exec(`
+        ALTER TABLE signals RENAME TO signals_old;
+        CREATE TABLE signals (
+          id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          listing_id      INTEGER REFERENCES listings(id) ON DELETE CASCADE,
+          watchlist_id    INTEGER REFERENCES watchlist(id) ON DELETE CASCADE,
+          kind            TEXT    NOT NULL,
+          created_at      TEXT    NOT NULL,
+          my_price        REAL,
+          suggested_price REAL,
+          detail          TEXT    NOT NULL DEFAULT '',
+          notified_at     TEXT,
+          dismissed_at    TEXT,
+          applied_at      TEXT
+        );
+        INSERT INTO signals (id, listing_id, kind, created_at, my_price,
+                             suggested_price, detail, notified_at, dismissed_at, applied_at)
+          SELECT id, listing_id, kind, created_at, my_price, suggested_price,
+                 detail, notified_at, dismissed_at, applied_at FROM signals_old;
+        DROP TABLE signals_old;
+        CREATE INDEX IF NOT EXISTS idx_signals_listing ON signals(listing_id);
+        CREATE INDEX IF NOT EXISTS idx_signals_watchlist ON signals(watchlist_id);
+      `)
+    }
+  } catch (e) { console.error("signals-Migration:", e) }
+
+  // Erst hier: bei Alt-Datenbanken gibt es die Spalte vor der Migration nicht.
+  try { db.exec("CREATE INDEX IF NOT EXISTS idx_signals_watchlist ON signals(watchlist_id)") } catch {}
+
   // Add columns if missing (migration for existing DBs)
   try { db.exec("ALTER TABLE cards ADD COLUMN image TEXT NOT NULL DEFAULT ''") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN purchase_price REAL") } catch {}
@@ -185,6 +260,7 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN rank_capped INTEGER NOT NULL DEFAULT 0") } catch {}
   try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN best_same REAL") } catch {}
   try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN median_same REAL") } catch {}
+  try { db.exec("ALTER TABLE watchlist ADD COLUMN last_error TEXT") } catch {}
   try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN competitors_same INTEGER") } catch {}
   try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN market_avg1 REAL") } catch {}
   try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN market_available INTEGER") } catch {}
@@ -212,5 +288,6 @@ function initSchema(db: Database.Database) {
   insert.run("sig_min_price_eur", "2")          // unter diesem Wert lohnt kein Alarm
   insert.run("sig_underpriced_pct", "15")       // unter dem guenstigsten Zustandsgleichen
   insert.run("sig_overpriced_pct", "60")        // ueber dem Median der Zustandsgleichen
+  insert.run("sig_buy_below_median_pct", "12")  // Kaufsignal ohne gesetzten Zielpreis
   insert.run("sig_repeat_days", "14")           // gleiches Signal fruehestens wieder nach X Tagen
 }

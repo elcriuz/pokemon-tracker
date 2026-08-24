@@ -24,6 +24,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 import scrape_offers as so
 import scrape_competition as sc
 import signals as sg
+import watchlist as wl
 
 _failures: list[str] = []
 _passed = 0
@@ -270,6 +271,36 @@ def test_signal_dedup():
     check("abgehaktes Signal darf wieder auftauchen", sg.store(db, 1, sig, 10.0, 14))
 
 
+def test_watchlist():
+    print("\nWunschliste")
+    check("Median bei ungerader Anzahl", wl.median([3.0, 1.0, 2.0]) == 2.0)
+    check("Median bei gerader Anzahl", wl.median([1.0, 2.0, 3.0, 4.0]) == 2.5)
+    check("Median einer leeren Liste", wl.median([]) is None)
+
+    item = {"id": 1, "name": "X", "target_price": 30.0}
+    snap = {"best_price": 28.0, "median_price": 40.0}
+    sig = wl.evaluate_buy(item, snap, None, 12)
+    check("Zielpreis erreicht -> kaufen", sig is not None and "Zielpreis" in sig["detail"])
+
+    sig2 = wl.evaluate_buy(item, {"best_price": 35.0, "median_price": 36.0}, None, 12)
+    check("über Zielpreis und nah am Mittelfeld -> kein Signal", sig2 is None)
+
+    # Ohne Zielpreis zaehlt allein der Abstand zum Mittelfeld.
+    frei = {"id": 2, "name": "Y", "target_price": None}
+    sig3 = wl.evaluate_buy(frei, {"best_price": 30.0, "median_price": 40.0}, None, 12)
+    check("ohne Zielpreis: deutlich unter Mittelfeld -> kaufen", sig3 is not None)
+    sig4 = wl.evaluate_buy(frei, {"best_price": 38.0, "median_price": 40.0}, None, 12)
+    check("ohne Zielpreis: nah am Mittelfeld -> kein Signal", sig4 is None)
+
+    sig5 = wl.evaluate_buy(frei, {"best_price": 30.0, "median_price": 40.0},
+                           {"best_price": 36.0}, 12)
+    check("Preisrutsch seit dem letzten Blick wird erwähnt",
+          sig5 is not None and "günstiger" in sig5["detail"])
+
+    check("ohne Angebote kein Signal",
+          wl.evaluate_buy(item, {"best_price": None, "median_price": None}, None, 12) is None)
+
+
 def test_blocked_detection():
     print("\nSchutz gegen Fehldaten")
     check("Cloudflare-Seite wird erkannt",
@@ -287,6 +318,7 @@ if __name__ == "__main__":
     test_competition()
     test_signals()
     test_signal_dedup()
+    test_watchlist()
     test_blocked_detection()
 
     total = _passed + len(_failures)

@@ -314,9 +314,10 @@
   <section>
     <h2>Die Signale</h2>
     <p class="sec-note">
-      Rechnen lässt sich das aus Feldern, die der Scraper längst liefert:
-      <code>avg1</code>, <code>avg7</code>, <code>avg30</code>, <code>trend</code>,
-      <code>from_price</code> und <code>available_items</code> — 13.593 Preispunkte seit April.
+      Alle Preisvergleiche laufen gegen Angebote im <strong>exakt gleichen Zustand</strong> —
+      nicht gegen den Produkt-Trend. Der gilt auf Cardmarket für alle Zustände gemeinsam
+      und wird von neuwertiger Ware bestimmt; eine gespielte Karte daran zu messen liefert
+      Unsinn. Marktrichtung (<code>avg1/7/30</code>) bleibt als Bestätigung.
     </p>
     <div class="tbl-scroll">
       <table>
@@ -325,14 +326,24 @@
         </thead>
         <tbody>
           <tr>
+            <td class="sig"><span class="dot buy"></span>Zu günstig</td>
+            <td class="rule-cell">Preis &lt; günstigstes Angebot<br>im gleichen Zustand − 15 %</td>
+            <td>Anheben, bevor jemand das Schnäppchen macht</td>
+          </tr>
+          <tr>
+            <td class="sig"><span class="dot down"></span>Zu teuer</td>
+            <td class="rule-cell">Preis &gt; Median der Angebote<br>im gleichen Zustand + 60 %</td>
+            <td>Senken — sonst werden zuerst alle anderen verkauft</td>
+          </tr>
+          <tr>
             <td class="sig"><span class="dot up"></span>Anheben</td>
-            <td class="rule-cell">avg7 &gt; avg30 + 5 %<br>und dein Preis &lt; trend − 10 %</td>
-            <td>Preis nachziehen, bevor jemand das Schnäppchen macht</td>
+            <td class="rule-cell">avg7 &gt; avg30 + 5 %<br>und Preis &lt; Vergleichsmarkt − 10 %</td>
+            <td>Im steigenden Markt nachziehen</td>
           </tr>
           <tr>
             <td class="sig"><span class="dot down"></span>Senken</td>
             <td class="rule-cell">&gt; 30 Tage gelistet<br>und Rang &gt; 5 und avg7 &lt; avg30</td>
-            <td>Runter auf Platz 2–3, bevor der Markt weiter fällt</td>
+            <td>Runter, bevor der Markt weiter fällt</td>
           </tr>
           <tr>
             <td class="sig"><span class="dot up"></span>Jetzt raus</td>
@@ -340,16 +351,16 @@
             <td>Spitze mitnehmen — kurzfristiger Hype</td>
           </tr>
           <tr>
-            <td class="sig"><span class="dot buy"></span>Zuschlagen</td>
-            <td class="rule-cell">Watchlist: from_price &lt; Zielpreis<br>oder &lt; avg30 − 12 %</td>
-            <td>Kaufen, Link kommt direkt mit</td>
+            <td class="sig"><span class="dot down"></span>Unterboten</td>
+            <td class="rule-cell">war unter den Top 3,<br>ist es nicht mehr</td>
+            <td>Position zurückholen oder bewusst liegen lassen</td>
           </tr>
         </tbody>
       </table>
     </div>
     <p style="margin-top:16px; color:var(--ink-soft); font-size:15px;">
-      Die Schwellen sind Startwerte und pro Karte übersteuerbar — bei einer Chase-Karte willst du
-      früher reagieren als bei einem 3-€-Common.
+      Die Schwellen stehen in den Einstellungen. Gibt es weniger als zwei Angebote im gleichen
+      Zustand, schweigt das System, statt aus dünner Datenlage zu raten.
     </p>
   </section>
 
@@ -368,32 +379,33 @@
 
   <section>
     <h2>Reihenfolge</h2>
-    <p class="sec-note">Jede Stufe ist für sich nützlich — du kannst nach jeder aufhören.</p>
+    <p class="sec-note">Stufen 1 bis 3 laufen. Stufe 4 und 5 brauchen eine einmalige Anmeldung
+    im Container-Browser.</p>
     <div class="phases">
       <div class="ph">
         <div class="n">01</div>
         <div class="txt"><b>Angebote sichtbar machen</b><span>Eigene Listings einlesen, neue Tabellen, Seite „Meine Angebote“ mit Position im Wettbewerb</span></div>
-        <div class="eff">Fundament</div>
+        <div class="eff">läuft</div>
       </div>
       <div class="ph">
         <div class="n">02</div>
-        <div class="txt"><b>Signale + Telegram</b><span>Die vier Regeln oben auf deinen Bestand, tägliche Meldung nach dem Scrape</span></div>
-        <div class="eff">der eigentliche Nutzen</div>
+        <div class="txt"><b>Signale + Telegram</b><span>Die sechs Regeln oben auf deinen Bestand, tägliche Meldung um 8:45</span></div>
+        <div class="eff">läuft</div>
       </div>
       <div class="ph">
         <div class="n">03</div>
         <div class="txt"><b>Watchlist</b><span>Singles und Sealed mit Zielpreis, Preisverlauf und Kaufsignal</span></div>
-        <div class="eff">ersetzt die Wantlist</div>
+        <div class="eff">offen</div>
       </div>
       <div class="ph">
         <div class="n">04</div>
         <div class="txt"><b>Umpreisen per Klick</b><span>Bestätigen im Dashboard, Ausführung über den Container-Browser</span></div>
-        <div class="eff">Komfort</div>
+        <div class="eff">braucht Login</div>
       </div>
       <div class="ph">
         <div class="n">05</div>
         <div class="txt"><b>Verkäufe und Marge</b><span>Erlös minus Provision, Versand und Einstand — echte Marge pro Karte und Monat</span></div>
-        <div class="eff">zeigt, ob sich’s rechnet</div>
+        <div class="eff">braucht Login</div>
       </div>
     </div>
   </section>
@@ -420,7 +432,7 @@
   </section>
 
   <footer>
-    Baut auf Bestehendem auf · 207 Karten · 13.593 Preispunkte seit 07.04.2026 · Container 103
+121 Angebote · Pokémon + Magic · 58 Tests · täglich 7:15 / 7:30 / 8:45 auf Container 103
   </footer>
 
 </div>

@@ -35,6 +35,7 @@ LABELS = {
     UNDERCUT: ("⚔️", "Unterboten"),
     UNDERPRICED: ("💸", "Zu günstig"),
     OVERPRICED: ("🧊", "Zu teuer"),
+    "buy":       ("🛒", "Kaufen"),
 }
 
 
@@ -225,14 +226,24 @@ def notify(db, limit: int = 12) -> int:
         log.error("Telegram nicht verfuegbar: %s", e)
         return 0
 
+    # LEFT JOIN auf beide Quellen: Verkaufssignale haengen an einem eigenen
+    # Angebot, Kaufsignale an einem Wunschlisten-Eintrag.
     rows = db.execute("""
         SELECT s.id, s.kind, s.my_price, s.suggested_price, s.detail,
-               l.product_name, l.game, l.condition, l.language, l.product_url
-        FROM signals s JOIN listings l ON l.id = s.listing_id
+               COALESCE(l.product_name, w.name)   AS name,
+               COALESCE(l.game, w.game)           AS game,
+               COALESCE(l.condition, w.condition) AS cond,
+               COALESCE(l.language, w.language)   AS lang,
+               COALESCE(l.product_url, w.product_url) AS url
+        FROM signals s
+        LEFT JOIN listings l  ON l.id = s.listing_id
+        LEFT JOIN watchlist w ON w.id = s.watchlist_id
         WHERE s.notified_at IS NULL AND s.dismissed_at IS NULL
-        ORDER BY CASE s.kind WHEN 'sell_now' THEN 0 WHEN 'raise' THEN 1
-                             WHEN 'undercut' THEN 2 ELSE 3 END,
-                 s.my_price DESC""").fetchall()
+          AND COALESCE(l.product_name, w.name) IS NOT NULL
+        ORDER BY CASE s.kind WHEN 'buy' THEN 0 WHEN 'sell_now' THEN 1
+                             WHEN 'underpriced' THEN 2 WHEN 'raise' THEN 3
+                             WHEN 'undercut' THEN 4 ELSE 5 END,
+                 COALESCE(s.my_price, s.suggested_price) DESC""").fetchall()
     if not rows:
         log.info("Keine neuen Signale zu melden")
         return 0
@@ -240,9 +251,13 @@ def notify(db, limit: int = 12) -> int:
     lines = [f"<b>Cardmarket — {len(rows)} neue Signale</b>", ""]
     for (_id, kind, price, sugg, detail, name, game, cond, lang, url) in rows[:limit]:
         icon, label = LABELS.get(kind, ("•", kind))
-        target = f" → <b>{sugg:.2f} €</b>" if sugg else ""
         lines.append(f'{icon} <a href="{url}">{name[:44]}</a> <i>{game[:3]} {cond}/{lang}</i>')
-        lines.append(f"   {price:.2f} €{target} — {detail}")
+        if price is None:
+            # Kaufsignal: es gibt keinen "eigenen" Preis, nur den am Markt.
+            lines.append(f"   <b>{sugg:.2f} €</b> — {detail}" if sugg else f"   {detail}")
+        else:
+            target = f" → <b>{sugg:.2f} €</b>" if sugg else ""
+            lines.append(f"   {price:.2f} €{target} — {detail}")
     if len(rows) > limit:
         lines.append(f"\n… und {len(rows) - limit} weitere im Dashboard")
 
