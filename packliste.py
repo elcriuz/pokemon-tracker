@@ -178,18 +178,21 @@ table { width: 100%; border-collapse: collapse; }
 th { font-size: 7.5pt; letter-spacing: .08em; text-transform: uppercase;
      color: #888; text-align: left; border-bottom: 1.5px solid #d8d5cf;
      padding: 4px 6px; font-weight: 500; }
-td { border-bottom: 1px solid #eceae5; padding: 6px; vertical-align: middle; }
-td.bild { width: 46px; }
-td.bild img { width: 40px; border-radius: 3px; display: block; }
-td.anz { width: 34px; font-weight: 700; font-size: 12pt; }
-.karte { font-weight: 600; }
-.set { font-size: 8.5pt; color: #777; }
-.zustand { font-family: ui-monospace, Menlo, monospace; font-size: 9pt;
-           background: #f0eeea; border-radius: 3px; padding: 1px 5px; }
-.komm { font-size: 8pt; color: #777; font-style: italic; }
+td { border-bottom: 1px solid #eceae5; padding: 9px 6px; vertical-align: middle; }
+/* Die Bilder sind zum Abgleichen da, nicht zur Zierde — Stefan muss die Karte
+   in der Hand mit der Abbildung vergleichen koennen. */
+td.bild { width: 112px; }
+td.bild img { width: 104px; border: 1px solid #ddd9d2; border-radius: 5px;
+              display: block; }
+td.anz { width: 38px; font-weight: 700; font-size: 14pt; }
+.karte { font-weight: 600; font-size: 12.5pt; }
+.set { font-size: 9.5pt; color: #777; margin-top: 2px; }
+  .zustand { font-family: ui-monospace, Menlo, monospace; font-size: 11pt;
+           background: #f0eeea; border-radius: 3px; padding: 3px 8px; }
+.komm { font-size: 9pt; color: #777; font-style: italic; margin-top: 3px; }
 td.preis { text-align: right; font-variant-numeric: tabular-nums;
-           white-space: nowrap; color: #555; }
-.haken { width: 15px; height: 15px; border: 1.5px solid #999; border-radius: 3px; }
+           white-space: nowrap; color: #555; font-size: 11.5pt; }
+.haken { width: 22px; height: 22px; border: 2px solid #999; border-radius: 4px; }
 .fuss { margin-top: 10px; font-size: 8.5pt; color: #777;
         display: flex; justify-content: space-between; }
 .titel { page-break-after: always; padding-top: 40mm; text-align: center; }
@@ -241,7 +244,7 @@ def build_html(orders: list[dict], fuer: str, tag: str) -> str:
         for it in o["items"]:
             bild = (f'<img src="{it["image_data"]}" alt="">'
                     if it.get("image_data") else
-                    '<div style="width:40px;height:56px;background:#f0eeea;border-radius:3px"></div>')
+                    '<div style="width:104px;height:145px;background:#f0eeea;border-radius:5px"></div>')
             komm = (f'<div class="komm">{html_mod.escape(it["comment"])}</div>'
                     if it["comment"] else "")
             nummer = f' #{html_mod.escape(it["number"])}' if it["number"] else ""
