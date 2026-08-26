@@ -161,13 +161,14 @@ body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
 .kopf .meta { font-size: 9pt; color: #666; }
 .nr { font-family: ui-monospace, Menlo, monospace; font-size: 9pt; color: #666;
       text-align: right; white-space: nowrap; }
-.zeile { display: flex; gap: 12px; margin-bottom: 12px; }
-.box { border: 1px solid #d8d5cf; border-radius: 4px; padding: 9px 11px; }
-.adresse { flex: 1.15; }
+.zeile { display: flex; gap: 12px; margin-bottom: 12px; width: 100%; }
+.box { border: 1px solid #d8d5cf; border-radius: 4px; padding: 9px 11px;
+       min-width: 0; overflow-wrap: break-word; }
+.adresse { flex: 1.15 1 0; }
 .adresse .label, .versand .label { font-size: 7.5pt; letter-spacing: .09em;
       text-transform: uppercase; color: #888; margin-bottom: 5px; }
 .adresse .an { font-size: 12pt; line-height: 1.45; }
-.versand { flex: 1; }
+.versand { flex: 1 1 0; }
 .versand .art { font-size: 11.5pt; font-weight: 600; margin-bottom: 8px; }
 .budget { background: #fdf6e3; border: 1px solid #e8d9a8; border-radius: 4px;
           padding: 7px 10px; margin-top: 6px; }
@@ -205,6 +206,10 @@ td.preis { text-align: right; font-variant-numeric: tabular-nums;
 """
 
 
+def karten_text(n: int) -> str:
+    return f"{n} Karte" if n == 1 else f"{n} Karten"
+
+
 def build_html(orders: list[dict], fuer: str, tag: str) -> str:
     gesamt_porto = sum(o["shipping"] or 0 for o in orders)
     gesamt_karten = sum(sum(i["amount"] for i in o["items"]) for o in orders)
@@ -214,7 +219,7 @@ def build_html(orders: list[dict], fuer: str, tag: str) -> str:
     # Deckblatt: der Ueberblick, bevor es an die einzelnen Sendungen geht.
     zeilen = "".join(
         f'<div><span>{html_mod.escape(o["buyer"] or o["id"])}'
-        f' <span style="color:#888">· {sum(i["amount"] for i in o["items"])} Karten</span></span>'
+        f' <span style="color:#888">· {karten_text(sum(i["amount"] for i in o["items"]))}</span></span>'
         f'<span>{(o["shipping"] or 0):.2f} € Porto</span></div>'
         for o in orders)
     teile.append(f"""
@@ -223,7 +228,7 @@ def build_html(orders: list[dict], fuer: str, tag: str) -> str:
       <div class="datum">für {html_mod.escape(fuer)}</div>
       <div class="zahlen">
         <div><div class="zahl">{len(orders)}</div><div class="bez">Sendungen</div></div>
-        <div><div class="zahl">{gesamt_karten}</div><div class="bez">Karten</div></div>
+        <div><div class="zahl">{gesamt_karten}</div><div class="bez">{"Karte" if gesamt_karten == 1 else "Karten"}</div></div>
         <div><div class="zahl">{gesamt_porto:.2f} €</div><div class="bez">Porto gesamt</div></div>
       </div>
       <div class="liste">{zeilen}</div>
@@ -259,7 +264,7 @@ def build_html(orders: list[dict], fuer: str, tag: str) -> str:
           <div class="kopf">
             <div>
               <h1>{html_mod.escape(o["buyer"] or "—")}</h1>
-              <div class="meta">{sum(i["amount"] for i in o["items"])} Karten ·
+              <div class="meta">{karten_text(sum(i["amount"] for i in o["items"]))} ·
                 Warenwert {(o["item_value"] or 0):.2f} €</div>
             </div>
             <div class="nr">Bestellung #{o["id"]}<br>{html_mod.escape(o["game"])}</div>
