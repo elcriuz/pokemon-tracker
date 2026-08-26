@@ -33,6 +33,17 @@ FINAL_STATES = {"Arrived"}
 
 log = logging.getLogger("sales")
 
+CF_MARKERS = ("just a moment", "cloudflare", "attention required", "security verification")
+NOVNC = "http://192.168.1.91:6080/vnc.html"
+
+
+def check_blocked(page) -> None:
+    """Bot-Pruefung sieht wie eine leere Liste aus — ohne diesen Test wuerden
+    Bestellungen faelschlich als 'keine gefunden' durchgehen."""
+    head = (page.title() or "").lower() + " " + page.inner_text("body")[:300].lower()
+    if any(m in head for m in CF_MARKERS):
+        raise RuntimeError(f"Cloudflare verlangt eine Bestaetigung — einmal unter {NOVNC} klicken")
+
 # Zahlenschluessel wie in scrape_competition — Cardmarket nutzt sie ueberall gleich.
 CONDITIONS = {1: "MT", 2: "NM", 3: "EX", 4: "GD", 5: "LP", 6: "PL", 7: "PO"}
 LANGUAGES = {1: "en", 2: "fr", 3: "de", 4: "es", 5: "it",
@@ -215,6 +226,7 @@ def main() -> int:
                 if site > 1:
                     url += f"?site={site}"
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                check_blocked(page)
                 h = page.content()
                 if "Account/Login" in page.url:
                     log.error("Nicht angemeldet — bitte ueber noVNC einloggen")

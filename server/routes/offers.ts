@@ -132,7 +132,7 @@ offersRouter.post("/:id/price", (req, res) => {
 
   execFile("python3", [REPRICE, "--article", String(listing.cm_article_id),
                        "--price", price.toFixed(2), "--game", listing.game],
-    { timeout: 180_000 }, (err, stdout, stderr) => {
+    { timeout: 150_000 }, (err, stdout, stderr) => {
       const out = `${stdout}\n${stderr}`.trim()
       if (err) {
         // Der Skript-Text ist fuer Menschen geschrieben — direkt durchreichen,

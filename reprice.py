@@ -36,19 +36,54 @@ class RepriceError(RuntimeError):
     pass
 
 
+class ChallengeError(RepriceError):
+    """Cloudflare will einen menschlichen Klick sehen."""
+
+
+CF_MARKERS = ("just a moment", "cloudflare", "attention required", "security verification")
+NOVNC = "http://192.168.1.91:6080/vnc.html"
+
+
+def check_blocked(page) -> None:
+    """Eine Bot-Pruefung sieht wie eine leere Seite aus — ohne diesen Test
+    meldet das Skript faelschlich 'Angebot nicht gefunden'."""
+    head = (page.title() or "").lower() + " " + page.inner_text("body")[:300].lower()
+    if any(m in head for m in CF_MARKERS):
+        raise ChallengeError(
+            f"Cloudflare verlangt eine Bestaetigung. Bitte einmal unter {NOVNC} "
+            f"im Browser klicken, danach laeuft es wieder."
+        )
+
+
 def find_row_page(page, game: str, article_id: str) -> int:
-    """Sucht die Bestandsseite, auf der das Angebot steht."""
+    """Sucht die Bestandsseite, auf der das Angebot steht.
+
+    Die Gesamtseitenzahl wird auf Seite 1 gelesen, statt blind bis MAX_PAGES zu
+    blaettern — zu viele Aufrufe hintereinander loesen die Bot-Pruefung aus.
+    """
+    total = None
     for site in range(1, MAX_PAGES + 1):
         url = STOCK_URL.format(game=game) + (f"?site={site}" if site > 1 else "")
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(1800)
+        check_blocked(page)
         if "Account/Login" in page.url:
             raise RepriceError("Nicht angemeldet — bitte ueber noVNC einloggen")
+
         if f"stockRow{article_id}" in page.content():
             return site
-        if f"Seite 1 von {site}" in re.sub(r"\s+", " ", page.inner_text("body")):
+
+        if total is None:
+            m = re.search(r"Seite\s+\d+\s+von\s+(\d+)",
+                          re.sub(r"\s+", " ", page.inner_text("body")))
+            total = int(m.group(1)) if m else 1
+            if total == 1 and "stockRow" not in page.content():
+                raise RepriceError(
+                    f"Bestandsliste fuer {game} ist leer — stimmt die Adresse "
+                    f"{STOCK_URL.format(game=game)}?")
+        if site >= total:
             break
-    raise RepriceError(f"Angebot {article_id} im Bestand nicht gefunden")
+    raise RepriceError(f"Angebot {article_id} im Bestand von {game} nicht gefunden")
 
 
 def read_price(page, article_id: str) -> float | None:
@@ -70,6 +105,7 @@ def set_price(page, article_id: str, new_price: float, dry_run: bool = False) ->
     # Der Bearbeiten-Knopf ist ein <a class="btn btn-secondary">, kein <button>.
     row.locator("a.btn-secondary").click()
     page.wait_for_timeout(2500)
+    check_blocked(page)
 
     modal = page.locator("#modal")
     if not modal.is_visible():
@@ -160,6 +196,16 @@ def main() -> int:
                 log.error("Nicht uebernommen — Zeile zeigt %s, erwartet %.2f",
                           res["after"], res["target"])
                 return 1
+        except ChallengeError as e:
+            log.error("%s", e)
+            try:
+                from scrape_brightdata import send_telegram
+                send_telegram(f"\u26a0\ufe0f <b>Cardmarket: Bot-Pruefung</b>\n"
+                              f"Preisaenderung gestoppt.\n"
+                              f'<a href="{NOVNC}">Im Browser bestaetigen</a>')
+            except Exception:
+                pass
+            return 3
         except RepriceError as e:
             log.error("%s", e)
             return 1
