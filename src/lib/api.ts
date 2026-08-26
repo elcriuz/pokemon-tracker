@@ -75,6 +75,14 @@ export const api = {
   unqueuePrice: (listingId: number) =>
     fetchJSON<any>(`/offers/queue/${listingId}`, { method: "DELETE" }),
 
+  getActions: (kind = "", game = "") => {
+    const q = new URLSearchParams()
+    if (kind) q.set("kind", kind)
+    if (game) q.set("game", game)
+    const qs = q.toString()
+    return fetchJSON<any>(`/actions${qs ? `?${qs}` : ""}`)
+  },
+
   getRepriceQueue: () => fetchJSON<any>("/offers/queue"),
 
   runRepriceQueue: () => fetchJSON<any>("/offers/queue/run", { method: "POST" }),

@@ -10,6 +10,7 @@ import { CardShop } from "./pages/CardShop"
 import { Offers } from "./pages/Offers"
 import { Watchlist } from "./pages/Watchlist"
 import { Sales } from "./pages/Sales"
+import { Actions } from "./pages/Actions"
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000 } },
@@ -26,6 +27,7 @@ export default function App() {
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/scans" element={<ScanLog />} />
             <Route path="/cardshop" element={<CardShop />} />
+            <Route path="/actions" element={<Actions />} />
             <Route path="/offers" element={<Offers />} />
             <Route path="/watchlist" element={<Watchlist />} />
             <Route path="/sales" element={<Sales />} />

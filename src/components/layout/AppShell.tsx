@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { LayoutDashboard, BarChart3, Settings, Zap, Monitor, Terminal, X, ScanSearch, Store, Tags, Eye, Receipt } from "lucide-react"
+import { LayoutDashboard, BarChart3, Settings, Zap, Monitor, Terminal, X, ScanSearch, Store, Tags, Eye, Receipt, ListChecks } from "lucide-react"
 import { useState, useEffect } from "react"
 import { api } from "@/lib/api"
 import { LogPanel } from "@/components/scrape/LogPanel"
@@ -11,6 +11,7 @@ const NAV = [
   { to: "/analytics", icon: BarChart3, label: "Analytics" },
   { to: "/scans", icon: ScanSearch, label: "Scans" },
   { to: "/cardshop", icon: Store, label: "Card Shop" },
+  { to: "/actions", icon: ListChecks, label: "Was zu tun ist" },
   { to: "/offers", icon: Tags, label: "Meine Angebote" },
   { to: "/watchlist", icon: Eye, label: "Wunschliste" },
   { to: "/sales", icon: Receipt, label: "Verkäufe" },
