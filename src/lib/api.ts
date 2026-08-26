@@ -66,11 +66,18 @@ export const api = {
     return fetchJSON<any>(`/offers${qs}`)
   },
 
-  applyPrice: (listingId: number, price: number, signalId?: number) =>
-    fetchJSON<any>(`/offers/${listingId}/price`, {
+  queuePrice: (listingId: number, price: number, signalId?: number) =>
+    fetchJSON<any>(`/offers/${listingId}/queue`, {
       method: "POST",
       body: JSON.stringify({ price, signal_id: signalId }),
     }),
+
+  unqueuePrice: (listingId: number) =>
+    fetchJSON<any>(`/offers/queue/${listingId}`, { method: "DELETE" }),
+
+  getRepriceQueue: () => fetchJSON<any>("/offers/queue"),
+
+  runRepriceQueue: () => fetchJSON<any>("/offers/queue/run", { method: "POST" }),
 
   dismissSignal: (id: number) =>
     fetchJSON<any>(`/offers/signals/${id}/dismiss`, { method: "POST" }),

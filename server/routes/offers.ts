@@ -107,14 +107,14 @@ offersRouter.get("/history/:id", (req, res) => {
 
 
 /**
- * Preis eines eigenen Angebots aendern.
+ * Preisaenderung vormerken statt sofort ausfuehren.
  *
- * Die eigentliche Arbeit macht reprice.py ueber die angemeldete Browser-Sitzung;
- * hier wird nur geprueft, angestossen und das Ergebnis zurueckgegeben. Jeder
- * Aufruf entspricht einem bewussten Klick — es gibt bewusst keinen Weg, das
- * fuer viele Angebote auf einmal auszuloesen.
+ * Jede einzeln ausgefuehrte Aenderung blaettert den Bestand komplett durch —
+ * bei zehn Karten also bis zu vierzig Seitenaufrufe, und genau das loest
+ * Cardmarkets Bot-Pruefung aus. Gesammelt wird jede Bestandsseite einmal
+ * geladen, egal wie viele Karten darauf liegen.
  */
-offersRouter.post("/:id/price", (req, res) => {
+offersRouter.post("/:id/queue", (req, res) => {
   const db = getDb()
   const price = Number(req.body?.price)
   const signalId = req.body?.signal_id ? Number(req.body.signal_id) : null
@@ -122,32 +122,74 @@ offersRouter.post("/:id/price", (req, res) => {
   if (!Number.isFinite(price) || price <= 0 || price > 100_000) {
     return res.status(400).json({ error: "Kein gültiger Preis" })
   }
-
   const listing = db.prepare(
-    "SELECT cm_article_id, product_name, price, game FROM listings WHERE id = ? AND active = 1"
+    "SELECT id, price, product_name FROM listings WHERE id = ? AND active = 1"
   ).get(req.params.id) as any
-  if (!listing?.cm_article_id) {
-    return res.status(404).json({ error: "Angebot nicht gefunden" })
+  if (!listing) return res.status(404).json({ error: "Angebot nicht gefunden" })
+
+  // Faktor-5-Regel schon hier, damit ein Zahlendreher gar nicht erst in die
+  // Liste kommt und dort bis zum naechsten Lauf unbemerkt liegt.
+  if (listing.price && (price > listing.price * 5 || price < listing.price / 5)) {
+    return res.status(422).json({
+      error: `Sprung von ${listing.price.toFixed(2)} € auf ${price.toFixed(2)} € ` +
+             `sieht nach Zahlendreher aus`,
+    })
   }
 
-  execFile("python3", [REPRICE, "--article", String(listing.cm_article_id),
-                       "--price", price.toFixed(2), "--game", listing.game],
-    { timeout: 150_000 }, (err, stdout, stderr) => {
-      const out = `${stdout}\n${stderr}`.trim()
-      if (err) {
-        // Der Skript-Text ist fuer Menschen geschrieben — direkt durchreichen,
-        // statt ihn hinter einer generischen Fehlermeldung zu verstecken.
-        // Die ERSTE Fehlerzeile nennt die Ursache; spaetere sind nur Hinweise.
-        const line = out.split("\n").filter((l) => l.includes("ERROR"))[0]
-        return res.status(422).json({
-          error: line?.replace(/^.*ERROR\s+/, "") || "Preisänderung fehlgeschlagen",
-          detail: out.slice(-800),
-        })
-      }
-      if (signalId) {
-        db.prepare("UPDATE signals SET applied_at = datetime('now') WHERE id = ?").run(signalId)
-      }
-      const now = db.prepare("SELECT price FROM listings WHERE id = ?").get(req.params.id) as any
-      res.json({ ok: true, price: now?.price ?? price, was: listing.price })
+  db.prepare(`
+    INSERT INTO reprice_queue (listing_id, signal_id, target_price, queued_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(listing_id) DO UPDATE SET
+      target_price = excluded.target_price, signal_id = excluded.signal_id,
+      queued_at = excluded.queued_at, done_at = NULL, error = NULL
+  `).run(listing.id, signalId, price)
+
+  const open = db.prepare("SELECT COUNT(*) AS n FROM reprice_queue WHERE done_at IS NULL").get() as any
+  res.json({ ok: true, queued: open.n })
+})
+
+offersRouter.delete("/queue/:id", (req, res) => {
+  const db = getDb()
+  db.prepare("DELETE FROM reprice_queue WHERE listing_id = ? AND done_at IS NULL")
+    .run(req.params.id)
+  const open = db.prepare("SELECT COUNT(*) AS n FROM reprice_queue WHERE done_at IS NULL").get() as any
+  res.json({ ok: true, queued: open.n })
+})
+
+offersRouter.get("/queue", (_req, res) => {
+  const db = getDb()
+  res.json({
+    items: db.prepare(`
+      SELECT q.*, l.product_name, l.game, l.price AS current_price
+      FROM reprice_queue q JOIN listings l ON l.id = q.listing_id
+      WHERE q.done_at IS NULL ORDER BY q.queued_at
+    `).all(),
+  })
+})
+
+/** Fuehrt alle vorgemerkten Aenderungen in einem Durchgang aus. */
+offersRouter.post("/queue/run", (_req, res) => {
+  const db = getDb()
+  const open = db.prepare("SELECT COUNT(*) AS n FROM reprice_queue WHERE done_at IS NULL").get() as any
+  if (!open.n) return res.status(400).json({ error: "Nichts vorgemerkt" })
+
+  execFile("python3", [REPRICE, "--batch"], { timeout: 600_000 }, (err, stdout, stderr) => {
+    const out = `${stdout}\n${stderr}`.trim()
+    const done = db.prepare(
+      "SELECT COUNT(*) AS n FROM reprice_queue WHERE done_at IS NOT NULL AND done_at > datetime('now','-15 minutes')"
+    ).get() as any
+    const left = db.prepare("SELECT COUNT(*) AS n FROM reprice_queue WHERE done_at IS NULL").get() as any
+    // Exit 3 = Bot-Pruefung. Der Rest bleibt vorgemerkt, das ist kein Datenverlust.
+    const blocked = /Bot-Pruefung|Cloudflare/i.test(out)
+    res.json({
+      ok: !err || blocked,
+      changed: done.n,
+      remaining: left.n,
+      blocked,
+      message: blocked
+        ? "Cloudflare verlangt eine Bestätigung — der Rest bleibt vorgemerkt."
+        : undefined,
+      detail: err ? out.slice(-800) : undefined,
     })
+  })
 })

@@ -222,6 +222,26 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_orders_state ON orders(state);
   `)
 
+  // Vorgemerkte Preisaenderungen. Der Grund fuer die Warteschlange ist nicht
+  // Bequemlichkeit, sondern Cloudflare: jede einzeln ausgefuehrte Aenderung
+  // blaettert den Bestand neu durch. Gebuendelt wird jede Bestandsseite genau
+  // einmal geladen, egal wie viele Karten darauf geaendert werden.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reprice_queue (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      listing_id   INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      signal_id    INTEGER REFERENCES signals(id) ON DELETE SET NULL,
+      target_price REAL    NOT NULL,
+      queued_at    TEXT    NOT NULL,
+      started_at   TEXT,
+      done_at      TEXT,
+      old_price    REAL,
+      error        TEXT,
+      UNIQUE(listing_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_reprice_open ON reprice_queue(done_at);
+  `)
+
   // Erkannte Handlungssignale. Bewusst persistent statt nur berechnet: nur so
   // laesst sich unterscheiden, was Christoph schon gesehen hat — sonst meldet
   // Telegram jeden Tag dieselbe Karte.

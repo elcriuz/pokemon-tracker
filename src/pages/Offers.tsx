@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/lib/api"
-import { TrendingUp, TrendingDown, Flame, Swords, Banknote, Snowflake, ExternalLink, X, Check, Loader2 } from "lucide-react"
+import { TrendingUp, TrendingDown, Flame, Swords, Banknote, Snowflake, ExternalLink, X, Check, Loader2, Play } from "lucide-react"
 
 /** Die vier Handlungssignale. Farbe kodiert Richtung, nicht Wichtigkeit. */
 const SIGNAL_CONFIG: Record<string, { label: string; icon: any; color: string; bg: string }> = {
@@ -55,11 +55,44 @@ export function Offers() {
   })
 
   const [error, setError] = useState("")
-  const apply = useMutation({
+  const [note, setNote] = useState("")
+
+  const { data: queue } = useQuery({
+    queryKey: ["reprice-queue"],
+    queryFn: () => api.getRepriceQueue(),
+    refetchInterval: 30_000,
+  })
+  const queued: Record<number, number> = Object.fromEntries(
+    (queue?.items ?? []).map((q: any) => [q.listing_id, q.target_price])
+  )
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["offers"] })
+    queryClient.invalidateQueries({ queryKey: ["reprice-queue"] })
+  }
+
+  const enqueue = useMutation({
     mutationFn: (v: { listingId: number; price: number; signalId: number }) =>
-      api.applyPrice(v.listingId, v.price, v.signalId),
-    onSuccess: () => { setError(""); queryClient.invalidateQueries({ queryKey: ["offers"] }) },
-    onError: (e: any) => setError(e?.message ?? "Preisänderung fehlgeschlagen"),
+      api.queuePrice(v.listingId, v.price, v.signalId),
+    onSuccess: () => { setError(""); refresh() },
+    onError: (e: any) => setError(e?.message ?? "Konnte nicht vorgemerkt werden"),
+  })
+
+  const dequeue = useMutation({
+    mutationFn: (listingId: number) => api.unqueuePrice(listingId),
+    onSuccess: refresh,
+  })
+
+  const runQueue = useMutation({
+    mutationFn: () => api.runRepriceQueue(),
+    onSuccess: (r: any) => {
+      setError(r.blocked ? r.message : "")
+      setNote(r.blocked
+        ? `${r.changed} geändert, ${r.remaining} warten noch.`
+        : `${r.changed} Preise geändert.`)
+      refresh()
+    },
+    onError: (e: any) => setError(e?.message ?? "Durchlauf fehlgeschlagen"),
   })
 
   if (isLoading) return <div className="p-6 text-muted-foreground">Lade Angebote…</div>
@@ -98,12 +131,35 @@ export function Offers() {
       </div>
 
       {error && (
-        <div className="text-sm text-red-400 border-l-2 border-red-400/60 pl-3">{error}</div>
+        <div className="text-sm text-amber-400 border-l-2 border-amber-400/60 pl-3">{error}</div>
       )}
-      {apply.isPending && (
-        <div className="text-sm text-muted-foreground border-l-2 border-border pl-3">
-          Preis wird bei Cardmarket gesetzt — das dauert etwa eine halbe Minute.
+      {note && !error && (
+        <div className="text-sm text-emerald-400 border-l-2 border-emerald-400/60 pl-3">{note}</div>
+      )}
+
+      {(queue?.items?.length ?? 0) > 0 && (
+        <div className="border border-emerald-500/30 bg-emerald-500/5 rounded p-3 flex flex-wrap items-center gap-3">
+          <div className="text-sm">
+            <strong>{queue.items.length}</strong>{" "}
+            {queue.items.length === 1 ? "Änderung vorgemerkt" : "Änderungen vorgemerkt"}
+            <span className="text-muted-foreground">
+              {" "}· {queue.items.map((q: any) => q.product_name).slice(0, 3).join(", ")}
+              {queue.items.length > 3 ? ` +${queue.items.length - 3}` : ""}
+            </span>
+          </div>
+          <button onClick={() => runQueue.mutate()} disabled={runQueue.isPending}
+            className="ml-auto px-3 py-1.5 rounded bg-emerald-600 text-white text-sm inline-flex items-center gap-1.5 disabled:opacity-50">
+            {runQueue.isPending
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> läuft…</>
+              : <><Play className="w-3.5 h-3.5" /> Jetzt ausführen</>}
+          </button>
         </div>
+      )}
+      {runQueue.isPending && (
+        <p className="text-xs text-muted-foreground border-l-2 border-border pl-3">
+          Alle vorgemerkten Preise werden in einem Durchgang gesetzt — jede Bestandsseite
+          wird dabei nur einmal geladen. Das dauert ein bis zwei Minuten.
+        </p>
       )}
 
       <div className="flex flex-wrap gap-2">
@@ -198,15 +254,17 @@ export function Offers() {
                           {sig.suggested_price ? ` → ${formatEur(sig.suggested_price)}` : ""}
                           {sig.suggested_price ? (
                             <button
-                              onClick={() => apply.mutate({
-                                listingId: i.id, price: sig.suggested_price, signalId: sig.id,
-                              })}
-                              disabled={apply.isPending}
-                              className="ml-1 opacity-60 hover:opacity-100 disabled:opacity-30"
-                              title={`Preis auf ${formatEur(sig.suggested_price)} setzen`}>
-                              {apply.isPending && apply.variables?.signalId === sig.id
-                                ? <Loader2 className="w-3 h-3 animate-spin" />
-                                : <Check className="w-3 h-3" />}
+                              onClick={() => queued[i.id] != null
+                                ? dequeue.mutate(i.id)
+                                : enqueue.mutate({
+                                    listingId: i.id, price: sig.suggested_price, signalId: sig.id,
+                                  })}
+                              className={`ml-1 ${queued[i.id] != null
+                                ? "text-emerald-400" : "opacity-60 hover:opacity-100"}`}
+                              title={queued[i.id] != null
+                                ? "Vormerkung zurücknehmen"
+                                : `Auf ${formatEur(sig.suggested_price)} vormerken`}>
+                              <Check className="w-3 h-3" />
                             </button>
                           ) : null}
                           <button onClick={() => dismiss.mutate(sig.id)}
