@@ -195,14 +195,33 @@ def evaluate(d: dict, cfg: dict) -> list[dict]:
             })
 
     # 6) Jemand hat mich unterboten -> ich bin nicht mehr vorne.
+    #
+    # Ohne Bremse waere das ein Wettlauf nach unten: Ein einzelner Anbieter weit
+    # unter Markt wuerde jedes Mal einen Vorschlag ausloesen, selbst wenn man
+    # bereits unter der Mitte des Feldes liegt. Deshalb wird nur gesenkt, wenn
+    # man UEBER dem Mittelfeld steht — und nie unter dieses Mittelfeld hinaus.
+    # (Echter Fall: 17,90 € angeboten, Median 24,00 €, Vorschlag lautete 13,98 €.)
     if (d["rank"] is not None and d["prev_rank"] is not None
             and d["prev_rank"] <= 3 and d["rank"] > d["prev_rank"]):
+        suggested = None
+        note = ""
+        if med and price > med:
+            floor = med * 0.98
+            if best and best - 0.01 > floor:
+                suggested = round(best - 0.01, 2)
+            else:
+                suggested = round(floor, 2)
+                note = " (nicht unter das Mittelfeld)"
+        elif med:
+            note = f", du liegst aber bereits unter dem Mittelfeld ({med:.2f} €)"
+
         out.append({
             "kind": UNDERCUT,
-            "suggested": round(d["best_price"] - 0.01, 2) if d["best_price"] else None,
+            "suggested": suggested,
             "detail": (f"Rang {d['prev_rank']} → {d['rank']}"
                        + (f", günstigster jetzt {d['best_price']:.2f} €"
-                          if d["best_price"] else "")),
+                          if d["best_price"] else "")
+                       + note),
         })
 
     return out

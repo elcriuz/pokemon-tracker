@@ -244,6 +244,24 @@ def test_signals():
 
     check("vom Spitzenplatz verdraengt -> unterboten",
           sg.UNDERCUT in kinds(base_listing(prev_rank=1, rank=4)))
+
+    # Ein einzelner Billiganbieter darf keinen Wettlauf nach unten ausloesen.
+    def undercut_sig(**kw):
+        return next((s for s in sg.evaluate(base_listing(prev_rank=1, rank=4, **kw), CFG)
+                     if s["kind"] == sg.UNDERCUT), None)
+
+    unter = undercut_sig(price=8.0, median_same=11.0, best_price=6.0)
+    check("unter dem Mittelfeld -> kein Preisvorschlag",
+          unter is not None and unter["suggested"] is None,
+          f"{unter}")
+    check("stattdessen Hinweis auf die Lage",
+          unter is not None and "bereits unter dem Mittelfeld" in unter["detail"])
+
+    darueber = undercut_sig(price=20.0, median_same=11.0, best_price=6.0, best_same=6.0)
+    check("ueber dem Mittelfeld -> Vorschlag, aber nicht unter das Mittelfeld",
+          darueber is not None and darueber["suggested"] is not None
+          and darueber["suggested"] >= 11.0 * 0.98 - 0.001,
+          f"{darueber}")
     check("Rang verbessert -> kein Signal",
           sg.UNDERCUT not in kinds(base_listing(prev_rank=4, rank=1)))
     check("hinten schon vorher -> kein Undercut-Alarm",
