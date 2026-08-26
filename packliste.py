@@ -187,6 +187,7 @@ td.bild img { width: 104px; border: 1px solid #ddd9d2; border-radius: 5px;
 td.anz { width: 38px; font-weight: 700; font-size: 14pt; }
 .karte { font-weight: 600; font-size: 12.5pt; }
 .set { font-size: 9.5pt; color: #777; margin-top: 2px; }
+.zweitname { font-size: 9pt; color: #999; margin-top: 1px; }
   .zustand { font-family: ui-monospace, Menlo, monospace; font-size: 11pt;
            background: #f0eeea; border-radius: 3px; padding: 3px 8px; }
 .komm { font-size: 9pt; color: #777; font-style: italic; margin-top: 3px; }
@@ -207,6 +208,22 @@ td.preis { text-align: right; font-variant-numeric: tabular-nums;
 .titel .liste div { display: flex; justify-content: space-between;
                     border-bottom: 1px solid #eceae5; padding: 5px 0; }
 """
+
+
+def name_aus_slug(slug: str) -> str:
+    """Aus 'Sacred-Foundry' wird 'Sacred Foundry'.
+
+    Cardmarket liefert im data-name immer den deutschen Namen, weil wir die
+    deutsche Seite lesen. Auf einer englischen Karte steht aber der englische —
+    und danach sucht Stefan beim Abgleichen. Der englische Name steckt in der
+    Produkt-URL. Satzzeichen gehen dabei verloren ('Rakdos, Patron of Chaos'
+    wird zu 'Rakdos Patron of Chaos'); zum Wiedererkennen reicht das.
+    """
+    if not slug:
+        return ""
+    s = re.sub(r"-V\d+(?=-|$)", "", slug)
+    s = re.sub(r"-[A-Z]{2,5}\d{1,4}[a-z]?$", "", s)
+    return s.replace("-", " ").strip()
 
 
 def karten_text(n: int) -> str:
@@ -248,12 +265,23 @@ def build_html(orders: list[dict], fuer: str, tag: str) -> str:
             komm = (f'<div class="komm">{html_mod.escape(it["comment"])}</div>'
                     if it["comment"] else "")
             nummer = f' #{html_mod.escape(it["number"])}' if it["number"] else ""
+
+            # Bei englischen Karten steht der englische Name gross, der deutsche
+            # klein darunter — so passt die Zeile zur Karte UND zu Cardmarket.
+            engl = name_aus_slug(it.get("slug", "")) if it["language"] == "EN" else ""
+            if engl and engl.lower() != it["name"].lower():
+                titel = html_mod.escape(engl)
+                zweitname = f'<div class="zweitname">dt. {html_mod.escape(it["name"])}</div>'
+            else:
+                titel = html_mod.escape(it["name"])
+                zweitname = ""
             reihen.append(f"""
               <tr>
                 <td class="bild">{bild}</td>
                 <td class="anz">{it["amount"]}×</td>
                 <td>
-                  <div class="karte">{html_mod.escape(it["name"])}</div>
+                  <div class="karte">{titel}</div>
+                  {zweitname}
                   <div class="set">{html_mod.escape(it["expansion"])}{nummer}</div>
                   {komm}
                 </td>
