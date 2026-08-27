@@ -36,23 +36,27 @@ class RepriceError(RuntimeError):
     pass
 
 
+from cardmarket_guard import (Gesperrt, Challenge, NichtAngemeldet, Takt, NOVNC,
+                              seite_pruefen, sperre_pruefen, sperre_aufheben)
+
+takt = Takt()
+
+
 class ChallengeError(RepriceError):
-    """Cloudflare will einen menschlichen Klick sehen."""
-
-
-CF_MARKERS = ("just a moment", "cloudflare", "attention required", "security verification")
-NOVNC = "http://192.168.1.91:6080/vnc.html"
+    """Beibehalten fuer bestehende Aufrufer."""
 
 
 def check_blocked(page) -> None:
-    """Eine Bot-Pruefung sieht wie eine leere Seite aus — ohne diesen Test
-    meldet das Skript faelschlich 'Angebot nicht gefunden'."""
-    head = (page.title() or "").lower() + " " + page.inner_text("body")[:300].lower()
-    if any(m in head for m in CF_MARKERS):
-        raise ChallengeError(
-            f"Cloudflare verlangt eine Bestaetigung. Bitte einmal unter {NOVNC} "
-            f"im Browser klicken, danach laeuft es wieder."
-        )
+    """Duenne Huelle um die gemeinsame Pruefung, damit die Fehlertypen dieses
+    Moduls erhalten bleiben."""
+    try:
+        seite_pruefen(page)
+    except Gesperrt as e:
+        raise RepriceError(str(e)) from None
+    except Challenge as e:
+        raise ChallengeError(str(e)) from None
+    except NichtAngemeldet as e:
+        raise RepriceError(str(e)) from None
 
 
 def find_row_page(page, game: str, article_id: str) -> int:
@@ -64,6 +68,7 @@ def find_row_page(page, game: str, article_id: str) -> int:
     total = None
     for site in range(1, MAX_PAGES + 1):
         url = STOCK_URL.format(game=game) + (f"?site={site}" if site > 1 else "")
+        takt.warten()
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(1800)
         check_blocked(page)
@@ -175,6 +180,7 @@ def run_batch(page, db: sqlite3.Connection, dry_run: bool = False) -> dict:
 
         while pending and site <= MAX_PAGES:
             url = STOCK_URL.format(game=game) + (f"?site={site}" if site > 1 else "")
+            takt.warten()
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(1800)
             try:
@@ -286,6 +292,7 @@ def main() -> int:
             return 2
         page = browser.contexts[0].new_page()
         try:
+            sperre_pruefen()
             site = find_row_page(page, game, args.article)
             log.info("%s — gefunden auf Bestandsseite %d", name, site)
             res = set_price(page, args.article, args.price, args.dry_run)
@@ -330,7 +337,12 @@ def run_batch_main(dry_run: bool) -> int:
             return 2
         page = browser.contexts[0].new_page()
         try:
+            sperre_pruefen()
             st = run_batch(page, db, dry_run)
+        except Gesperrt as e:
+            log.error("%s", e)
+            page.close()
+            return 3
         finally:
             page.close()
 
@@ -339,6 +351,8 @@ def run_batch_main(dry_run: bool) -> int:
         return 0
     log.info("Fertig: %d von %d geaendert, %d Fehler, %d Seitenaufrufe",
              st["ok"], st["total"], st["failed"], st.get("pages", 0))
+    if not st["blocked"]:
+        sperre_aufheben()
     if st["blocked"]:
         log.error("Wegen Bot-Pruefung abgebrochen — Rest bleibt vorgemerkt")
         try:

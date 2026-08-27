@@ -40,20 +40,13 @@ ATTR_RE = re.compile(r'data-([\w-]+)="([^"]*)"')
 IMG_RE = re.compile(r"https://product-images\.s3\.cardmarket\.com/[\w/]+\.jpg")
 
 
+from cardmarket_guard import Takt, seite_pruefen, sperre_pruefen, sperre_aufheben
+
+takt = Takt()
+
+
 def check_access(page) -> None:
-    """Unterscheidet die drei Zustaende, die alle wie eine leere Seite aussehen."""
-    title = (page.title() or "").lower()
-    body = page.inner_text("body")[:400].lower()
-    if "error 1015" in body or "rate limited" in body:
-        raise RuntimeError(
-            "Cardmarket hat uns wegen zu vieler Zugriffe voruebergehend gesperrt "
-            "(Error 1015). Das laeuft von selbst aus — spaeter erneut versuchen.")
-    if any(m in title or m in body for m in
-           ("just a moment", "cloudflare", "security verification")):
-        raise RuntimeError("Cloudflare verlangt eine Bestaetigung — einmal unter "
-                           "http://192.168.1.91:6080/vnc.html klicken")
-    if "anmeldung" in title or "Account/Login" in page.url:
-        raise RuntimeError("Nicht angemeldet — bitte ueber noVNC einloggen")
+    seite_pruefen(page)
 
 
 def parse_de_price(s: str | None) -> float | None:
@@ -76,6 +69,7 @@ def parse_address(text: str) -> list[str]:
 
 
 def parse_order(page, order_id: str, game: str) -> dict:
+    takt.warten()
     page.goto(f"{BASE}/de/{game}/Orders/{order_id}", wait_until="domcontentloaded",
               timeout=60000)
     page.wait_for_timeout(PAGE_DELAY_MS)

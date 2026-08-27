@@ -25,6 +25,7 @@ import scrape_offers as so
 import scrape_competition as sc
 import signals as sg
 import watchlist as wl
+import cardmarket_guard as guard
 
 _failures: list[str] = []
 _passed = 0
@@ -332,6 +333,65 @@ def test_watchlist():
           wl.evaluate_buy(item, {"best_price": None, "median_price": None}, None, 12) is None)
 
 
+class FakeSeite:
+    """Minimale Seite fuer die Zustandserkennung."""
+    def __init__(self, titel="", text="", url="https://www.cardmarket.com/de/Pokemon"):
+        self._t, self._x, self.url = titel, text, url
+    def title(self): return self._t
+    def inner_text(self, _): return self._x
+
+
+def test_notbremse():
+    print("\nNotbremse gegen die Ratensperre")
+    import tempfile
+    from pathlib import Path as _P
+    alt = guard.SPERRE
+    guard.SPERRE = _P(tempfile.mkdtemp()) / "sperre.json"
+    try:
+        check("freie Seite loest nichts aus",
+              guard.seite_pruefen(FakeSeite("Bezahlt | Cardmarket", "5 Bestellungen")) is None)
+
+        gesperrt = FakeSeite("Access denied", "Error 1015 You are being rate limited")
+        raised = False
+        try:
+            guard.seite_pruefen(gesperrt)
+        except guard.Gesperrt:
+            raised = True
+        check("Error 1015 wird erkannt", raised)
+        check("und als Sperre vermerkt", guard.SPERRE.exists())
+
+        # Der entscheidende Punkt: danach gar nicht erst anfragen.
+        blockiert = False
+        try:
+            guard.sperre_pruefen()
+        except guard.Gesperrt:
+            blockiert = True
+        check("weitere Laeufe werden vorher gestoppt", blockiert)
+
+        guard.sperre_aufheben()
+        check("nach Erfolg ist die Sperre weg", not guard.SPERRE.exists())
+        guard.sperre_pruefen()  # darf nicht werfen
+
+        for titel, typ, name in [
+            ("Just a moment...", guard.Challenge, "Bot-Pruefung"),
+            ("Anmeldung | Cardmarket", guard.NichtAngemeldet, "Abmeldung"),
+        ]:
+            hit = False
+            try:
+                guard.seite_pruefen(FakeSeite(titel, ""))
+            except typ:
+                hit = True
+            check(f"{name} wird eigenstaendig erkannt", hit)
+        check("Bot-Pruefung setzt KEINE Sperrfrist", not guard.SPERRE.exists())
+
+        import time as _t
+        takt = guard.Takt(abstand=0.25)
+        takt.warten(); start = _t.monotonic(); takt.warten()
+        check("Mindestabstand wird eingehalten", _t.monotonic() - start >= 0.2)
+    finally:
+        guard.SPERRE = alt
+
+
 def test_blocked_detection():
     print("\nSchutz gegen Fehldaten")
     check("Cloudflare-Seite wird erkannt",
@@ -351,6 +411,7 @@ if __name__ == "__main__":
     test_rank_text()
     test_signal_dedup()
     test_watchlist()
+    test_notbremse()
     test_blocked_detection()
 
     total = _passed + len(_failures)

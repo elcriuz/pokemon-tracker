@@ -33,16 +33,10 @@ FINAL_STATES = {"Arrived"}
 
 log = logging.getLogger("sales")
 
-CF_MARKERS = ("just a moment", "cloudflare", "attention required", "security verification")
-NOVNC = "http://192.168.1.91:6080/vnc.html"
+from cardmarket_guard import (Gesperrt, Challenge, NichtAngemeldet, Takt,
+                              seite_pruefen, sperre_pruefen, sperre_aufheben)
 
-
-def check_blocked(page) -> None:
-    """Bot-Pruefung sieht wie eine leere Liste aus — ohne diesen Test wuerden
-    Bestellungen faelschlich als 'keine gefunden' durchgehen."""
-    head = (page.title() or "").lower() + " " + page.inner_text("body")[:300].lower()
-    if any(m in head for m in CF_MARKERS):
-        raise RuntimeError(f"Cloudflare verlangt eine Bestaetigung — einmal unter {NOVNC} klicken")
+takt = Takt()
 
 # Zahlenschluessel wie in scrape_competition — Cardmarket nutzt sie ueberall gleich.
 CONDITIONS = {1: "MT", 2: "NM", 3: "EX", 4: "GD", 5: "LP", 6: "PL", 7: "PO"}
@@ -216,6 +210,13 @@ def main() -> int:
 
         page = browser.contexts[0].new_page()
 
+        try:
+            sperre_pruefen()
+        except Gesperrt as e:
+            log.error("%s", e)
+            page.close()
+            return 3
+
         # 1) Uebersichten einsammeln
         found: dict[str, dict] = {}
         for state in STATES:
@@ -225,8 +226,9 @@ def main() -> int:
                 url = f"{BASE}/de/Pokemon/Orders/Sales/{state}"
                 if site > 1:
                     url += f"?site={site}"
+                takt.warten()
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                check_blocked(page)
+                seite_pruefen(page)
                 h = page.content()
                 if "Account/Login" in page.url:
                     log.error("Nicht angemeldet — bitte ueber noVNC einloggen")
@@ -252,8 +254,18 @@ def main() -> int:
         cards = card_index(db)
         neu = akt = 0
         for i, o in enumerate(todo, 1):
-            page.goto(f"{BASE}/de/{o['game']}/Orders/{o['cm_order_id']}",
-                      wait_until="domcontentloaded", timeout=60000)
+            takt.warten()
+            try:
+                page.goto(f"{BASE}/de/{o['game']}/Orders/{o['cm_order_id']}",
+                          wait_until="domcontentloaded", timeout=60000)
+                seite_pruefen(page)
+            except (Gesperrt, Challenge, NichtAngemeldet) as e:
+                # Abbrechen statt weiterklopfen — jeder weitere Versuch
+                # verlaengert eine laufende Sperre.
+                log.error("Abbruch nach %d von %d: %s", i - 1, len(todo), e)
+                db.commit()
+                page.close()
+                return 3
             h = page.content()
             text = re.sub(r"[ \t]+", " ", page.inner_text("body"))
             d = parse_order_detail(text, h)
@@ -298,6 +310,7 @@ def main() -> int:
 
         page.close()
 
+    sperre_aufheben()
     log.info("Fertig: %d neu, %d aktualisiert", neu, akt)
     return 0
 
