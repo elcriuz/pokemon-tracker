@@ -13,3 +13,4 @@ __pycache__/
 cardvision-venv/
 data/cardindex/
 .work/
+data/cm_cookies.json
