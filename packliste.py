@@ -185,6 +185,13 @@ body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
                 margin-bottom: 3px; }
 .zoll .text { font-size: 9.5pt; color: #6b3a34; line-height: 1.4; }
 .zoll .schritte { font-size: 9.5pt; color: #6b3a34; margin-top: 5px; }
+.hinweis-box { border: 2px solid #a8741a; background: #fdf6e3; border-radius: 4px;
+               padding: 9px 12px; margin-bottom: 12px; }
+.hinweis-box .titel2 { font-weight: 700; color: #8a6d1f; font-size: 11.5pt;
+                       margin-bottom: 3px; }
+.hinweis-box .text { font-size: 10pt; color: #5c4a1f; line-height: 1.45; }
+.alt-adresse { font-size: 9pt; color: #999; text-decoration: line-through;
+               margin-top: 5px; }
 table { width: 100%; border-collapse: collapse; }
 th { font-size: 7.5pt; letter-spacing: .08em; text-transform: uppercase;
      color: #888; text-align: left; border-bottom: 1.5px solid #d8d5cf;
@@ -314,9 +321,23 @@ def build_html(orders: list[dict], fuer: str, tag: str) -> str:
               Warenwert {(o["item_value"] or 0):.2f} € angeben</div>
           </div>"""
 
+        hinweis_block = ""
+        if o.get("hinweis"):
+            alt = ""
+            if o.get("adresse_alt"):
+                alt = ('<div class="alt-adresse">bisher: '
+                       + html_mod.escape(", ".join(o["adresse_alt"])) + "</div>")
+            hinweis_block = f"""
+          <div class="hinweis-box">
+            <div class="titel2">{html_mod.escape(o.get("hinweis_titel", "Hinweis"))}</div>
+            <div class="text">{html_mod.escape(o["hinweis"])}</div>
+            {alt}
+          </div>"""
+
         teile.append(f"""
         <div class="sendung">
           {zoll_block}
+          {hinweis_block}
           <div class="kopf">
             <div>
               <h1>{html_mod.escape(o["buyer"] or "—")}</h1>
