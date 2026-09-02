@@ -58,14 +58,23 @@ def parse_de_price(s: str | None) -> float | None:
         return None
 
 
-def parse_address(text: str) -> list[str]:
-    """Die Anschrift steht als Block zwischen 'Lieferanschrift' und 'Versandmethode'."""
+def parse_address(text: str) -> tuple[list[str], str]:
+    """Anschrift und Zollhinweis trennen.
+
+    Cardmarket haengt die Zollwarnung direkt an den Adressblock. Ungetrennt
+    landet sie als vierte Adresszeile auf dem Etikett — und der Hinweis selbst
+    geht unter, obwohl er der wichtigste auf der Seite ist.
+    """
     m = re.search(r"Lieferanschrift\s*\n(.*?)(?:Versandmethode|Bewertung|Kommentar)",
                   text, re.S)
     if not m:
-        return []
-    lines = [l.strip() for l in m.group(1).split("\n") if l.strip()]
-    return lines[:6]
+        return [], ""
+    zeilen = [l.strip() for l in m.group(1).split("\n") if l.strip()]
+    i = next((k for k, z in enumerate(zeilen) if z.startswith("Achtung!")), -1)
+    if i < 0:
+        return zeilen[:6], ""
+    zoll = " ".join(zeilen[i:]).replace("Achtung!", "").strip()
+    return zeilen[:i][:6], zoll
 
 
 def parse_order(page, order_id: str, game: str) -> dict:
@@ -116,11 +125,13 @@ def parse_order(page, order_id: str, game: str) -> dict:
             "image": img.group(0) if img else None,
         })
 
+    adresse, zoll = parse_address(text)
     return {
         "id": order_id,
         "game": game,
         "buyer": buyer,
-        "address": parse_address(text),
+        "address": adresse,
+        "zoll": zoll,
         "method": method,
         "item_value": money("Artikelwert"),
         "shipping": money("Versandkosten"),
@@ -168,6 +179,12 @@ body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
           padding: 7px 10px; margin-top: 6px; }
 .budget .betrag { font-size: 16pt; font-weight: 700; color: #8a6d1f; }
 .budget .hinweis { font-size: 8pt; color: #8a7a4f; margin-top: 1px; }
+.zoll { border: 2px solid #a83c32; background: #fdf0ee; border-radius: 4px;
+        padding: 9px 12px; margin-bottom: 12px; }
+.zoll .titel2 { font-weight: 700; color: #a83c32; font-size: 11.5pt;
+                margin-bottom: 3px; }
+.zoll .text { font-size: 9.5pt; color: #6b3a34; line-height: 1.4; }
+.zoll .schritte { font-size: 9.5pt; color: #6b3a34; margin-top: 5px; }
 table { width: 100%; border-collapse: collapse; }
 th { font-size: 7.5pt; letter-spacing: .08em; text-transform: uppercase;
      color: #888; text-align: left; border-bottom: 1.5px solid #d8d5cf;
@@ -284,8 +301,22 @@ def build_html(orders: list[dict], fuer: str, tag: str) -> str:
                 <td style="width:22px"><div class="haken"></div></td>
               </tr>""")
 
+        # Warnung ganz nach oben: Wer sie erst unter der Kartenliste liest, hat
+        # den Umschlag schon zugeklebt.
+        zoll_block = ""
+        if o.get("zoll"):
+            zoll_block = f"""
+          <div class="zoll">
+            <div class="titel2">Zoll — verlässt die Zollregion</div>
+            <div class="text">{html_mod.escape(o["zoll"])}</div>
+            <div class="schritte"><strong>Vor dem Zukleben:</strong>
+              Zollerklärung (CN22) außen aufkleben · Rechnung beilegen ·
+              Warenwert {(o["item_value"] or 0):.2f} € angeben</div>
+          </div>"""
+
         teile.append(f"""
         <div class="sendung">
+          {zoll_block}
           <div class="kopf">
             <div>
               <h1>{html_mod.escape(o["buyer"] or "—")}</h1>
