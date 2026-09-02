@@ -6,7 +6,8 @@ nicht der Endpunkt aufgerufen, sondern die Oberflaeche bedient: Bearbeiten-Dialo
 oeffnen, Preisfeld setzen, absenden. Das ist langsamer, bleibt aber gueltig, wenn
 sich die Verschleierung aendert.
 
-Laeuft ueber die angemeldete Sitzung des `cardmarket-browser` (CDP).
+Startet fuer den Lauf einen eigenen Chrome auf dem angemeldeten Profil
+(siehe cardmarket_browser.py) — kein Fernsteuerungs-Port.
 
   python3 reprice.py --article 2137355061 --price 0.25
   python3 reprice.py --article 2137355061 --price 0.25 --dry-run
@@ -25,7 +26,6 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 DB_PATH = ROOT / "data" / "tracker.db"
 
-CDP_URL = "http://localhost:9222"
 STOCK_URL = "https://www.cardmarket.com/de/{game}/Stock/Offers/Singles"
 MAX_PAGES = 15
 
@@ -283,16 +283,15 @@ def main() -> int:
         log.error("Wenn das gewollt ist: erst in kleineren Schritten.")
         return 2
 
-    from patchright.sync_api import sync_playwright
-    with sync_playwright() as p:
+    try:
+        sperre_pruefen()
+    except Gesperrt as e:
+        log.error("%s", e)
+        return 3
+
+    from cardmarket_browser import eigener_browser
+    with eigener_browser() as (_ctx, page):
         try:
-            browser = p.chromium.connect_over_cdp(CDP_URL)
-        except Exception as e:
-            log.error("Kein angemeldeter Browser (%s): %s", CDP_URL, e)
-            return 2
-        page = browser.contexts[0].new_page()
-        try:
-            sperre_pruefen()
             site = find_row_page(page, game, args.article)
             log.info("%s — gefunden auf Bestandsseite %d", name, site)
             res = set_price(page, args.article, args.price, args.dry_run)
@@ -328,23 +327,15 @@ def main() -> int:
 
 def run_batch_main(dry_run: bool) -> int:
     db = sqlite3.connect(DB_PATH)
-    from patchright.sync_api import sync_playwright
-    with sync_playwright() as p:
-        try:
-            browser = p.chromium.connect_over_cdp(CDP_URL)
-        except Exception as e:
-            log.error("Kein angemeldeter Browser (%s): %s", CDP_URL, e)
-            return 2
-        page = browser.contexts[0].new_page()
-        try:
-            sperre_pruefen()
-            st = run_batch(page, db, dry_run)
-        except Gesperrt as e:
-            log.error("%s", e)
-            page.close()
-            return 3
-        finally:
-            page.close()
+    try:
+        sperre_pruefen()
+    except Gesperrt as e:
+        log.error("%s", e)
+        return 3
+
+    from cardmarket_browser import eigener_browser
+    with eigener_browser() as (_ctx, page):
+        st = run_batch(page, db, dry_run)
 
     if st["total"] == 0:
         log.info("Nichts vorgemerkt")

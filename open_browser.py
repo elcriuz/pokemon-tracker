@@ -5,6 +5,10 @@ Dient dem einmaligen Anmelden bei Cardmarket: das Profil unter
 data/patchright-profile ist dasselbe, das der Scraper spaeter benutzt — wer sich
 hier anmeldet, ist auch dort angemeldet.
 
+Kein --remote-debugging-port mehr: der ist fuer Cloudflare ein Automatik-Merkmal.
+Skripte, die den eingeloggten Bereich brauchen, stoppen diesen Dienst kurz und
+starten Chrome selbst auf demselben Profil (siehe cardmarket_browser.py).
+
 Bewusst ueber Patchright und `channel="chrome"` gestartet, nicht ueber das
 Playwright-eigene Chromium: nur so laeuft es in diesem Container stabil (das
 mitgelieferte Chromium stirbt mit SIGTRAP an der fehlenden GPU).
@@ -21,7 +25,6 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 START_URL = os.environ.get("START_URL", "https://www.cardmarket.com/de/Pokemon")
-CDP_PORT = int(os.environ.get("CDP_PORT", "9222"))
 
 os.environ.setdefault("DISPLAY", ":99")
 
@@ -44,9 +47,6 @@ def main() -> int:
                 "--no-first-run",
                 "--disable-session-crashed-bubble",
                 "--disable-dev-shm-usage",
-                # Damit andere Skripte die angemeldete Sitzung mitbenutzen koennen,
-                # ohne das Profil zu sperren. Nur auf localhost erreichbar.
-                f"--remote-debugging-port={CDP_PORT}",
             ],
         )
         page = context.pages[0] if context.pages else context.new_page()
@@ -55,8 +55,7 @@ def main() -> int:
         except Exception as e:
             print(f"Startseite nicht geladen: {e}", flush=True)
 
-        print(f"Browser offen (CDP auf :{CDP_PORT}). "
-              f"Anmelden ueber http://192.168.1.91:6080/vnc.html", flush=True)
+        print("Browser offen. Anmelden ueber http://192.168.1.91:6080/vnc.html", flush=True)
 
         # Offen halten, bis der Dienst gestoppt wird. Schliesst jemand das letzte
         # Fenster im noVNC, beenden wir uns — systemd startet dann neu.

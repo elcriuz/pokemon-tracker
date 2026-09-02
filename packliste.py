@@ -25,7 +25,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-CDP_URL = "http://localhost:9222"
 BASE = "https://www.cardmarket.com"
 PAGE_DELAY_MS = 2500
 
@@ -408,14 +407,14 @@ def main() -> int:
     out = Path(args.out) if args.out else ROOT / "data" / f"packliste_{morgen.replace('.', '-')}.pdf"
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    from patchright.sync_api import sync_playwright
-    with sync_playwright() as p:
-        try:
-            browser = p.chromium.connect_over_cdp(CDP_URL)
-        except Exception as e:
-            log.error("Kein angemeldeter Browser (%s): %s", CDP_URL, e)
-            return 2
-        page = browser.contexts[0].new_page()
+    try:
+        sperre_pruefen()
+    except Exception as e:
+        log.error("%s", e)
+        return 3
+
+    from cardmarket_browser import eigener_browser
+    with eigener_browser() as (_ctx, page):
         try:
             page.goto(f"{BASE}/de/Pokemon/Orders/Sales/{args.state}",
                       wait_until="domcontentloaded", timeout=60000)

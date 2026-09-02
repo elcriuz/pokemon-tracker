@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Liest die eigenen Cardmarket-Verkaeufe samt Positionen.
 
-Braucht den angemeldeten Browser (`cardmarket-browser.service`) und haengt sich
-per CDP an dessen Sitzung — so bleibt das noVNC-Fenster nutzbar und das Profil
-ungesperrt.
+Startet fuer den Lauf einen eigenen Chrome auf dem angemeldeten Profil (der
+noVNC-Dienst wird solange gestoppt) — ohne Fernsteuerungs-Port, den Cloudflare
+als Automatik erkennt.
 
   python3 scrape_sales.py            # neue und noch offene Bestellungen holen
   python3 scrape_sales.py --all      # auch bereits abgeschlossene neu einlesen
@@ -23,7 +23,6 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 DB_PATH = ROOT / "data" / "tracker.db"
 
-CDP_URL = "http://localhost:9222"
 BASE = "https://www.cardmarket.com"
 
 # Reihenfolge = Lebenslauf einer Bestellung. "Arrived" ist der Endzustand;
@@ -198,24 +197,17 @@ def main() -> int:
     db = sqlite3.connect(DB_PATH)
     ensure_schema(db)
 
-    from patchright.sync_api import sync_playwright
+    # Erst pruefen, dann Browser: bei laufender Sperre den noVNC-Browser gar
+    # nicht anfassen.
+    try:
+        sperre_pruefen()
+    except Gesperrt as e:
+        log.error("%s", e)
+        return 3
 
-    with sync_playwright() as p:
-        try:
-            browser = p.chromium.connect_over_cdp(CDP_URL)
-        except Exception as e:
-            log.error("Kein angemeldeter Browser erreichbar (%s): %s", CDP_URL, e)
-            log.error("Laeuft cardmarket-browser? systemctl status cardmarket-browser")
-            return 2
+    from cardmarket_browser import eigener_browser
 
-        page = browser.contexts[0].new_page()
-
-        try:
-            sperre_pruefen()
-        except Gesperrt as e:
-            log.error("%s", e)
-            page.close()
-            return 3
+    with eigener_browser() as (_ctx, page):
 
         # 1) Uebersichten einsammeln
         found: dict[str, dict] = {}
