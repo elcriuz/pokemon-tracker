@@ -49,6 +49,16 @@ def main() -> int:
                 "--disable-dev-shm-usage",
             ],
         )
+        # Beim Start die gesicherte Anmeldung zurueckspielen, bevor die erste
+        # Seite geladen wird — sonst sieht Cardmarket einen anonymen Besucher.
+        try:
+            from cardmarket_browser import _sitzung_zurueckspielen
+            n = _sitzung_zurueckspielen(context)
+            if n:
+                print(f"{n} Sitzungs-Cookies zurueckgespielt", flush=True)
+        except Exception as e:
+            print(f"Sitzung nicht zurueckgespielt: {e}", flush=True)
+
         page = context.pages[0] if context.pages else context.new_page()
         try:
             page.goto(START_URL, wait_until="domcontentloaded", timeout=60000)
@@ -92,6 +102,12 @@ def main() -> int:
                 except Exception as e:
                     print(f"Parken nicht moeglich: {e}", flush=True)
                 geparkt = True
+        # Vor dem Beenden die Anmeldung sichern, damit sie den Neustart ueberlebt.
+        try:
+            from cardmarket_browser import _sitzung_sichern
+            print(f"{_sitzung_sichern(context)} Sitzungs-Cookies gesichert", flush=True)
+        except Exception as e:
+            print(f"Sitzung nicht gesichert: {e}", flush=True)
         context.close()
     return 0
 

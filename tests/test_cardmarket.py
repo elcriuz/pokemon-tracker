@@ -450,6 +450,53 @@ def test_wartezeit():
         _t.sleep = alt
 
 
+def test_sitzung_ueberlebt_neustart():
+    """Cardmarkets PHPSESSID ist ein Sitzungs-Cookie — ohne Sicherung ist das
+    Konto nach jedem Browser-Neustart abgemeldet."""
+    print("\nAnmeldung ueber Neustarts hinweg")
+    import tempfile, json as _j
+    from pathlib import Path as _P
+    import cardmarket_browser as cb
+
+    alt = cb.SITZUNG
+    cb.SITZUNG = _P(tempfile.mkdtemp()) / "cm_session.json"
+    try:
+        class FakeCtx:
+            def __init__(self, cookies): self._c = cookies; self.hinzu = []
+            def cookies(self): return self._c
+            def add_cookies(self, c): self.hinzu.extend(c)
+
+        quelle = FakeCtx([
+            {"name": "PHPSESSID", "value": "abc", "domain": ".cardmarket.com",
+             "path": "/", "expires": -1, "secure": True, "httpOnly": True},
+            {"name": "_ga", "value": "x", "domain": ".cardmarket.com",
+             "path": "/", "expires": 2000000000.0},
+            {"name": "fremd", "value": "y", "domain": ".example.com",
+             "path": "/", "expires": -1},
+        ])
+        n = cb._sitzung_sichern(quelle)
+        check("nur fluechtige Cardmarket-Cookies werden gesichert", n == 1, f"{n}")
+        gespeichert = _j.loads(cb.SITZUNG.read_text())
+        check("PHPSESSID ist dabei", gespeichert[0]["name"] == "PHPSESSID")
+        check("persistente werden uebersprungen (schreibt Chrome selbst)",
+              all(c["name"] != "_ga" for c in gespeichert))
+        check("fremde Domains bleiben aussen vor",
+              all(c["name"] != "fremd" for c in gespeichert))
+
+        ziel = FakeCtx([])
+        m = cb._sitzung_zurueckspielen(ziel)
+        check("nach dem Neustart wieder eingespielt", m == 1 and ziel.hinzu)
+        check("Anmeldung kommt vollstaendig an",
+              ziel.hinzu[0]["name"] == "PHPSESSID" and ziel.hinzu[0]["value"] == "abc")
+        check("Datei-Rechte nur fuer den Besitzer",
+              oct(cb.SITZUNG.stat().st_mode)[-3:] == "600")
+
+        cb.SITZUNG.unlink()
+        check("ohne Datei kein Fehler", cb._sitzung_zurueckspielen(FakeCtx([])) == 0)
+    finally:
+        cb.SITZUNG = alt
+
+
 def test_blocked_detection():
     print("\nSchutz gegen Fehldaten")
     check("Cloudflare-Seite wird erkannt",
@@ -472,6 +519,7 @@ if __name__ == "__main__":
     test_notbremse()
     test_sealed()
     test_wartezeit()
+    test_sitzung_ueberlebt_neustart()
     test_blocked_detection()
 
     total = _passed + len(_failures)

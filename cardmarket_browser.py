@@ -15,6 +15,7 @@ verworfen bzw. das Einschleusen ist verboten.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import subprocess
@@ -24,6 +25,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PROFIL = ROOT / "data" / "patchright-profile"
 DIENST = "cardmarket-browser"
+
+# Cardmarkets Anmeldung haengt an PHPSESSID — einem Sitzungs-Cookie ohne
+# Ablaufdatum. Chrome wirft solche Cookies beim Beenden weg. Da jeder Lauf den
+# Browser stoppt und neu startet, war das Konto danach jedes Mal abgemeldet
+# (seit dem Umbau am 03.09. bei jedem einzelnen Verkaufslauf).
+# Deshalb: vor dem Schliessen sichern, nach dem Start zurueckspielen.
+SITZUNG = ROOT / "data" / "cm_session.json"
 
 log = logging.getLogger("browser")
 
@@ -41,6 +49,35 @@ def _systemctl(*args: str) -> bool:
 
 def _dienst_laeuft() -> bool:
     return _systemctl("is-active", "--quiet")
+
+
+def _sitzung_sichern(context) -> int:
+    """Nur die fluechtigen Cookies — persistente schreibt Chrome selbst weg."""
+    try:
+        fluechtig = [c for c in context.cookies()
+                     if "cardmarket" in c.get("domain", "") and not c.get("expires", -1) > 0]
+        if fluechtig:
+            SITZUNG.write_text(json.dumps(fluechtig))
+            SITZUNG.chmod(0o600)
+        return len(fluechtig)
+    except Exception as e:
+        log.warning("Sitzung nicht gesichert: %s", e)
+        return 0
+
+
+def _sitzung_zurueckspielen(context) -> int:
+    if not SITZUNG.exists():
+        return 0
+    try:
+        cookies = json.loads(SITZUNG.read_text())
+        # Playwright verlangt entweder url oder domain+path.
+        context.add_cookies([{k: c[k] for k in
+                              ("name", "value", "domain", "path", "secure", "httpOnly", "sameSite")
+                              if k in c} for c in cookies])
+        return len(cookies)
+    except Exception as e:
+        log.warning("Sitzung nicht zurueckgespielt: %s", e)
+        return 0
 
 
 @contextlib.contextmanager
@@ -74,11 +111,16 @@ def eigener_browser(start_url: str | None = None):
             ],
         )
         try:
+            n = _sitzung_zurueckspielen(context)
+            if n:
+                log.info("%d Sitzungs-Cookies zurueckgespielt", n)
             page = context.pages[0] if context.pages else context.new_page()
             if start_url:
                 page.goto(start_url, wait_until="domcontentloaded", timeout=60000)
             yield context, page
         finally:
+            with contextlib.suppress(Exception):
+                _sitzung_sichern(context)
             with contextlib.suppress(Exception):
                 context.close()
             if lief:

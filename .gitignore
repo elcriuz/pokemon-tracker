@@ -14,3 +14,4 @@ cardvision-venv/
 data/cardindex/
 .work/
 data/cm_cookies.json
+data/cm_session.json
