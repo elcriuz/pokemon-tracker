@@ -426,28 +426,43 @@ def test_sealed():
 def test_wartezeit():
     print("\nWarten auf den Klick")
     class Wechselnd:
-        """Erst Bot-Pruefung, nach zwei Abfragen frei."""
-        def __init__(self): self.n = 0; self.url = "https://www.cardmarket.com/x"
+        """Erst Bot-Pruefung, nach zwei Abfragen frei. Zaehlt Seitenaufrufe."""
+        def __init__(self): self.n = 0; self.url = "https://www.cardmarket.com/x"; self.aufrufe = []
         def title(self):
             self.n += 1
             return "Just a moment..." if self.n <= 2 else "Bezahlt | Cardmarket"
         def inner_text(self, _): return ""
         def wait_for_timeout(self, _): pass
-    import time as _t
-    alt = _t.sleep; _t.sleep = lambda s: None
+        def goto(self, url, **kw): self.aufrufe.append(url)
+    # sleep echt laufen lassen, aber mit winzigen Pausen — nur so misst der
+    # Test die tatsaechliche Aufruf-Frequenz.
     try:
         w = Wechselnd()
-        guard.seite_pruefen_mit_wartezeit(w, max_s=30, intervall_s=1)
+        guard.seite_pruefen_mit_wartezeit(w, max_s=5, intervall_s=0.05, min_pause_s=0.05)
         check("Lauf geht weiter, sobald die Pruefung weg ist", w.n >= 3)
-        dauer = FakeSeite("Just a moment...", "")
+        # Der Grund fuer den Umbau: auf der Pruefseite stehenzubleiben erzeugt
+        # hunderte Anfragen und damit die Ratensperre.
+        check("waehrend des Wartens wird die Seite verlassen",
+              "about:blank" in w.aufrufe, f"{w.aufrufe}")
+        check("und danach gezielt zurueckgekehrt",
+              w.aufrufe[-1] == "https://www.cardmarket.com/x", f"{w.aufrufe}")
+        class Dauer(FakeSeite):
+            def __init__(self): super().__init__("Just a moment...", ""); self.aufrufe = 0
+            def goto(self, url, **kw): self.aufrufe += 1
+            def wait_for_timeout(self, _): pass
+        dauer = Dauer()
         raised = False
         try:
-            guard.seite_pruefen_mit_wartezeit(dauer, max_s=3, intervall_s=1)
+            guard.seite_pruefen_mit_wartezeit(dauer, max_s=1, intervall_s=0.2,
+                                              min_pause_s=0.2)
         except guard.Challenge:
             raised = True
         check("ohne Klick bricht er nach der Frist ab", raised)
+        # Bei einer Sekunde Frist und 0,2 s Pause: hoechstens ~10 Aufrufe.
+        # Im Betrieb (600 s / 30 s) sind es rund 40 statt tausender.
+        check("dabei bleiben die Aufrufe sparsam", dauer.aufrufe <= 14, f"{dauer.aufrufe}")
     finally:
-        _t.sleep = alt
+        pass
 
 
 def test_sitzung_ueberlebt_neustart():

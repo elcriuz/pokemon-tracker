@@ -13,6 +13,7 @@ Zwei Regeln daraus:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
@@ -103,19 +104,24 @@ def seite_pruefen(page) -> None:
         raise NichtAngemeldet(f"Nicht angemeldet — bitte unter {NOVNC} einloggen")
 
 
-def seite_pruefen_mit_wartezeit(page, max_s: int = 600, intervall_s: int = 5) -> None:
-    """Wie seite_pruefen, aber bei einer Bot-Pruefung wird gewartet.
+def seite_pruefen_mit_wartezeit(page, max_s: int = 600, intervall_s: int = 5,
+                                min_pause_s: float = 30.0) -> None:
+    """Wie seite_pruefen, aber bei einer Bot-Pruefung wird auf den Klick gewartet.
 
-    Der Lauf steht auf Display :99 — im noVNC sieht man genau diese Seite und
-    kann klicken. So macht es scrape.py seit Monaten. Sofort abzubrechen hiess
-    in der Praxis: elf gescheiterte Verkaufslaeufe in Folge, weil um 08:25
-    niemand klickt und die Pruefung bis zum naechsten Tag stehen bleibt.
+    Entscheidend: waehrend des Wartens wird die Seite VERLASSEN. Cloudflares
+    Pruefseite laedt sich selbst im Sekundentakt neu — zehn Minuten darauf
+    stehenzubleiben erzeugt hunderte Anfragen und damit genau die Ratensperre,
+    die man vermeiden will (am 07.09. so passiert). Wir parken also auf
+    about:blank und kehren nur alle 30 Sekunden kurz zurueck, um zu sehen, ob
+    jemand im noVNC bestaetigt hat.
     """
     try:
         seite_pruefen(page)
         return
     except Challenge as erst:
-        log.warning("%s — warte bis zu %d Minuten", erst, max_s // 60)
+        ziel = page.url
+        log.warning("%s — warte bis zu %d Minuten (Seite wird solange geparkt)",
+                    erst, max_s // 60)
         try:
             from scrape_brightdata import send_telegram
             send_telegram("\u26a0\ufe0f <b>Cardmarket: Bot-Pruefung</b>\n"
@@ -123,16 +129,31 @@ def seite_pruefen_mit_wartezeit(page, max_s: int = 600, intervall_s: int = 5) ->
                           f"der Lauf wartet {max_s // 60} Minuten.")
         except Exception:
             pass
+
+        # Mindestabstand zwischen zwei Versuchen, damit das Warten selbst keine
+        # Last erzeugt. Bei zehn Minuten sind das rund zwanzig Aufrufe statt
+        # hunderten — Tests setzen ihn klein.
+        pause = max(min_pause_s, intervall_s)
         start = time.monotonic()
         while time.monotonic() - start < max_s:
-            time.sleep(intervall_s)
+            with contextlib.suppress(Exception):
+                page.goto("about:blank", wait_until="domcontentloaded", timeout=20000)
+            time.sleep(pause)
             try:
+                page.goto(ziel, wait_until="domcontentloaded", timeout=45000)
+                page.wait_for_timeout(2500)
                 seite_pruefen(page)
                 log.info("Pruefung geloest — weiter")
-                page.wait_for_timeout(1500)
                 return
             except Challenge:
                 continue
+            except Gesperrt:
+                # Aus der Pruefung ist eine Ratensperre geworden: sofort raus.
+                with contextlib.suppress(Exception):
+                    page.goto("about:blank", timeout=20000)
+                raise
+        with contextlib.suppress(Exception):
+            page.goto("about:blank", timeout=20000)
         raise erst
 
 
