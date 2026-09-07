@@ -59,11 +59,28 @@ def main() -> int:
 
         # Offen halten, bis der Dienst gestoppt wird. Schliesst jemand das letzte
         # Fenster im noVNC, beenden wir uns — systemd startet dann neu.
+        #
+        # Nicht dauerhaft auf der Cardmarket-Seite sitzen bleiben: deren Skripte
+        # (Tracking, Cloudflare-Pruefschleifen) haben den Browser am 06./07.09.
+        # auf ueber 3 GB anwachsen lassen. Nach zehn Minuten ohne Nutzung wird
+        # auf eine leere Seite gewechselt — die Anmeldung liegt im Profil, nicht
+        # im Fenster.
+        PARKEN_NACH_S = 600
+        gestartet = time.monotonic()
+        geparkt = False
         while True:
             time.sleep(10)
             if not context.pages:
                 print("Kein Fenster mehr offen — beende mich.", flush=True)
                 break
+            if not geparkt and time.monotonic() - gestartet > PARKEN_NACH_S:
+                try:
+                    if "cardmarket.com" in page.url:
+                        page.goto("about:blank")
+                        print("Auf leere Seite geparkt (Speicher).", flush=True)
+                except Exception as e:
+                    print(f"Parken nicht moeglich: {e}", flush=True)
+                geparkt = True
         context.close()
     return 0
 
