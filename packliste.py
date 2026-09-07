@@ -39,7 +39,8 @@ ATTR_RE = re.compile(r'data-([\w-]+)="([^"]*)"')
 IMG_RE = re.compile(r"https://product-images\.s3\.cardmarket\.com/[\w/]+\.jpg")
 
 
-from cardmarket_guard import Takt, seite_pruefen, sperre_pruefen, sperre_aufheben
+from cardmarket_guard import (Takt, seite_pruefen_mit_wartezeit as seite_pruefen,
+                              sperre_pruefen, sperre_aufheben)
 
 takt = Takt()
 

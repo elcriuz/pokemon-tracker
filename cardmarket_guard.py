@@ -103,6 +103,39 @@ def seite_pruefen(page) -> None:
         raise NichtAngemeldet(f"Nicht angemeldet — bitte unter {NOVNC} einloggen")
 
 
+def seite_pruefen_mit_wartezeit(page, max_s: int = 600, intervall_s: int = 5) -> None:
+    """Wie seite_pruefen, aber bei einer Bot-Pruefung wird gewartet.
+
+    Der Lauf steht auf Display :99 — im noVNC sieht man genau diese Seite und
+    kann klicken. So macht es scrape.py seit Monaten. Sofort abzubrechen hiess
+    in der Praxis: elf gescheiterte Verkaufslaeufe in Folge, weil um 08:25
+    niemand klickt und die Pruefung bis zum naechsten Tag stehen bleibt.
+    """
+    try:
+        seite_pruefen(page)
+        return
+    except Challenge as erst:
+        log.warning("%s — warte bis zu %d Minuten", erst, max_s // 60)
+        try:
+            from scrape_brightdata import send_telegram
+            send_telegram("\u26a0\ufe0f <b>Cardmarket: Bot-Pruefung</b>\n"
+                          f'Bitte <a href="{NOVNC}">im Browser bestaetigen</a> — '
+                          f"der Lauf wartet {max_s // 60} Minuten.")
+        except Exception:
+            pass
+        start = time.monotonic()
+        while time.monotonic() - start < max_s:
+            time.sleep(intervall_s)
+            try:
+                seite_pruefen(page)
+                log.info("Pruefung geloest — weiter")
+                page.wait_for_timeout(1500)
+                return
+            except Challenge:
+                continue
+        raise erst
+
+
 class Takt:
     """Haelt den Mindestabstand zwischen Aufrufen ein.
 

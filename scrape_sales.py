@@ -33,7 +33,8 @@ FINAL_STATES = {"Arrived"}
 log = logging.getLogger("sales")
 
 from cardmarket_guard import (Gesperrt, Challenge, NichtAngemeldet, Takt,
-                              seite_pruefen, sperre_pruefen, sperre_aufheben)
+                              seite_pruefen_mit_wartezeit as seite_pruefen,
+                              sperre_pruefen, sperre_aufheben)
 
 takt = Takt()
 
@@ -232,6 +233,14 @@ def main() -> int:
                     found.setdefault(o["cm_order_id"], {**o, "state": state})
                 site += 1
             log.info("  %-8s bis hier %d Bestellungen", state, len(found))
+
+        # Ein Konto mit Dutzenden versandten Bestellungen liefert nie eine
+        # komplett leere Uebersicht. Passiert es doch, wurde die Seite nicht
+        # richtig geladen — das ist ein Fehler, kein Erfolg mit 0 Treffern.
+        if not found:
+            log.error("Keine einzige Bestellung gefunden — Seite nicht geladen "
+                      "oder Layout geaendert. Datenbank bleibt unveraendert.")
+            return 1
 
         # 2) Details nur fuer Neue oder noch nicht abgeschlossene
         known = {r[0]: r[1] for r in db.execute("SELECT cm_order_id, state FROM orders")}

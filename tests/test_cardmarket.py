@@ -423,6 +423,33 @@ def test_sealed():
           f"{ {c['language'] for c in de} }")
 
 
+def test_wartezeit():
+    print("\nWarten auf den Klick")
+    class Wechselnd:
+        """Erst Bot-Pruefung, nach zwei Abfragen frei."""
+        def __init__(self): self.n = 0; self.url = "https://www.cardmarket.com/x"
+        def title(self):
+            self.n += 1
+            return "Just a moment..." if self.n <= 2 else "Bezahlt | Cardmarket"
+        def inner_text(self, _): return ""
+        def wait_for_timeout(self, _): pass
+    import time as _t
+    alt = _t.sleep; _t.sleep = lambda s: None
+    try:
+        w = Wechselnd()
+        guard.seite_pruefen_mit_wartezeit(w, max_s=30, intervall_s=1)
+        check("Lauf geht weiter, sobald die Pruefung weg ist", w.n >= 3)
+        dauer = FakeSeite("Just a moment...", "")
+        raised = False
+        try:
+            guard.seite_pruefen_mit_wartezeit(dauer, max_s=3, intervall_s=1)
+        except guard.Challenge:
+            raised = True
+        check("ohne Klick bricht er nach der Frist ab", raised)
+    finally:
+        _t.sleep = alt
+
+
 def test_blocked_detection():
     print("\nSchutz gegen Fehldaten")
     check("Cloudflare-Seite wird erkannt",
@@ -444,6 +471,7 @@ if __name__ == "__main__":
     test_watchlist()
     test_notbremse()
     test_sealed()
+    test_wartezeit()
     test_blocked_detection()
 
     total = _passed + len(_failures)

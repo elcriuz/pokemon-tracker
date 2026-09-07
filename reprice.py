@@ -37,7 +37,8 @@ class RepriceError(RuntimeError):
 
 
 from cardmarket_guard import (Gesperrt, Challenge, NichtAngemeldet, Takt, NOVNC,
-                              seite_pruefen, sperre_pruefen, sperre_aufheben)
+                              seite_pruefen_mit_wartezeit as seite_pruefen,
+                              sperre_pruefen, sperre_aufheben)
 
 takt = Takt()
 
