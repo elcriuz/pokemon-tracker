@@ -47,6 +47,12 @@ CONDITION_IDS = {"MT": 1, "NM": 2, "EX": 3, "GD": 4, "LP": 5, "PL": 6, "PO": 7}
 PRICE_RE = re.compile(r'<span class="color-primary[^"]*fw-bold[^"]*">\s*([\d.,]+)\s*€\s*</span>')
 COND_RE = re.compile(r'article-condition\s+condition-(\w+)')
 SELLER_RE = re.compile(r'/Users/([^/"?]+)"')
+# Sprache des Angebots (Sprach-Icon). Bei Sealed gibt es keinen Zustand — dort ist
+# die Sprache das einzige Merkmal, nach dem verglichen werden kann.
+LANG_LABELS = {"Deutsch": "de", "Englisch": "en", "Französisch": "fr", "Spanisch": "es",
+               "Italienisch": "it", "Japanisch": "ja", "Chinesisch": "zh",
+               "Portugiesisch": "pt", "Russisch": "ru", "Koreanisch": "ko"}
+LANG_RE = re.compile(r'aria-label="(' + "|".join(map(re.escape, LANG_LABELS)) + r')"')
 COMMENT_RE = re.compile(r'fst-italic small">([^<]+)</span>')
 ROW_SPLIT_RE = re.compile(r'<div id="articleRow\d+"')
 
@@ -91,10 +97,12 @@ def parse_competitors(html: str) -> list[dict]:
         price, _ = _apply_uk_uplift(price, block)
         sm = SELLER_RE.search(block)
         cond = COND_RE.search(block)
+        lm = LANG_RE.search(block)
         out.append({
             "price": price,
             "seller": sm.group(1) if sm else "",
             "condition": cond.group(1).upper() if cond else "",
+            "language": LANG_LABELS.get(lm.group(1), "") if lm else "",
         })
     return out
 

@@ -7,22 +7,34 @@ const CONDITIONS = ["MT", "NM", "EX", "GD", "LP", "PL", "PO"]
 const LANGUAGES = ["de", "en", "fr", "es", "it", "ja", "zh", "pt", "ru", "ko"]
 
 /** Aus einer Cardmarket-URL Spiel und Kartenname ableiten. */
+/**
+ * Zwei URL-Formen:
+ *   Singles:  /Products/Singles/<Set>/<Karte>        (drei Segmente)
+ *   Sealed:   /Products/Booster-Boxes/<Produkt>       (zwei Segmente)
+ * Displays, Booster, ETBs haben keinen Zustand — nur Sprache und Preis.
+ */
 function parseProductUrl(url: string) {
-  const m = url.match(/cardmarket\.com\/[a-z]{2}\/(\w+)\/Products\/([^/]+)\/([^/?]+)\/([^/?]+)/)
+  const m = url.match(/cardmarket\.com\/[a-z]{2}\/(\w+)\/Products\/([^?#]+)/)
   if (!m) return null
+  const seg = m[2].split("/").filter(Boolean)
+  if (seg.length < 2) return null
+  const category = seg[0]
+  const kind = /^Singles$/i.test(category) ? "single" : "sealed"
+  if (kind === "single" && seg.length < 3) return null
+  const slug = seg[seg.length - 1]
   // Aus "Umbreon-ex-V2-PRE161" wird "Umbreon ex". Die Varianten-Nummer und der
   // Set-Code am Ende sind Cardmarket-Interna und stehen so auf keiner Karte.
   // Beim ersten Preisabruf wird der Name ohnehin durch den echten ersetzt.
-  const name = decodeURIComponent(m[4])
+  const name = decodeURIComponent(slug)
     .replace(/-V\d+(?=-|$)/g, "")
     .replace(/-[A-Z]{2,5}\d{1,4}[a-z]?$/, "")
     .replace(/-/g, " ")
     .trim()
   return {
     game: m[1],
-    kind: /Singles/i.test(m[2]) ? "single" : "sealed",
+    kind,
     name,
-    expansion: m[3].replace(/-/g, " "),
+    expansion: (seg.length >= 3 ? seg[1] : category).replace(/-/g, " "),
   }
 }
 
@@ -99,7 +111,8 @@ watchlistRouter.post("/", (req, res) => {
              "Erwartet wird z.B. cardmarket.com/de/Pokemon/Products/Singles/<Set>/<Karte>",
     })
   }
-  const cond = CONDITIONS.includes(condition) ? condition : "NM"
+  // Sealed hat keinen Zustand — leer speichern, sonst filtert der Abruf ins Leere.
+  const cond = parsed.kind === "sealed" ? "" : (CONDITIONS.includes(condition) ? condition : "NM")
   const lang = LANGUAGES.includes(language) ? language : "de"
 
   try {

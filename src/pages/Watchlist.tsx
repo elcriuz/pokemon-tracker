@@ -57,9 +57,13 @@ export function Watchlist() {
     refetchInterval: 60_000,
   })
 
+  // Alles ausser /Products/Singles/ ist Sealed — Displays, Booster, ETBs. Die
+  // haben keinen Zustand, nur eine Sprache.
+  const isSealed = /\/Products\/(?!Singles\/)/i.test(url)
+
   const add = useMutation({
     mutationFn: () => api.addWatchlistItem({
-      url, condition, language,
+      url, condition: isSealed ? "" : condition, language,
       target_price: target ? Number(target.replace(",", ".")) : null,
     }),
     onSuccess: () => {
@@ -117,13 +121,18 @@ export function Watchlist() {
                 placeholder="https://www.cardmarket.com/de/Pokemon/Products/Singles/…"
                 className="w-full px-2.5 py-1.5 rounded bg-background border border-border text-sm" />
             </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Zustand</label>
-              <select value={condition} onChange={(e) => setCondition(e.target.value)}
-                className="px-2.5 py-1.5 rounded bg-background border border-border text-sm">
-                {opts.conditions.map((c: string) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
+            {!isSealed && (
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Zustand</label>
+                <select value={condition} onChange={(e) => setCondition(e.target.value)}
+                  className="px-2.5 py-1.5 rounded bg-background border border-border text-sm">
+                  {opts.conditions.map((c: string) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            )}
+            {isSealed && url && (
+              <div className="self-center text-xs text-muted-foreground pt-4">Sealed — kein Zustand</div>
+            )}
             <div>
               <label className="text-xs text-muted-foreground block mb-1">Sprache</label>
               <select value={language} onChange={(e) => setLanguage(e.target.value)}
@@ -171,7 +180,7 @@ export function Watchlist() {
                     <ExternalLink className="w-3 h-3 opacity-40" />
                   </a>
                   <div className="text-[11px] text-muted-foreground">
-                    {i.game} · {i.condition}/{i.language}
+                    {i.game} · {i.kind === "sealed" ? "Sealed" : i.condition}/{i.language}
                     {i.offers_count != null ? ` · ${i.offers_count} Angebote` : ""}
                   </div>
                   {i.problem && (

@@ -125,9 +125,14 @@ def main() -> int:
                 continue
 
             # Eigene Angebote gehoeren nicht in den Kaufpreis-Vergleich.
+            # Sealed hat keinen Zustand (condition leer) — dann zaehlt nur die
+            # Sprache. Die wird zusaetzlich clientseitig geprueft, weil der
+            # ?language=-Filter auf Sealed-Seiten nicht sicher greift.
             offers = [c for c in parse_competitors(html)
                       if c["seller"].lower() != (me or "").lower()
-                      and c["condition"] == it["condition"]]
+                      and (not it["condition"] or c["condition"] == it["condition"])
+                      and (not it["language"] or not c.get("language")
+                           or c["language"] == it["language"])]
             market = extract_prices(html) or {}
 
             # Der aus der URL geratene Name wird durch den echten von der Seite
@@ -159,7 +164,8 @@ def main() -> int:
             if "articleRow" not in html:
                 problem = "Der Link führt nicht auf eine Kartenseite"
             elif not offers:
-                problem = f"Kein Angebot in {it['condition']}/{it['language']}"
+                problem = (f"Kein Angebot in {it['condition']}/{it['language']}" if it["condition"]
+                           else f"Kein Angebot in Sprache {it['language']}")
 
             if not args.dry_run:
                 db.execute("UPDATE watchlist SET last_error = ? WHERE id = ?",

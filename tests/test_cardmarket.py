@@ -392,6 +392,37 @@ def test_notbremse():
         guard.SPERRE = alt
 
 
+def test_sealed():
+    """Displays und Booster haben keinen Zustand — nur Sprache und Preis."""
+    print("\nSealed-Produkte (Displays)")
+    html = fixture("product_sealed_en")
+    comp = sc.parse_competitors(html)
+    check("Angebote werden geparst", len(comp) >= 20, f"{len(comp)}")
+    check("kein Zustand bei Sealed", all(c["condition"] == "" for c in comp))
+    langs = {c["language"] for c in comp}
+    check("Sprache wird je Angebot gelesen", langs and "" not in langs, f"{langs}")
+    check("?language=1 liefert nur englische Angebote", langs == {"en"}, f"{langs}")
+    m = sc.extract_prices(html)
+    check("Marktdaten auch bei Sealed", all(m.get(k) for k in ("trend", "avg7", "avg30")),
+          str(m)[:80])
+
+    # Der Watchlist-Filter darf bei leerem Zustand nicht alles wegwerfen.
+    item = {"condition": "", "language": "en"}
+    passend = [c for c in comp
+               if (not item["condition"] or c["condition"] == item["condition"])
+               and (not item["language"] or not c.get("language")
+                    or c["language"] == item["language"])]
+    check("Sealed-Filter behaelt alle passenden Angebote", len(passend) == len(comp))
+    check("Median liegt in der Preisspanne",
+          min(c["price"] for c in comp) <= wl.median([c["price"] for c in comp])
+          <= max(c["price"] for c in comp))
+
+    # Singles-Fixture: Sprache muss dort weiterhin stimmen (de-Filter)
+    de = sc.parse_competitors(fixture("product_de_nm"))
+    check("Singles: Sprache ebenfalls gelesen", {c["language"] for c in de} == {"de"},
+          f"{ {c['language'] for c in de} }")
+
+
 def test_blocked_detection():
     print("\nSchutz gegen Fehldaten")
     check("Cloudflare-Seite wird erkannt",
@@ -412,6 +443,7 @@ if __name__ == "__main__":
     test_signal_dedup()
     test_watchlist()
     test_notbremse()
+    test_sealed()
     test_blocked_detection()
 
     total = _passed + len(_failures)
