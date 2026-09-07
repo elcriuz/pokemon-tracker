@@ -65,7 +65,7 @@ def main() -> int:
         # auf ueber 3 GB anwachsen lassen. Nach zehn Minuten ohne Nutzung wird
         # auf eine leere Seite gewechselt — die Anmeldung liegt im Profil, nicht
         # im Fenster.
-        PARKEN_NACH_S = 600
+        PARKEN_NACH_S = 1800
         gestartet = time.monotonic()
         geparkt = False
         while True:
@@ -76,8 +76,19 @@ def main() -> int:
             if not geparkt and time.monotonic() - gestartet > PARKEN_NACH_S:
                 try:
                     if "cardmarket.com" in page.url:
+                        # Keine leere Seite, sondern ein Link zurueck: wer noVNC
+                        # oeffnet, will meist zu Cardmarket — ein Klick statt tippen.
                         page.goto("about:blank")
-                        print("Auf leere Seite geparkt (Speicher).", flush=True)
+                        page.set_content(
+                            "<body style=\"margin:0;display:grid;place-items:center;height:100vh;"
+                            "font:22px system-ui;background:#16191c;color:#e8e6e1\">"
+                            "<div style=\"text-align:center\"><p style=\"color:#8d949b;font-size:15px\">"
+                            "Browser geparkt, um Speicher zu sparen. Anmeldung bleibt erhalten.</p>"
+                            "<a href=\"https://www.cardmarket.com/de/Pokemon/Account/Login\" "
+                            "style=\"display:inline-block;padding:14px 26px;border-radius:8px;"
+                            "background:#d9a441;color:#16191c;text-decoration:none;font-weight:600\">"
+                            "Zu Cardmarket</a></div></body>")
+                        print("Geparkt (Speicher) — Link zurueck zu Cardmarket steht.", flush=True)
                 except Exception as e:
                     print(f"Parken nicht moeglich: {e}", flush=True)
                 geparkt = True
