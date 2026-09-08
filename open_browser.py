@@ -148,7 +148,20 @@ def main() -> int:
                 "--no-first-run",
                 "--disable-session-crashed-bubble",
                 "--disable-dev-shm-usage",
+                # Ohne Grafikkarte meldet WebGL sonst gar nichts (Hersteller und
+                # Renderer sind null). Jeder echte Desktop-Chrome liefert dort
+                # Werte; ein leeres WebGL ist eines der deutlichsten Bot-Signale
+                # und hat uns am 08.09. verlaesslich in die Bot-Pruefung geschickt.
+                "--use-gl=angle",
+                "--use-angle=swiftshader",
+                "--enable-unsafe-swiftshader",
+                # Zeitzone ist Wien und wir rufen deutsche Seiten auf — dann darf
+                # der Browser nicht en-US melden.
+                "--lang=de-DE",
+                "--accept-lang=de-DE,de,en-US,en",
             ],
+            locale="de-DE",
+            timezone_id="Europe/Vienna",
         )
         # Beim Start die gesicherte Anmeldung zurueckspielen, bevor die erste
         # Seite geladen wird — sonst sieht Cardmarket einen anonymen Besucher.
