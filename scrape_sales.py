@@ -32,7 +32,7 @@ FINAL_STATES = {"Arrived"}
 
 log = logging.getLogger("sales")
 
-from cardmarket_guard import (Gesperrt, Challenge, NichtAngemeldet, Takt,
+from cardmarket_guard import (NOVNC, Gesperrt, Challenge, NichtAngemeldet, Takt,
                               seite_pruefen_mit_wartezeit as seite_pruefen,
                               sperre_pruefen, sperre_aufheben)
 
@@ -206,7 +206,17 @@ def main() -> int:
         log.error("%s", e)
         return 3
 
-    from cardmarket_browser import BereitsAktiv, eigener_browser
+    from cardmarket_browser import (BereitsAktiv, anmeldung_im_profil,
+                                    eigener_browser)
+
+    # Ohne Anmeldung landet der Lauf zwangslaeufig in Cloudflares Bot-Pruefung,
+    # und die erzeugt die Anfragen, die zur Ratensperre fuehren. Am 07./08.09.
+    # ist genau so aus einem fehlgeschlagenen Lauf eine stundenlange Sperre
+    # geworden. Also gar nicht erst hingehen.
+    if not anmeldung_im_profil():
+        log.error("Keine gueltige Anmeldung im Profil — Lauf uebersprungen. "
+                  "Bitte unter %s anmelden.", NOVNC)
+        return 4
 
     try:
         kontext = eigener_browser()

@@ -65,6 +65,36 @@ def _dienst_laeuft() -> bool:
 SITZUNG_MAX_ALTER_S = 6 * 3600
 
 
+def anmeldung_im_profil() -> bool:
+    """Liegt ueberhaupt eine Anmeldung im Profil? Ohne Seitenaufruf.
+
+    Ein Lauf ohne Anmeldung landet zwangslaeufig in Cloudflares Bot-Pruefung,
+    und die erzeugt genau die Anfragen, die zur Ratensperre fuehren. Deshalb
+    gar nicht erst starten. Der Wert von idUser ist verschluesselt, aber sein
+    Vorhandensein und sein Ablauf stehen im Klartext in der Datenbank.
+    """
+    import sqlite3
+    from datetime import datetime, timedelta
+
+    datei = PROFIL / "Default" / "Cookies"
+    if not datei.exists():
+        return False
+    try:
+        db = sqlite3.connect(f"file:{datei}?mode=ro", uri=True)
+        zeile = db.execute(
+            "SELECT expires_utc FROM cookies WHERE host_key LIKE ? AND name = ?",
+            ("%cardmarket%", "idUser")).fetchone()
+    except Exception as e:
+        log.warning("Anmeldung nicht pruefbar: %s", e)
+        return True  # im Zweifel laufen lassen
+    if not zeile:
+        return False
+    if zeile[0]:
+        laeuft_ab = datetime(1601, 1, 1) + timedelta(microseconds=zeile[0])
+        return laeuft_ab > datetime.utcnow()
+    return True
+
+
 def _angemeldet(cookies) -> bool:
     """idUser setzt Cardmarket nur fuer angemeldete Besucher.
 
