@@ -22,6 +22,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from patchright.sync_api import sync_playwright
+
 ROOT = Path(__file__).resolve().parent
 PROFIL = ROOT / "data" / "patchright-profile"
 DIENST = "cardmarket-browser"
@@ -115,8 +117,6 @@ def _exklusiv():
 def eigener_browser(start_url: str | None = None):
     """Liefert (context, page). Stoppt den noVNC-Browser nur, wenn er lief,
     und startet ihn dann hinterher wieder — auch bei Fehlern."""
-    from patchright.sync_api import sync_playwright
-
     with _exklusiv():
         yield from _browser_intern(start_url)
 

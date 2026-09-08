@@ -46,9 +46,17 @@ def parkseite(page) -> None:
 
     Der Link wird erst durch einen Klick zur Anfrage. So steht der Browser nie
     unbeaufsichtigt auf einer Seite, die sich selbst neu laedt.
+
+    Die Seite liegt bewusst als Datei vor und wird ueber file:// geladen. Wird
+    der Inhalt stattdessen per set_content() in ein leeres about:blank gesetzt,
+    hat das Dokument keinen eigenen Ursprung — Chrome laesst aus so einem
+    Dokument keinen Klick auf einen https-Link nach aussen zu. Genau das ist am
+    08.09. passiert: die Seite stand da, der Knopf tat nichts.
     """
-    page.goto("about:blank")
-    page.set_content(
+    ziel = BASE_DIR / "data" / "parkseite.html"
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    ziel.write_text(
+        '<!doctype html><meta charset="utf-8"><title>Browser bereit</title>'
         '<body style="margin:0;display:grid;place-items:center;height:100vh;'
         'font:22px system-ui;background:#16191c;color:#e8e6e1">'
         '<div style="text-align:center;max-width:34em">'
@@ -60,7 +68,9 @@ def parkseite(page) -> None:
         'border-radius:8px;background:#d9a441;color:#16191c;text-decoration:none;'
         'font-weight:600">Bei Cardmarket anmelden</a>'
         '<p style="color:#6e767d;font-size:13px;margin-top:22px">Nach dem Anmelden '
-        'einfach hier lassen &mdash; die Sitzung wird gesichert.</p></div></body>')
+        'einfach hier lassen &mdash; die Sitzung wird gesichert.</p></div></body>',
+        encoding="utf-8")
+    page.goto(ziel.as_uri())
 
 
 def sitzungswiederherstellung_aus(profil: Path) -> None:
