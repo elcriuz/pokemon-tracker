@@ -59,10 +59,29 @@ def _dienst_laeuft() -> bool:
     return _systemctl("is-active", "--quiet")
 
 
+# Eine gesicherte Sitzung darf nur zurueckgespielt werden, solange sie
+# plausibel noch gilt. Am 08.09. lag eine 2,5 Stunden alte Datei bereit und hat
+# eine frische Anmeldung ueberschrieben — danach war der Lauf abgemeldet.
+SITZUNG_MAX_ALTER_S = 6 * 3600
+
+
+def _angemeldet(cookies) -> bool:
+    """idUser setzt Cardmarket nur fuer angemeldete Besucher.
+
+    PHPSESSID allein sagt nichts: das bekommt auch, wer nur vorbeisurft. Genau
+    so kam am 08.09. eine abgemeldete Sitzung in die Datei.
+    """
+    return any(c.get("name") == "idUser" and c.get("value")
+               for c in cookies if "cardmarket" in c.get("domain", ""))
+
+
 def _sitzung_sichern(context) -> int:
     """Nur die fluechtigen Cookies — persistente schreibt Chrome selbst weg."""
     try:
-        fluechtig = [c for c in context.cookies()
+        alle = context.cookies()
+        if not _angemeldet(alle):
+            return 0
+        fluechtig = [c for c in alle
                      if "cardmarket" in c.get("domain", "") and not c.get("expires", -1) > 0]
         if fluechtig:
             SITZUNG.write_text(json.dumps(fluechtig))
@@ -75,6 +94,11 @@ def _sitzung_sichern(context) -> int:
 
 def _sitzung_zurueckspielen(context) -> int:
     if not SITZUNG.exists():
+        return 0
+    alter = time.time() - SITZUNG.stat().st_mtime
+    if alter > SITZUNG_MAX_ALTER_S:
+        log.info("Gesicherte Sitzung ist %.1f h alt — nicht zurueckgespielt",
+                 alter / 3600)
         return 0
     try:
         cookies = json.loads(SITZUNG.read_text())

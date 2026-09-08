@@ -154,14 +154,27 @@ def main() -> int:
         # auf ueber 3 GB anwachsen lassen. Nach zehn Minuten ohne Nutzung wird
         # auf eine leere Seite gewechselt — die Anmeldung liegt im Profil, nicht
         # im Fenster.
+        #
+        # Die Anmeldung wird laufend gesichert, nicht erst beim Beenden:
+        # systemctl stop beendet diesen Prozess hart, das Sichern am
+        # Schleifenende kam am 08.09. deshalb nie dran. Die Datei stand noch auf
+        # dem Stand von morgens und hat die frische Anmeldung ueberschrieben.
         PARKEN_NACH_S = 1800
+        SICHERN_ALLE_S = 60
         gestartet = time.monotonic()
         geparkt = False
+        zuletzt_gesichert = 0.0
         while True:
             time.sleep(10)
             if not context.pages:
                 print("Kein Fenster mehr offen — beende mich.", flush=True)
                 break
+            if time.monotonic() - zuletzt_gesichert > SICHERN_ALLE_S:
+                zuletzt_gesichert = time.monotonic()
+                with contextlib.suppress(Exception):
+                    from cardmarket_browser import _sitzung_sichern
+                    if _sitzung_sichern(context):
+                        print("Anmeldung gesichert.", flush=True)
             if not geparkt and time.monotonic() - gestartet > PARKEN_NACH_S:
                 try:
                     for weiterer in context.pages[1:]:
