@@ -24,11 +24,41 @@ import time
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-START_URL = os.environ.get("START_URL", "https://www.cardmarket.com/de/Pokemon")
+# Bewusst KEINE Cardmarket-Adresse: der Dauerbrowser laedt seine Startseite bei
+# jedem Neustart (auch beim naechtlichen um 03:35). Landet er dabei in Cloudflares
+# Bot-Pruefung, laedt die sich im Sekundentakt selbst neu — ueber Stunden ergibt
+# das die Ratensperre 1015. Am 07. und 08.09. genau so passiert.
+# Cardmarket wird nur noch geladen, wenn ein Mensch klickt oder ein Skript steuert.
+START_URL = os.environ.get("START_URL", "")
 
 os.environ.setdefault("DISPLAY", ":99")
 
 from patchright.sync_api import sync_playwright  # noqa: E402
+
+
+LOGIN_URL = "https://www.cardmarket.com/de/Pokemon/Account/Login"
+
+
+def parkseite(page) -> None:
+    """Lokale Seite mit Link — laedt nichts von Cardmarket.
+
+    Der Link wird erst durch einen Klick zur Anfrage. So steht der Browser nie
+    unbeaufsichtigt auf einer Seite, die sich selbst neu laedt.
+    """
+    page.goto("about:blank")
+    page.set_content(
+        '<body style="margin:0;display:grid;place-items:center;height:100vh;'
+        'font:22px system-ui;background:#16191c;color:#e8e6e1">'
+        '<div style="text-align:center;max-width:34em">'
+        '<p style="color:#8d949b;font-size:15px;line-height:1.5">Browser bereit. '
+        'Cardmarket wird bewusst nicht automatisch geladen &mdash; eine offene '
+        'Bot-Pr&uuml;fung w&uuml;rde sich endlos neu laden und eine Sperre '
+        'ausl&ouml;sen.</p>'
+        f'<a href="{LOGIN_URL}" style="display:inline-block;padding:14px 26px;'
+        'border-radius:8px;background:#d9a441;color:#16191c;text-decoration:none;'
+        'font-weight:600">Bei Cardmarket anmelden</a>'
+        '<p style="color:#6e767d;font-size:13px;margin-top:22px">Nach dem Anmelden '
+        'einfach hier lassen &mdash; die Sitzung wird gesichert.</p></div></body>')
 
 
 def main() -> int:
@@ -61,7 +91,10 @@ def main() -> int:
 
         page = context.pages[0] if context.pages else context.new_page()
         try:
-            page.goto(START_URL, wait_until="domcontentloaded", timeout=60000)
+            if START_URL:
+                page.goto(START_URL, wait_until="domcontentloaded", timeout=60000)
+            else:
+                parkseite(page)
         except Exception as e:
             print(f"Startseite nicht geladen: {e}", flush=True)
 
@@ -86,19 +119,8 @@ def main() -> int:
             if not geparkt and time.monotonic() - gestartet > PARKEN_NACH_S:
                 try:
                     if "cardmarket.com" in page.url:
-                        # Keine leere Seite, sondern ein Link zurueck: wer noVNC
-                        # oeffnet, will meist zu Cardmarket — ein Klick statt tippen.
-                        page.goto("about:blank")
-                        page.set_content(
-                            "<body style=\"margin:0;display:grid;place-items:center;height:100vh;"
-                            "font:22px system-ui;background:#16191c;color:#e8e6e1\">"
-                            "<div style=\"text-align:center\"><p style=\"color:#8d949b;font-size:15px\">"
-                            "Browser geparkt, um Speicher zu sparen. Anmeldung bleibt erhalten.</p>"
-                            "<a href=\"https://www.cardmarket.com/de/Pokemon/Account/Login\" "
-                            "style=\"display:inline-block;padding:14px 26px;border-radius:8px;"
-                            "background:#d9a441;color:#16191c;text-decoration:none;font-weight:600\">"
-                            "Zu Cardmarket</a></div></body>")
-                        print("Geparkt (Speicher) — Link zurueck zu Cardmarket steht.", flush=True)
+                        parkseite(page)
+                        print("Geparkt (Speicher) — Link zurueck steht.", flush=True)
                 except Exception as e:
                     print(f"Parken nicht moeglich: {e}", flush=True)
                 geparkt = True

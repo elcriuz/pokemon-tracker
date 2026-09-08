@@ -32,6 +32,12 @@ DIENST = "cardmarket-browser"
 # (seit dem Umbau am 03.09. bei jedem einzelnen Verkaufslauf).
 # Deshalb: vor dem Schliessen sichern, nach dem Start zurueckspielen.
 SITZUNG = ROOT / "data" / "cm_session.json"
+# Nur ein Lauf darf gleichzeitig auf das Profil zugreifen. Ueberschneiden sich
+# zwei (drei Cron-Zeiten plus Handbetrieb), stolpern sie ueber dieselbe
+# Profilsperre — der zweite stirbt mit TargetClosedError, und weil er abstuerzt,
+# schreibt er keine Sperrnotiz. Genau so ist am 08.09. eine 1015 unbemerkt
+# geblieben.
+LOCK = ROOT / "data" / "cm_browser.lock"
 
 log = logging.getLogger("browser")
 
@@ -80,12 +86,42 @@ def _sitzung_zurueckspielen(context) -> int:
         return 0
 
 
+class BereitsAktiv(RuntimeError):
+    """Ein anderer Lauf benutzt den Browser gerade."""
+
+
+@contextlib.contextmanager
+def _exklusiv():
+    import fcntl
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    f = LOCK.open("w")
+    try:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise BereitsAktiv(
+                "Ein anderer Cardmarket-Lauf ist noch aktiv — dieser Lauf wird "
+                "uebersprungen, statt sich mit ihm um das Profil zu streiten.")
+        f.write(str(os.getpid()))
+        f.flush()
+        yield
+    finally:
+        with contextlib.suppress(Exception):
+            fcntl.flock(f, fcntl.LOCK_UN)
+            f.close()
+
+
 @contextlib.contextmanager
 def eigener_browser(start_url: str | None = None):
     """Liefert (context, page). Stoppt den noVNC-Browser nur, wenn er lief,
     und startet ihn dann hinterher wieder — auch bei Fehlern."""
     from patchright.sync_api import sync_playwright
 
+    with _exklusiv():
+        yield from _browser_intern(start_url)
+
+
+def _browser_intern(start_url: str | None):
     lief = _dienst_laeuft()
     if lief:
         _systemctl("stop")

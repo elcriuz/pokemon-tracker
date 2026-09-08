@@ -15,3 +15,4 @@ data/cardindex/
 .work/
 data/cm_cookies.json
 data/cm_session.json
+data/cm_browser.lock

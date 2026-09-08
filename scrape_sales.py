@@ -206,9 +206,14 @@ def main() -> int:
         log.error("%s", e)
         return 3
 
-    from cardmarket_browser import eigener_browser
+    from cardmarket_browser import BereitsAktiv, eigener_browser
 
-    with eigener_browser() as (_ctx, page):
+    try:
+        kontext = eigener_browser()
+    except BereitsAktiv as e:
+        log.warning("%s", e)
+        return 0
+    with kontext as (_ctx, page):
 
         # 1) Uebersichten einsammeln
         found: dict[str, dict] = {}

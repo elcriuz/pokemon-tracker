@@ -290,8 +290,13 @@ def main() -> int:
         log.error("%s", e)
         return 3
 
-    from cardmarket_browser import eigener_browser
-    with eigener_browser() as (_ctx, page):
+    from cardmarket_browser import BereitsAktiv, eigener_browser
+    try:
+        kontext = eigener_browser()
+    except BereitsAktiv as e:
+        log.warning("%s", e)
+        return 0
+    with kontext as (_ctx, page):
         try:
             site = find_row_page(page, game, args.article)
             log.info("%s — gefunden auf Bestandsseite %d", name, site)
@@ -334,7 +339,7 @@ def run_batch_main(dry_run: bool) -> int:
         log.error("%s", e)
         return 3
 
-    from cardmarket_browser import eigener_browser
+    from cardmarket_browser import BereitsAktiv, eigener_browser
     with eigener_browser() as (_ctx, page):
         st = run_batch(page, db, dry_run)
 
