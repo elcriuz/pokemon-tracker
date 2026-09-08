@@ -96,6 +96,41 @@ def sitzungswiederherstellung_aus(profil: Path) -> None:
         print(f"Preferences nicht angepasst: {e}", flush=True)
 
 
+def sitzung_wachhalten(context, page) -> bool:
+    """Haelt die Anmeldung frisch. Gibt False zurueck, wenn nicht mehr probiert
+    werden soll.
+
+    Sparsam und vorsichtig: nur ein Aufruf, danach zurueck auf die Parkseite.
+    Bei einer Bot-Pruefung oder einer Sperre wird sofort aufgehoert — sonst
+    entsteht genau die Anfrageflut, die am 07./08.09. zur Ratensperre gefuehrt
+    hat. Wer nicht angemeldet ist, wird auch nicht wachgehalten.
+    """
+    from cardmarket_guard import (Gesperrt, Challenge, NichtAngemeldet,
+                                  seite_pruefen)
+    from cardmarket_browser import _angemeldet
+
+    if not _angemeldet(context.cookies()):
+        return False
+    try:
+        page.goto("https://www.cardmarket.com/de/Pokemon/Account",
+                  wait_until="domcontentloaded", timeout=45000)
+        seite_pruefen(page)
+        print("Sitzung wachgehalten.", flush=True)
+        return True
+    except NichtAngemeldet:
+        print("Wachhalten: nicht mehr angemeldet — eingestellt.", flush=True)
+        return False
+    except (Gesperrt, Challenge) as e:
+        print(f"Wachhalten eingestellt: {e}", flush=True)
+        return False
+    except Exception as e:
+        print(f"Wachhalten fehlgeschlagen: {e}", flush=True)
+        return False
+    finally:
+        with contextlib.suppress(Exception):
+            parkseite(page)
+
+
 def main() -> int:
     profile_dir = BASE_DIR / "data" / "patchright-profile"
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -161,9 +196,17 @@ def main() -> int:
         # dem Stand von morgens und hat die frische Anmeldung ueberschrieben.
         PARKEN_NACH_S = 1800
         SICHERN_ALLE_S = 60
+        # Cardmarket hat kein "Angemeldet bleiben" — idUser laeuft eine Stunde
+        # nach der letzten Anfrage ab und wird von jeder Anfrage neu verlaengert.
+        # Unsere Laeufe liegen vier bis sechs Stunden auseinander, deshalb waere
+        # die Anmeldung morgens immer tot. Ein leichter Aufruf alle 45 Minuten
+        # haelt sie am Leben.
+        WACHHALTEN_ALLE_S = 45 * 60
         gestartet = time.monotonic()
         geparkt = False
         zuletzt_gesichert = 0.0
+        zuletzt_wachgehalten = time.monotonic()
+        wachhalten_erlaubt = True
         while True:
             time.sleep(10)
             if not context.pages:
@@ -175,6 +218,10 @@ def main() -> int:
                     from cardmarket_browser import _sitzung_sichern
                     if _sitzung_sichern(context):
                         print("Anmeldung gesichert.", flush=True)
+            if time.monotonic() - zuletzt_wachgehalten > WACHHALTEN_ALLE_S:
+                zuletzt_wachgehalten = time.monotonic()
+                if wachhalten_erlaubt:
+                    wachhalten_erlaubt = sitzung_wachhalten(context, page)
             if not geparkt and time.monotonic() - gestartet > PARKEN_NACH_S:
                 try:
                     for weiterer in context.pages[1:]:
