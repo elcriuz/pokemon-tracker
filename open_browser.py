@@ -152,11 +152,13 @@ def main() -> int:
                 # Renderer sind null). Jeder echte Desktop-Chrome liefert dort
                 # Werte; ein leeres WebGL ist eines der deutlichsten Bot-Signale
                 # und hat uns am 08.09. verlaesslich in die Bot-Pruefung geschickt.
-                # Mesa/llvmpipe statt SwiftShader: llvmpipe ist der uebliche
-                # Software-Renderer eines Linux-Rechners ohne Grafikkarte,
-                # SwiftShader dagegen gilt selbst als Headless-Merkmal.
+                # SwiftShader ist nicht ideal — der Name gilt selbst als
+                # Headless-Merkmal. Mesa/llvmpipe waere unauffaelliger, liefert
+                # unter Xvfb hier aber gar kein WebGL (nachgemessen 08.09.), und
+                # ein totes WebGL ist das deutlich schlechtere Signal.
                 "--use-gl=angle",
-                "--use-angle=gl",
+                "--use-angle=swiftshader",
+                "--enable-unsafe-swiftshader",
                 # Zeitzone ist Wien und wir rufen deutsche Seiten auf — dann darf
                 # der Browser nicht en-US melden.
                 "--lang=de-DE",
