@@ -18,6 +18,7 @@ http://192.168.1.91:6080/vnc.html
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import time
@@ -89,7 +90,17 @@ def main() -> int:
         except Exception as e:
             print(f"Sitzung nicht zurueckgespielt: {e}", flush=True)
 
+        # Chrome holt nach einem harten Ende die zuletzt offenen Tabs zurueck.
+        # Nach einer Sperre ist das die Cloudflare-Seite — die laedt sich selbst
+        # nach und zieht die naechste Sperre. Deshalb: alle Tabs bis auf einen
+        # schliessen und den auf die lokale Parkseite setzen.
         page = context.pages[0] if context.pages else context.new_page()
+        for weiterer in context.pages[1:]:
+            with contextlib.suppress(Exception):
+                weiterer.close()
+        if context.pages[1:]:
+            print(f"{len(context.pages[1:])} wiederhergestellte Tabs geschlossen", flush=True)
+
         try:
             if START_URL:
                 page.goto(START_URL, wait_until="domcontentloaded", timeout=60000)
@@ -118,6 +129,9 @@ def main() -> int:
                 break
             if not geparkt and time.monotonic() - gestartet > PARKEN_NACH_S:
                 try:
+                    for weiterer in context.pages[1:]:
+                        with contextlib.suppress(Exception):
+                            weiterer.close()
                     if "cardmarket.com" in page.url:
                         parkseite(page)
                         print("Geparkt (Speicher) — Link zurueck steht.", flush=True)
