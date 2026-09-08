@@ -19,6 +19,7 @@ http://192.168.1.91:6080/vnc.html
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import sys
 import time
@@ -62,9 +63,33 @@ def parkseite(page) -> None:
         'einfach hier lassen &mdash; die Sitzung wird gesichert.</p></div></body>')
 
 
+def sitzungswiederherstellung_aus(profil: Path) -> None:
+    """Chrome soll nach dem Beenden nichts zurueckholen.
+
+    systemctl stop schickt SIGTERM; Chrome kommt nicht dazu, sauber zu
+    schliessen, und vermerkt exit_type="Crashed". Beim naechsten Start holt er
+    dann die letzten Tabs zurueck — nach einer Sperre also ausgerechnet die
+    Cloudflare-Seite, die sich selbst nachlaedt. Deshalb vor jedem Start:
+    Absturzvermerk loeschen und Wiederherstellung auf "leere Seite" stellen.
+    """
+    pref = profil / "Default" / "Preferences"
+    if not pref.exists():
+        return
+    try:
+        d = json.loads(pref.read_text())
+        d.setdefault("session", {})["restore_on_startup"] = 5   # 5 = leere Seite
+        d["session"]["startup_urls"] = []
+        d.setdefault("profile", {})["exit_type"] = "Normal"
+        d["profile"]["exited_cleanly"] = True
+        pref.write_text(json.dumps(d))
+    except Exception as e:
+        print(f"Preferences nicht angepasst: {e}", flush=True)
+
+
 def main() -> int:
     profile_dir = BASE_DIR / "data" / "patchright-profile"
     profile_dir.mkdir(parents=True, exist_ok=True)
+    sitzungswiederherstellung_aus(profile_dir)
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(

@@ -132,6 +132,9 @@ def _browser_intern(start_url: str | None):
             time.sleep(0.5)
 
     PROFIL.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(Exception):
+        from open_browser import sitzungswiederherstellung_aus
+        sitzungswiederherstellung_aus(PROFIL)
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
             user_data_dir=str(PROFIL),
