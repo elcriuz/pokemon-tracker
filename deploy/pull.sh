@@ -105,9 +105,14 @@ PYEOF
   local ausgabe
   ausgabe=$(mktemp)
 
+  # Farbcodes machen das Fehlerlog unlesbar: NO_COLOR bittet die Werkzeuge
+  # darum, sed räumt weg, was sie trotzdem schreiben.
+  export NO_COLOR=1 FORCE_COLOR=0
+  entfaerben() { sed -E $'s/\033\[[0-9;]*[a-zA-Z]//g; s/^/    /' "$1" >> "$LOG"; }
+
   if ! pnpm install --frozen-lockfile > "$ausgabe" 2>&1; then
     log "FEHLER bei pnpm install:"
-    sed 's/^/    /' "$ausgabe" >> "$LOG"
+    entfaerben "$ausgabe"
     rm -f "$ausgabe"
     notify "Tracker-Deploy $kurz abgebrochen: pnpm install fehlgeschlagen. Der Server läuft unverändert weiter. Siehe deploy.log."
     return 1
@@ -115,13 +120,14 @@ PYEOF
 
   if ! npx vite build > "$ausgabe" 2>&1; then
     log "FEHLER beim Build:"
-    sed 's/^/    /' "$ausgabe" >> "$LOG"
+    entfaerben "$ausgabe"
     rm -f "$ausgabe"
     notify "Tracker-Deploy $kurz abgebrochen: Build fehlgeschlagen. Der Server läuft mit dem alten Frontend weiter. Siehe deploy.log."
     return 1
   fi
 
-  log_line=$(grep -E "built in|dist/assets/.*\.js" "$ausgabe" | tail -2 | tr '\n' ' ')
+  log_line=$(sed -E $'s/\033\[[0-9;]*[a-zA-Z]//g' "$ausgabe" \
+    | grep -E "built in|dist/assets/.*\.js" | tail -2 | tr '\n' ' ')
   rm -f "$ausgabe"
   log "Build ok: ${log_line:-keine Build-Ausgabe}"
 
