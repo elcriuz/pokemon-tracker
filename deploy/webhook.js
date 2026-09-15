@@ -1,5 +1,15 @@
 #!/usr/bin/env node
 /**
+ * AUSSER BETRIEB seit 15.09.2026 — nicht mehr als Dienst aktiv.
+ *
+ * Der Empfänger hat nie einen Request gesehen: GitHub kann 192.168.1.91:9000
+ * aus dem Internet nicht erreichen, das Log blieb seit April 2026 leer. Das
+ * Deployment läuft stattdessen über deploy/pull.sh im Minutentakt per Cron.
+ *
+ * Wieder in Betrieb nehmen, hieße Port 9000 ins Internet zu öffnen — ein
+ * execSync-Endpunkt mit fest eingebautem Secret. Wenn echter Push-Deploy
+ * gewünscht ist, besser GitHub Actions über Tailscale, ohne offenen Port.
+ *
  * Simple GitHub Webhook receiver for auto-deployment.
  * Listens on port 9000, pulls latest code + rebuilds on push events.
  *
