@@ -20,7 +20,7 @@ const LOG_BUFFER_MAX = 200
 
 function regeneratePortfolioCsv() {
   const db = getDb()
-  const cards = db.prepare("SELECT url, name, grade, notes FROM cards").all() as any[]
+  const cards = db.prepare("SELECT url, name, grade, notes FROM cards WHERE sold_at IS NULL").all() as any[]
   const header = "url,name,grade,notes\n"
   const rows = cards.map((c) => `${c.url},${c.name},${c.grade},${c.notes}`).join("\n")
   fs.writeFileSync(path.join(BASE, "portfolio.csv"), header + rows + "\n")
@@ -84,7 +84,7 @@ scrapeRouter.post("/", (req, res) => {
   try { fs.unlinkSync(path.join(BASE, "data", "scrape_resume.json")) } catch {}
 
   const run = db.prepare(
-    "INSERT INTO scrape_runs (started_at, status, card_count, engine) VALUES (datetime('now'), 'running', (SELECT COUNT(*) FROM cards), ?)"
+    "INSERT INTO scrape_runs (started_at, status, card_count, engine) VALUES (datetime('now'), 'running', (SELECT COUNT(*) FROM cards WHERE sold_at IS NULL), ?)"
   ).run(engine)
   currentRunId = run.lastInsertRowid as number
   currentEngine = engine

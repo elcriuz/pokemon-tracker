@@ -31,11 +31,17 @@ cardsRouter.get("/", (req, res) => {
       )
   `
   const params: any[] = []
+  const where: string[] = []
   if (binderId) {
-    query += binderId === "none" ? " WHERE c.binder_id IS NULL" : " WHERE c.binder_id = ?"
+    where.push(binderId === "none" ? "c.binder_id IS NULL" : "c.binder_id = ?")
     if (binderId !== "none") params.push(binderId)
   }
-  query += " ORDER BY c.name"
+  // Verkaufte Karten gehoeren nicht mehr ins Portfolio: ?sold=1 zeigt nur sie, ?sold=all alles
+  const soldFilter = req.query.sold as string | undefined
+  if (soldFilter === "1") where.push("c.sold_at IS NOT NULL")
+  else if (soldFilter !== "all") where.push("c.sold_at IS NULL")
+  if (where.length) query += " WHERE " + where.join(" AND ")
+  query += soldFilter === "1" ? " ORDER BY c.sold_at DESC" : " ORDER BY c.name"
   const cards = db.prepare(query).all(...params)
   res.json(cards)
 })
@@ -127,6 +133,102 @@ cardsRouter.post("/:id/watch", (req, res) => {
   res.json({ id: Number(req.params.id), watch: newWatch })
 })
 
+// --- Verkauf ---------------------------------------------------------------
+// Verkaufte Karten bleiben mit Preisverlauf in der Datenbank, zaehlen aber nicht
+// mehr zum Portfolio. Die /bulk-Routen muessen vor den /:id-Routen stehen,
+// sonst greift Express "bulk" als :id ab.
+
+function parseIds(body: any): number[] | null {
+  const ids = Array.isArray(body?.ids) ? body.ids.map(Number) : null
+  if (!ids || !ids.length || ids.some((n: number) => !Number.isInteger(n) || n <= 0)) return null
+  return ids
+}
+
+// Preis kann als Zahl oder als String mit deutschem Komma kommen.
+// undefined = nicht angegeben, NaN = ungueltig, null = ausdruecklich leer.
+function parsePrice(raw: any): number | null | undefined {
+  if (raw === undefined) return undefined
+  if (raw === null || raw === "") return null
+  const n = typeof raw === "string" ? Number(raw.trim().replace(",", ".")) : Number(raw)
+  return Number.isFinite(n) ? n : NaN
+}
+
+// POST /api/cards/bulk/sold - mehrere Karten als verkauft markieren.
+// Entweder items: [{id, sold_price}] (Erloes je Karte) oder ids + gemeinsamer sold_price.
+cardsRouter.post("/bulk/sold", (req, res) => {
+  const db = getDb()
+  const soldAt = req.body?.sold_at || new Date().toISOString().slice(0, 10)
+
+  let items: { id: number; sold_price: number | null }[]
+  if (Array.isArray(req.body?.items)) {
+    items = req.body.items.map((it: any) => ({
+      id: Number(it?.id),
+      sold_price: parsePrice(it?.sold_price) ?? null,
+    }))
+    if (!items.length || items.some((it) => !Number.isInteger(it.id) || it.id <= 0)) {
+      return res.status(400).json({ error: "items enthält ungültige Karten-IDs" })
+    }
+    if (items.some((it) => it.sold_price != null && !Number.isFinite(it.sold_price))) {
+      return res.status(400).json({ error: "Verkaufspreis ist keine Zahl" })
+    }
+  } else {
+    const ids = parseIds(req.body)
+    if (!ids) return res.status(400).json({ error: "ids oder items fehlt" })
+    const shared = parsePrice(req.body.sold_price) ?? null
+    if (shared != null && !Number.isFinite(shared)) return res.status(400).json({ error: "Verkaufspreis ist keine Zahl" })
+    items = ids.map((id) => ({ id, sold_price: shared }))
+  }
+
+  const stmt = db.prepare("UPDATE cards SET sold_at = ?, sold_price = ?, updated_at = datetime('now') WHERE id = ?")
+  const run = db.transaction((list: typeof items) =>
+    list.reduce((n, it) => n + stmt.run(soldAt, it.sold_price, it.id).changes, 0)
+  )
+  const changed = run(items)
+  res.json({ ok: true, changed, sold_at: soldAt })
+})
+
+// POST /api/cards/bulk/delete - mehrere Karten endgueltig loeschen
+cardsRouter.post("/bulk/delete", (req, res) => {
+  const db = getDb()
+  const ids = parseIds(req.body)
+  if (!ids) return res.status(400).json({ error: "ids (Array von Karten-IDs) fehlt" })
+
+  const imgStmt = db.prepare("SELECT image FROM cards WHERE id = ?")
+  const images = ids.map((id) => (imgStmt.get(id) as any)?.image).filter(Boolean)
+  const delStmt = db.prepare("DELETE FROM cards WHERE id = ?")
+  const run = db.transaction((list: number[]) => list.reduce((n, id) => n + delStmt.run(id).changes, 0))
+  const deleted = run(ids)
+
+  const imagesDir = path.join(__dirname, "../..", "data", "images")
+  for (const img of images) {
+    try { fs.unlinkSync(path.join(imagesDir, img)) } catch {}
+  }
+  res.json({ ok: true, deleted })
+})
+
+// POST /api/cards/:id/sold - eine Karte als verkauft markieren
+cardsRouter.post("/:id/sold", (req, res) => {
+  const db = getDb()
+  const existing = db.prepare("SELECT id FROM cards WHERE id = ?").get(req.params.id)
+  if (!existing) return res.status(404).json({ error: "Card not found" })
+  const soldAt = req.body?.sold_at || new Date().toISOString().slice(0, 10)
+  const soldPrice = parsePrice(req.body?.sold_price) ?? null
+  if (soldPrice != null && !Number.isFinite(soldPrice)) return res.status(400).json({ error: "Verkaufspreis ist keine Zahl" })
+
+  db.prepare("UPDATE cards SET sold_at = ?, sold_price = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(soldAt, soldPrice, req.params.id)
+  res.json(db.prepare("SELECT * FROM cards WHERE id = ?").get(req.params.id))
+})
+
+// DELETE /api/cards/:id/sold - Verkauf zurueckholen
+cardsRouter.delete("/:id/sold", (req, res) => {
+  const db = getDb()
+  const result = db.prepare("UPDATE cards SET sold_at = NULL, sold_price = NULL, updated_at = datetime('now') WHERE id = ?")
+    .run(req.params.id)
+  if (result.changes === 0) return res.status(404).json({ error: "Card not found" })
+  res.json(db.prepare("SELECT * FROM cards WHERE id = ?").get(req.params.id))
+})
+
 // DELETE /api/cards/:id/image - delete image so it gets re-scraped
 cardsRouter.delete("/:id/image", (req, res) => {
   const db = getDb()
@@ -143,7 +245,11 @@ cardsRouter.delete("/:id/image", (req, res) => {
 // DELETE /api/cards/:id
 cardsRouter.delete("/:id", (req, res) => {
   const db = getDb()
+  const card = db.prepare("SELECT image FROM cards WHERE id = ?").get(req.params.id) as any
   const result = db.prepare("DELETE FROM cards WHERE id = ?").run(req.params.id)
   if (result.changes === 0) return res.status(404).json({ error: "Card not found" })
+  if (card?.image) {
+    try { fs.unlinkSync(path.join(__dirname, "../..", "data", "images", card.image)) } catch {}
+  }
   res.json({ ok: true })
 })

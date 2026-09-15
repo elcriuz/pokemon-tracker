@@ -2,10 +2,12 @@ import { useParams, useNavigate, Link } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { formatEUR, urlToFlag } from "@/lib/utils"
-import { ArrowLeft, Pencil, Trash2, ExternalLink, RefreshCw, ImageOff, Eye, EyeOff } from "lucide-react"
+import { ArrowLeft, Pencil, Trash2, ExternalLink, RefreshCw, ImageOff, Eye, EyeOff, Tag, Undo2 } from "lucide-react"
 import { PriceHistoryChart } from "@/components/charts/PriceHistoryChart"
 import { useState } from "react"
 import { EditCardDialog } from "@/components/cards/EditCardDialog"
+import { MarkSoldDialog } from "@/components/cards/MarkSoldDialog"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 
 export function CardDetail() {
   const { id } = useParams()
@@ -16,11 +18,28 @@ export function CardDetail() {
   const { data: card, isLoading } = useQuery({ queryKey: ["card", cardId], queryFn: () => api.getCard(cardId) })
   const { data: prices } = useQuery({ queryKey: ["cardPrices", cardId], queryFn: () => api.getCardPrices(cardId) })
   const [showEdit, setShowEdit] = useState(false)
+  const [showSold, setShowSold] = useState(false)
+  const [showDelete, setShowDelete] = useState(false)
   const [scrapeEngine, setScrapeEngine] = useState<"patchright" | "brightdata">("brightdata")
 
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteCard(cardId),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["cards"] }); navigate("/") },
+    onSuccess: () => {
+      for (const key of ["cards", "dashboard", "binders", "cardshop", "actions"]) {
+        queryClient.invalidateQueries({ queryKey: [key] })
+      }
+      navigate("/")
+    },
+  })
+
+  const unsoldMutation = useMutation({
+    mutationFn: () => api.unmarkSold(cardId),
+    onSuccess: () => {
+      for (const key of ["cards", "dashboard", "binders", "cardshop", "actions"]) {
+        queryClient.invalidateQueries({ queryKey: [key] })
+      }
+      queryClient.invalidateQueries({ queryKey: ["card", cardId] })
+    },
   })
 
   const { data: scrapeStatus } = useQuery({
@@ -44,7 +63,7 @@ export function CardDetail() {
     },
   })
 
-  if (isLoading) return <div className="text-muted-foreground">Laden...</div>
+  if (isLoading) return <div className="text-muted-foreground">Laden …</div>
   if (!card) return <div>Karte nicht gefunden</div>
 
   const qty = card.quantity || 1
@@ -72,12 +91,12 @@ export function CardDetail() {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link to="/" className="p-2 rounded-lg hover:bg-secondary"><ArrowLeft className="w-5 h-5" /></Link>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <Link to="/" className="p-2 rounded-lg hover:bg-secondary flex-shrink-0"><ArrowLeft className="w-5 h-5" /></Link>
           {card.image && <img src={`/images/${card.image}`} alt="" className="w-16 h-22 object-cover rounded-lg" />}
           <div>
-            <h1 className="text-2xl font-bold">{card.name}</h1>
+            <h1 className="text-2xl font-bold leading-tight">{card.name}</h1>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               {card.set_name && <span className="px-1.5 py-0.5 rounded text-xs bg-secondary">{card.set_name}</span>}
               {card.grade && <span className="px-1.5 py-0.5 rounded text-xs bg-yellow-500/20 text-yellow-400">{card.grade}</span>}
@@ -93,7 +112,7 @@ export function CardDetail() {
             </div>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
           <div className="flex rounded-lg overflow-hidden border border-border">
             <button
               onClick={() => setScrapeEngine("patchright")}
@@ -122,14 +141,14 @@ export function CardDetail() {
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-secondary hover:bg-secondary/80 transition-colors"
-            title="Auf Cardmarket oeffnen"
+            title="Auf Cardmarket öffnen"
           >
             <ExternalLink className="w-4 h-4" /> Cardmarket
           </a>
           {card.image && (
             <button
               onClick={() => { api.deleteImage(cardId).then(() => queryClient.invalidateQueries({ queryKey: ["card", cardId] })) }}
-              className="p-2 rounded-lg hover:bg-secondary" title="Bild loeschen (wird beim naechsten Scrape neu geholt)"
+              className="p-2 rounded-lg hover:bg-secondary" title="Bild löschen (wird beim nächsten Scrape neu geholt)"
             ><ImageOff className="w-4 h-4" /></button>
           )}
           <button
@@ -140,15 +159,61 @@ export function CardDetail() {
             {card.watch ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
           </button>
           <button onClick={() => setShowEdit(true)} className="p-2 rounded-lg hover:bg-secondary" title="Bearbeiten"><Pencil className="w-4 h-4" /></button>
+          {card.sold_at ? (
+            <button
+              onClick={() => unsoldMutation.mutate()}
+              disabled={unsoldMutation.isPending}
+              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-secondary hover:bg-secondary/80 disabled:opacity-50 transition-colors"
+              title="Verkauf zurückholen, Karte kommt zurück ins Portfolio"
+            >
+              <Undo2 className="w-4 h-4" /> Zurückholen
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowSold(true)}
+              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-secondary hover:bg-secondary/80 transition-colors"
+              title="Als verkauft markieren"
+            >
+              <Tag className="w-4 h-4" /> Verkauft
+            </button>
+          )}
           <button
-            onClick={() => { if (confirm("Karte wirklich loeschen?")) deleteMutation.mutate() }}
+            onClick={() => setShowDelete(true)}
             className="p-2 rounded-lg hover:bg-destructive/20 text-destructive"
-            title="Loeschen"
+            title="Löschen"
           >
             <Trash2 className="w-4 h-4" />
           </button>
         </div>
       </div>
+
+      {/* Verkauft-Hinweis */}
+      {card.sold_at && (
+        <div className="p-4 rounded-lg border border-ring/30 bg-ring/10">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Tag className="w-4 h-4 text-ring" />
+              Verkauft am {new Date(card.sold_at).toLocaleDateString("de-DE")}
+            </div>
+            {card.sold_price != null && (
+              <div className="text-right">
+                <span className="text-xl font-bold tabular-nums">{formatEUR(card.sold_price)}</span>
+                {card.purchase_price != null && (() => {
+                  const erg = card.sold_price - card.purchase_price * (card.quantity || 1)
+                  return (
+                    <span className={`ml-2 text-sm font-medium ${erg >= 0 ? "text-positive" : "text-negative"}`}>
+                      ({erg >= 0 ? "+" : ""}{formatEUR(erg)})
+                    </span>
+                  )
+                })()}
+              </div>
+            )}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            Zählt nicht mehr zum Portfolio und wird nicht mehr gescrapt.
+          </div>
+        </div>
+      )}
 
       {/* Price Grid */}
       <div className="grid grid-cols-3 lg:grid-cols-6 gap-3">
@@ -185,7 +250,7 @@ export function CardDetail() {
       {/* Graded Prices */}
       {gradedFields.length > 0 && (
         <div>
-          <h2 className="text-sm font-semibold text-muted-foreground mb-2">Graded Preise (guenstigster)</h2>
+          <h2 className="text-sm font-semibold text-muted-foreground mb-2">Graded Preise (günstigster)</h2>
           <div className="flex gap-3">
             {gradedFields.map((f: any) => (
               <div key={f.label} className="px-4 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
@@ -206,6 +271,22 @@ export function CardDetail() {
       </p>
 
       <EditCardDialog card={card} open={showEdit} onClose={() => setShowEdit(false)} />
+      <MarkSoldDialog cards={[card]} open={showSold} onClose={() => setShowSold(false)} />
+      <ConfirmDialog
+        open={showDelete}
+        title="Karte löschen?"
+        message={
+          <>
+            <strong className="text-foreground">{card.name}</strong> wird mit dem gesamten
+            Preisverlauf endgültig entfernt. Für verkaufte Karten ist „Verkauft“ die bessere
+            Wahl — dort bleibt die Historie erhalten.
+          </>
+        }
+        busy={deleteMutation.isPending}
+        error={deleteMutation.error ? (deleteMutation.error as Error).message : null}
+        onConfirm={() => deleteMutation.mutate()}
+        onClose={() => { deleteMutation.reset(); setShowDelete(false) }}
+      />
     </div>
   )
 }

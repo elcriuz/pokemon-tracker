@@ -1,10 +1,16 @@
 const BASE = "/api"
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  })
+  let res: Response
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      headers: { "Content-Type": "application/json" },
+      ...init,
+    })
+  } catch {
+    // Netzwerkfehler liefern sonst nur "Failed to fetch"
+    throw new Error("Server nicht erreichbar")
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error || res.statusText)
@@ -15,8 +21,13 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   getDashboard: (binderId?: string) =>
     fetchJSON<any>(`/dashboard${binderId ? `?binder_id=${binderId}` : ""}`),
-  getCards: (binderId?: string) =>
-    fetchJSON<any[]>(`/cards${binderId ? `?binder_id=${binderId}` : ""}`),
+  getCards: (binderId?: string, sold?: "1" | "all") => {
+    const q = new URLSearchParams()
+    if (binderId) q.set("binder_id", binderId)
+    if (sold) q.set("sold", sold)
+    const qs = q.toString()
+    return fetchJSON<any[]>(`/cards${qs ? `?${qs}` : ""}`)
+  },
   getCard: (id: number) => fetchJSON<any>(`/cards/${id}`),
   getCardPrices: (id: number) => fetchJSON<any[]>(`/cards/${id}/prices`),
   addCard: (data: any) =>
@@ -25,6 +36,25 @@ export const api = {
     fetchJSON<any>(`/cards/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteCard: (id: number) =>
     fetchJSON<any>(`/cards/${id}`, { method: "DELETE" }),
+  markSold: (id: number, data: { sold_at?: string; sold_price?: number | null }) =>
+    fetchJSON<any>(`/cards/${id}/sold`, { method: "POST", body: JSON.stringify(data) }),
+  unmarkSold: (id: number) =>
+    fetchJSON<any>(`/cards/${id}/sold`, { method: "DELETE" }),
+  markSoldBulk: (data: {
+    sold_at?: string
+    items?: { id: number; sold_price: number | null }[]
+    ids?: number[]
+    sold_price?: number | null
+  }) =>
+    fetchJSON<{ ok: true; changed: number; sold_at: string }>("/cards/bulk/sold", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  deleteCardsBulk: (ids: number[]) =>
+    fetchJSON<{ ok: true; deleted: number }>("/cards/bulk/delete", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
   deleteImage: (id: number) =>
     fetchJSON<any>(`/cards/${id}/image`, { method: "DELETE" }),
   toggleWatch: (id: number) =>

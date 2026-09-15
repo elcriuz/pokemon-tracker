@@ -2,9 +2,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { api } from "@/lib/api"
 import { formatEUR, urlToFlag, timeAgo } from "@/lib/utils"
-import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Filter, Square, ImageOff } from "lucide-react"
+import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Filter, Square, ImageOff, Tag, Trash2, Undo2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { AddCardDialog } from "@/components/cards/AddCardDialog"
+import { MarkSoldDialog } from "@/components/cards/MarkSoldDialog"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { ScrapeFilter } from "@/components/scrape/ScrapeFilter"
 
 type SortKey = "name" | "value" | "trend" | "from_price" | "avg7" | "avg30" | "created_at" | "scraped_at"
@@ -17,7 +19,7 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "from_price", label: "Low" },
   { key: "avg7", label: "7d Avg" },
   { key: "avg30", label: "30d Avg" },
-  { key: "created_at", label: "Hinzugefuegt" },
+  { key: "created_at", label: "Hinzugefügt" },
   { key: "scraped_at", label: "Letztes Update" },
 ]
 
@@ -47,9 +49,10 @@ export function Dashboard() {
     refetchInterval: (query) => query.state.data?.isRunning ? 3000 : 30_000,
   })
   const queryClient = useQueryClient()
+  const [soldView, setSoldView] = useState(false)
   const { data: cards } = useQuery({
-    queryKey: ["cards", activeBinder],
-    queryFn: () => api.getCards(activeBinder),
+    queryKey: ["cards", activeBinder, soldView],
+    queryFn: () => api.getCards(activeBinder, soldView ? "1" : undefined),
     refetchInterval: scrapeStatus?.isRunning ? 5_000 : 60_000,
   })
 
@@ -70,7 +73,31 @@ export function Dashboard() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["scrapeStatus"] }),
   })
   const [showAdd, setShowAdd] = useState(false)
+  const [showSold, setShowSold] = useState(false)
+  const [showBulkDelete, setShowBulkDelete] = useState(false)
   const [showScrapeFilter, setShowScrapeFilter] = useState(false)
+
+  function invalidateAlles() {
+    for (const key of ["cards", "dashboard", "binders", "cardshop", "actions"]) {
+      queryClient.invalidateQueries({ queryKey: [key] })
+    }
+  }
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: (ids: number[]) => api.deleteCardsBulk(ids),
+    onSuccess: () => {
+      invalidateAlles()
+      setSelected(new Set())
+      setShowBulkDelete(false)
+    },
+  })
+  const bulkUnsoldMutation = useMutation({
+    mutationFn: (ids: number[]) => Promise.all(ids.map((id) => api.unmarkSold(id))),
+    onSuccess: () => {
+      invalidateAlles()
+      setSelected(new Set())
+    },
+  })
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [sortKey, setSortKey] = useState<SortKey>("value")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
@@ -91,7 +118,7 @@ export function Dashboard() {
     })
   }, [cards, sortKey, sortDir])
 
-  if (isLoading) return <div className="text-muted-foreground">Laden...</div>
+  if (isLoading) return <div className="text-muted-foreground">Laden …</div>
 
   const d = dashboard!
   const isUp = d.changePercent >= 0
@@ -159,16 +186,44 @@ export function Dashboard() {
             )}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
           {selected.size > 0 && (
             <>
+              {soldView ? (
+                <button
+                  onClick={() => bulkUnsoldMutation.mutate([...selected])}
+                  disabled={bulkUnsoldMutation.isPending}
+                  className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-ring text-primary-foreground hover:bg-ring/80 disabled:opacity-50 transition-colors"
+                >
+                  <Undo2 className="w-4 h-4" />
+                  {bulkUnsoldMutation.isPending ? "Läuft …" : `${selected.size} zurückholen`}
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={() => scrapeCardsMutation.mutate([...selected])}
+                    disabled={isAnyScraping}
+                    className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-secondary hover:bg-secondary/80 disabled:opacity-50 transition-colors"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isAnyScraping ? "animate-spin" : ""}`} />
+                    {isAnyScraping ? "Scraping..." : `${selected.size} scrapen`}
+                  </button>
+                  <button
+                    onClick={() => setShowSold(true)}
+                    className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-ring text-primary-foreground hover:bg-ring/80 transition-colors"
+                  >
+                    <Tag className="w-4 h-4" />
+                    {selected.size} verkauft
+                  </button>
+                </>
+              )}
               <button
-                onClick={() => scrapeCardsMutation.mutate([...selected])}
-                disabled={isAnyScraping}
-                className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-ring text-primary-foreground hover:bg-ring/80 disabled:opacity-50 transition-colors"
+                onClick={() => setShowBulkDelete(true)}
+                className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-secondary hover:bg-destructive/20 text-destructive transition-colors"
+                title={`${selected.size} Karten endgültig löschen`}
               >
-                <RefreshCw className={`w-4 h-4 ${isAnyScraping ? "animate-spin" : ""}`} />
-                {isAnyScraping ? "Scraping..." : `${selected.size} scrapen`}
+                <Trash2 className="w-4 h-4" />
+                {selected.size} löschen
               </button>
               <button
                 onClick={() => setSelected(new Set())}
@@ -250,6 +305,32 @@ export function Dashboard() {
         </div>
       )}
 
+      {/* Verkauft-Ansicht */}
+      {(d.soldCount > 0 || soldView) && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={() => { setSoldView((v) => !v); setSelected(new Set()) }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-full transition-colors ${
+              soldView ? "bg-ring text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Tag className="w-3.5 h-3.5" />
+            Verkauft ({d.soldCount})
+          </button>
+          {soldView && (
+            <span className="text-xs text-muted-foreground">
+              Erlös {formatEUR(d.soldRevenue)}
+              {d.soldProfit !== 0 && (
+                <span className={d.soldProfit >= 0 ? "text-positive" : "text-negative"}>
+                  {" "}({d.soldProfit >= 0 ? "+" : ""}{formatEUR(d.soldProfit)} gegen Kaufpreis)
+                </span>
+              )}
+              {" · zählt nicht zum Portfolio, wird nicht gescrapt"}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Smart Scrape Filter */}
       <ScrapeFilter
         open={showScrapeFilter}
@@ -265,7 +346,9 @@ export function Dashboard() {
       {/* Card Gallery Grid */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold">Karten ({cards?.length || 0})</h2>
+          <h2 className="text-lg font-semibold">
+            {soldView ? "Verkauft" : "Karten"} ({cards?.length || 0})
+          </h2>
           <div className="flex items-center gap-1 text-xs">
             <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground mr-1" />
             {SORT_OPTIONS.map((opt) => (
@@ -310,7 +393,7 @@ export function Dashboard() {
                   rel="noopener noreferrer"
                   onClick={(e) => e.stopPropagation()}
                   className="absolute top-2 right-2 z-10 w-6 h-6 rounded-md bg-black/30 border border-white/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/60"
-                  title="Auf Cardmarket oeffnen"
+                  title="Auf Cardmarket öffnen"
                 >
                   <ExternalLink className="w-3 h-3 text-white" />
                 </a>
@@ -341,6 +424,11 @@ export function Dashboard() {
                     {card.binder_color && (
                       <div className="absolute bottom-0 left-0 right-0 h-1" style={{ backgroundColor: card.binder_color }} />
                     )}
+                    {card.sold_at && (
+                      <span className="absolute bottom-2 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/70 text-[10px] font-medium text-white">
+                        <Tag className="w-2.5 h-2.5" /> verkauft
+                      </span>
+                    )}
                   </div>
                   {/* Info */}
                   <div className="p-3 space-y-1">
@@ -367,15 +455,26 @@ export function Dashboard() {
                       })()}
                     </div>
                     <div className="text-xs text-muted-foreground flex justify-between">
-                      <span>
-                        {qty > 1
-                          ? `${qty}x ${formatEUR(card.value)}`
-                          : card.trend && card.trend !== card.value
-                            ? `Trend: ${formatEUR(card.trend)}`
-                            : ""
-                        }
-                      </span>
-                      {card.scraped_at && <span title={new Date(card.scraped_at).toLocaleString("de-DE")}>{timeAgo(card.scraped_at)}</span>}
+                      {card.sold_at ? (
+                        <>
+                          <span>
+                            {card.sold_price != null ? `Erlös: ${formatEUR(card.sold_price)}` : "kein Erlös erfasst"}
+                          </span>
+                          <span>{new Date(card.sold_at).toLocaleDateString("de-DE")}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>
+                            {qty > 1
+                              ? `${qty}x ${formatEUR(card.value)}`
+                              : card.trend && card.trend !== card.value
+                                ? `Trend: ${formatEUR(card.trend)}`
+                                : ""
+                            }
+                          </span>
+                          {card.scraped_at && <span title={new Date(card.scraped_at).toLocaleString("de-DE")}>{timeAgo(card.scraped_at)}</span>}
+                        </>
+                      )}
                     </div>
                   </div>
                 </Link>
@@ -386,6 +485,28 @@ export function Dashboard() {
       </div>
 
       <AddCardDialog open={showAdd} onClose={() => setShowAdd(false)} />
+      <MarkSoldDialog
+        cards={sortedCards.filter((c: any) => selected.has(c.id))}
+        open={showSold}
+        onClose={() => setShowSold(false)}
+        onDone={() => setSelected(new Set())}
+      />
+      <ConfirmDialog
+        open={showBulkDelete}
+        title={selected.size === 1 ? "Karte löschen?" : `${selected.size} Karten löschen?`}
+        message={
+          <>
+            {selected.size === 1 ? "Die Karte wird" : `Die ${selected.size} Karten werden`} mit dem
+            gesamten Preisverlauf endgültig entfernt.
+            {!soldView && " Für verkaufte Karten ist \u201eVerkauft\u201c die bessere Wahl \u2014 dort bleibt die Historie erhalten."}
+          </>
+        }
+        confirmLabel={selected.size === 1 ? "Löschen" : `${selected.size} löschen`}
+        busy={bulkDeleteMutation.isPending}
+        error={bulkDeleteMutation.error ? (bulkDeleteMutation.error as Error).message : null}
+        onConfirm={() => bulkDeleteMutation.mutate([...selected])}
+        onClose={() => { bulkDeleteMutation.reset(); setShowBulkDelete(false) }}
+      />
     </div>
   )
 }

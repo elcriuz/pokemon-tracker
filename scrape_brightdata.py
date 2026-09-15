@@ -399,7 +399,12 @@ def load_portfolio():
             import sqlite3
             conn = sqlite3.connect(str(db_path))
             conn.row_factory = sqlite3.Row
-            rows = conn.execute("SELECT url, name, grade, notes FROM cards").fetchall()
+            try:
+                # Verkaufte Karten werden nicht mehr abgerufen
+                rows = conn.execute("SELECT url, name, grade, notes FROM cards WHERE sold_at IS NULL").fetchall()
+            except sqlite3.OperationalError:
+                # Alt-Datenbank ohne sold_at (Migration laeuft beim Server-Start)
+                rows = conn.execute("SELECT url, name, grade, notes FROM cards").fetchall()
             conn.close()
             if rows:
                 log.info(f"  {len(rows)} Karten aus DB geladen")

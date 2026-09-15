@@ -59,6 +59,7 @@ cardshopRouter.get("/", (req, res) => {
         WHERE p3.card_id = c.id AND p3.value IS NOT NULL
         AND p3.scraped_at < (SELECT MAX(p4.scraped_at) FROM prices p4 WHERE p4.card_id = c.id AND p4.value IS NOT NULL)
       )
+    WHERE c.sold_at IS NULL
   `).all() as any[]
 
   // Filter stash cards unless explicitly requested

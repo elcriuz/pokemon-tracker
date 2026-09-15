@@ -309,6 +309,8 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE cards ADD COLUMN binder_id INTEGER REFERENCES binders(id) ON DELETE SET NULL") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN set_name TEXT NOT NULL DEFAULT ''") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN stash INTEGER NOT NULL DEFAULT 0") } catch {}
+  try { db.exec("ALTER TABLE cards ADD COLUMN sold_at TEXT") } catch {}
+  try { db.exec("ALTER TABLE cards ADD COLUMN sold_price REAL") } catch {}
   try { db.exec("ALTER TABLE scrape_runs ADD COLUMN engine TEXT NOT NULL DEFAULT 'patchright'") } catch {}
   try { db.exec("ALTER TABLE prices ADD COLUMN stale_grade INTEGER NOT NULL DEFAULT 0") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN watch INTEGER NOT NULL DEFAULT 0") } catch {}

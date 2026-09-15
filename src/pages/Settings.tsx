@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { useState, useEffect } from "react"
 import { Send, Check, AlertCircle, Plus, Pencil, Trash2 } from "lucide-react"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 
 const BINDER_COLORS = [
   "#3b82f6", "#ef4444", "#22c55e", "#eab308", "#a855f7", "#f97316", "#ec4899", "#06b6d4",
@@ -19,6 +20,7 @@ export function Settings() {
   const [newBinder, setNewBinder] = useState("")
   const [newBinderColor, setNewBinderColor] = useState(BINDER_COLORS[0])
   const [editingBinder, setEditingBinder] = useState<any>(null)
+  const [binderToDelete, setBinderToDelete] = useState<any>(null)
 
   useEffect(() => {
     if (settings) setForm((f) => ({ ...f, ...settings }))
@@ -43,10 +45,14 @@ export function Settings() {
   })
   const deleteBinderMutation = useMutation({
     mutationFn: api.deleteBinder,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["binders"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["binders"] })
+      queryClient.invalidateQueries({ queryKey: ["cards"] })
+      setBinderToDelete(null)
+    },
   })
 
-  if (isLoading) return <div className="text-muted-foreground">Laden...</div>
+  if (isLoading) return <div className="text-muted-foreground">Laden …</div>
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
@@ -93,7 +99,7 @@ export function Settings() {
                     <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
                   </button>
                   <button
-                    onClick={() => { if (confirm(`Binder "${b.name}" loeschen? Karten werden "Unsortiert".`)) deleteBinderMutation.mutate(b.id) }}
+                    onClick={() => setBinderToDelete(b)}
                     className="p-1 rounded hover:bg-destructive/20"
                   >
                     <Trash2 className="w-3.5 h-3.5 text-destructive" />
@@ -159,7 +165,7 @@ export function Settings() {
           </label>
           <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border">
             <label className="block">
-              <span className="text-sm text-muted-foreground">Alert ab Aenderung (%)</span>
+              <span className="text-sm text-muted-foreground">Alert ab Änderung (%)</span>
               <input
                 type="number"
                 value={form.alert_threshold_pct}
@@ -168,7 +174,7 @@ export function Settings() {
               />
             </label>
             <label className="block">
-              <span className="text-sm text-muted-foreground">Alert ab Aenderung (EUR)</span>
+              <span className="text-sm text-muted-foreground">Alert ab Änderung (EUR)</span>
               <input
                 type="number"
                 value={form.alert_threshold_eur}
@@ -243,9 +249,25 @@ export function Settings() {
             {scrapeHistory.latest.card_count && <p>Karten: {scrapeHistory.latest.card_count}</p>}
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">Noch kein Scrape durchgefuehrt</p>
+          <p className="text-sm text-muted-foreground">Noch kein Scrape durchgeführt</p>
         )}
       </section>
+
+      <ConfirmDialog
+        open={!!binderToDelete}
+        title="Binder löschen?"
+        message={
+          <>
+            <strong className="text-foreground">{binderToDelete?.name}</strong> wird entfernt. Die
+            {" "}{binderToDelete?.card_count ?? 0} Karten darin bleiben erhalten und stehen danach
+            unter „Unsortiert“.
+          </>
+        }
+        busy={deleteBinderMutation.isPending}
+        error={deleteBinderMutation.error ? (deleteBinderMutation.error as Error).message : null}
+        onConfirm={() => deleteBinderMutation.mutate(binderToDelete.id)}
+        onClose={() => { deleteBinderMutation.reset(); setBinderToDelete(null) }}
+      />
     </div>
   )
 }

@@ -15,9 +15,11 @@ dashboardRouter.get("/", (req, res) => {
     LEFT JOIN prices p ON p.card_id = c.id
       AND p.scraped_at = (SELECT MAX(p2.scraped_at) FROM prices p2 WHERE p2.card_id = c.id AND p2.value IS NOT NULL)
   `
+  // Verkaufte Karten zaehlen nicht mehr zum Portfolio
+  cardQuery += " WHERE c.sold_at IS NULL"
   const params: any[] = []
   if (binderId) {
-    cardQuery += binderId === "none" ? " WHERE c.binder_id IS NULL" : " WHERE c.binder_id = ?"
+    cardQuery += binderId === "none" ? " AND c.binder_id IS NULL" : " AND c.binder_id = ?"
     if (binderId !== "none") params.push(binderId)
   }
 
@@ -54,6 +56,16 @@ dashboardRouter.get("/", (req, res) => {
     })
     .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
 
+  // Verkaufte Karten: Zaehler und Ergebnis, damit das Portfolio sie anbieten kann
+  const soldStats = db
+    .prepare(`
+      SELECT COUNT(*) AS anzahl,
+             COALESCE(SUM(sold_price), 0) AS erloes,
+             COALESCE(SUM(CASE WHEN sold_price IS NOT NULL THEN purchase_price * COALESCE(quantity, 1) END), 0) AS einkauf
+      FROM cards WHERE sold_at IS NOT NULL
+    `)
+    .get() as any
+
   // Last scrape
   const lastRun = db
     .prepare("SELECT * FROM scrape_runs ORDER BY started_at DESC LIMIT 1")
@@ -68,7 +80,7 @@ dashboardRouter.get("/", (req, res) => {
                ROW_NUMBER() OVER (PARTITION BY p.card_id, DATE(p.scraped_at) ORDER BY p.scraped_at DESC) as rn
         FROM prices p
         JOIN cards c ON c.id = p.card_id
-        WHERE p.value IS NOT NULL
+        WHERE p.value IS NOT NULL AND c.sold_at IS NULL
       )
       WHERE rn = 1
       GROUP BY date
@@ -95,6 +107,9 @@ dashboardRouter.get("/", (req, res) => {
     uniqueCardCount: cards.length,
     gradedCount: cards.filter((c) => c.grade).length,
     lastScrapeAt: lastRun?.finished_at || cards[0]?.scraped_at,
+    soldCount: soldStats.anzahl,
+    soldRevenue: soldStats.erloes,
+    soldProfit: soldStats.erloes - soldStats.einkauf,
     topMovers: movers.slice(0, 6),
     portfolioHistory: history,
   })

@@ -9,7 +9,7 @@ bindersRouter.get("/", (_req, res) => {
   const binders = db.prepare(`
     SELECT b.*, COUNT(c.id) as card_count
     FROM binders b
-    LEFT JOIN cards c ON c.binder_id = b.id
+    LEFT JOIN cards c ON c.binder_id = b.id AND c.sold_at IS NULL
     GROUP BY b.id
     ORDER BY b.sort_order, b.name
   `).all()
