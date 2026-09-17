@@ -86,68 +86,11 @@ function initSchema(db: Database.Database) {
     );
   `)
 
-  // Cardmarket-Modul: eigene Angebote + Wettbewerbsposition
-  //
-  // listings sind bewusst NICHT an cards gekoppelt (card_id ist nullable):
-  // Auf Cardmarket landen auch Doppelte und getradete Karten, die nie im
-  // Portfolio waren. Verknuepft wird ueber product_url, wenn es passt.
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS listings (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      card_id       INTEGER REFERENCES cards(id) ON DELETE SET NULL,
-      cm_article_id TEXT    UNIQUE,
-      game          TEXT    NOT NULL DEFAULT 'Pokemon',
-      product_url   TEXT    NOT NULL,
-      product_name  TEXT    NOT NULL DEFAULT '',
-      expansion     TEXT    NOT NULL DEFAULT '',
-      kind          TEXT    NOT NULL DEFAULT 'single',
-      condition     TEXT    NOT NULL DEFAULT '',
-      language      TEXT    NOT NULL DEFAULT '',
-      is_foil       INTEGER NOT NULL DEFAULT 0,
-      is_signed     INTEGER NOT NULL DEFAULT 0,
-      is_playset    INTEGER NOT NULL DEFAULT 0,
-      price         REAL,
-      quantity      INTEGER NOT NULL DEFAULT 1,
-      comment       TEXT    NOT NULL DEFAULT '',
-      first_seen    TEXT    NOT NULL DEFAULT (datetime('now')),
-      last_seen     TEXT    NOT NULL DEFAULT (datetime('now')),
-      active        INTEGER NOT NULL DEFAULT 1,
-      gone_at       TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_listings_active ON listings(active);
-    CREATE INDEX IF NOT EXISTS idx_listings_game ON listings(game);
-    CREATE INDEX IF NOT EXISTS idx_listings_card ON listings(card_id);
-    CREATE INDEX IF NOT EXISTS idx_listings_url ON listings(product_url);
-
-    -- Ein Snapshot je Angebot und Lauf: eigener Preis plus Marktumfeld.
-    -- best_price/rank beziehen sich immer auf VERGLEICHBARE Angebote
-    -- (gleicher Zustand, gleiche Sprache) - sonst vergleicht man NM-DE
-    -- gegen PO-EN und das Signal ist wertlos.
-    CREATE TABLE IF NOT EXISTS listing_snapshots (
-      id                INTEGER PRIMARY KEY AUTOINCREMENT,
-      listing_id        INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
-      captured_at       TEXT    NOT NULL,
-      my_price          REAL,
-      rank              INTEGER,
-      competitors_below INTEGER,
-      competitors_total INTEGER,
-      best_price        REAL,
-      rank_capped       INTEGER NOT NULL DEFAULT 0,
-      best_same         REAL,
-      median_same       REAL,
-      competitors_same  INTEGER,
-      market_trend      REAL,
-      market_avg7       REAL,
-      market_avg30      REAL,
-      market_avg1       REAL,
-      market_available  INTEGER,
-      UNIQUE(listing_id, captured_at)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_lsnap_listing ON listing_snapshots(listing_id);
-    CREATE INDEX IF NOT EXISTS idx_lsnap_captured ON listing_snapshots(captured_at);
-  `)
+  // Eigene Angebote und Wettbewerbsposition standen bis 17.09.2026 hier
+  // (listings, listing_snapshots, orders, order_items, reprice_queue). Der
+  // Verkaeuferbereich liegt jetzt bei TCG PowerTools, das ueber die offizielle
+  // Cardmarket-API arbeitet. In bestehenden Datenbanken bleiben die Tabellen
+  // samt Daten liegen — angelegt werden sie nicht mehr.
 
   // Eigene Wunschliste. Cardmarkets Wantlist sagt nur "ich suche das" — hier
   // kommt dazu, was es kosten darf und wie sich der Preis seither entwickelt.
@@ -187,68 +130,15 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_wsnap_item ON watchlist_snapshots(watchlist_id);
   `)
 
-  // Verkaeufe aus dem eingeloggten Bereich (scrape_sales.py legt sie sonst selbst an).
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS orders (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      cm_order_id  TEXT    NOT NULL UNIQUE,
-      game         TEXT    NOT NULL DEFAULT '',
-      buyer        TEXT    NOT NULL DEFAULT '',
-      state        TEXT    NOT NULL DEFAULT '',
-      item_value   REAL,
-      shipping     REAL,
-      total        REAL,
-      paid_at      TEXT,
-      sent_at      TEXT,
-      arrived_at   TEXT,
-      fetched_at   TEXT    NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS order_items (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      order_id      INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-      card_id       INTEGER REFERENCES cards(id) ON DELETE SET NULL,
-      cm_article_id TEXT,
-      product_url   TEXT    NOT NULL DEFAULT '',
-      name          TEXT    NOT NULL DEFAULT '',
-      expansion     TEXT    NOT NULL DEFAULT '',
-      number        TEXT    NOT NULL DEFAULT '',
-      condition     TEXT    NOT NULL DEFAULT '',
-      language      TEXT    NOT NULL DEFAULT '',
-      price         REAL,
-      amount        INTEGER NOT NULL DEFAULT 1,
-      comment       TEXT    NOT NULL DEFAULT ''
-    );
-    CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
-    CREATE INDEX IF NOT EXISTS idx_orders_state ON orders(state);
-  `)
-
-  // Vorgemerkte Preisaenderungen. Der Grund fuer die Warteschlange ist nicht
-  // Bequemlichkeit, sondern Cloudflare: jede einzeln ausgefuehrte Aenderung
-  // blaettert den Bestand neu durch. Gebuendelt wird jede Bestandsseite genau
-  // einmal geladen, egal wie viele Karten darauf geaendert werden.
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS reprice_queue (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      listing_id   INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
-      signal_id    INTEGER REFERENCES signals(id) ON DELETE SET NULL,
-      target_price REAL    NOT NULL,
-      queued_at    TEXT    NOT NULL,
-      started_at   TEXT,
-      done_at      TEXT,
-      old_price    REAL,
-      error        TEXT,
-      UNIQUE(listing_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_reprice_open ON reprice_queue(done_at);
-  `)
-
-  // Erkannte Handlungssignale. Bewusst persistent statt nur berechnet: nur so
-  // laesst sich unterscheiden, was Christoph schon gesehen hat — sonst meldet
-  // Telegram jeden Tag dieselbe Karte.
+  // Erkannte Kaufsignale der Wunschliste. Bewusst persistent statt nur berechnet:
+  // nur so laesst sich unterscheiden, was Christoph schon gesehen hat — sonst
+  // meldet Telegram jeden Tag dieselbe Karte.
   db.exec(`
     CREATE TABLE IF NOT EXISTS signals (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      listing_id      INTEGER REFERENCES listings(id) ON DELETE CASCADE,
+      -- listing_id trug bis 17.09.2026 die Verkaufssignale. Bleibt als Spalte,
+      -- damit alte Zeilen lesbar sind; neue Signale haengen an der watchlist.
+      listing_id      INTEGER,
       watchlist_id    INTEGER REFERENCES watchlist(id) ON DELETE CASCADE,
       kind            TEXT    NOT NULL,
       created_at      TEXT    NOT NULL,
@@ -276,7 +166,7 @@ function initSchema(db: Database.Database) {
         ALTER TABLE signals RENAME TO signals_old;
         CREATE TABLE signals (
           id              INTEGER PRIMARY KEY AUTOINCREMENT,
-          listing_id      INTEGER REFERENCES listings(id) ON DELETE CASCADE,
+          listing_id      INTEGER,
           watchlist_id    INTEGER REFERENCES watchlist(id) ON DELETE CASCADE,
           kind            TEXT    NOT NULL,
           created_at      TEXT    NOT NULL,
@@ -314,13 +204,7 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE scrape_runs ADD COLUMN engine TEXT NOT NULL DEFAULT 'patchright'") } catch {}
   try { db.exec("ALTER TABLE prices ADD COLUMN stale_grade INTEGER NOT NULL DEFAULT 0") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN watch INTEGER NOT NULL DEFAULT 0") } catch {}
-  try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN rank_capped INTEGER NOT NULL DEFAULT 0") } catch {}
-  try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN best_same REAL") } catch {}
-  try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN median_same REAL") } catch {}
   try { db.exec("ALTER TABLE watchlist ADD COLUMN last_error TEXT") } catch {}
-  try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN competitors_same INTEGER") } catch {}
-  try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN market_avg1 REAL") } catch {}
-  try { db.exec("ALTER TABLE listing_snapshots ADD COLUMN market_available INTEGER") } catch {}
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")

@@ -7,6 +7,7 @@ sich erkennen laesst, ob 34 Euro heute guenstig sind oder ob es letzte Woche
 28 waren.
 
   python3 watchlist.py              # Preise holen, Kaufsignale schreiben
+  python3 watchlist.py --notify     # und die neuen per Telegram melden
   python3 watchlist.py --dry-run
 """
 from __future__ import annotations
@@ -24,8 +25,8 @@ sys.path.insert(0, str(ROOT))
 DB_PATH = ROOT / "data" / "tracker.db"
 
 from scrape_brightdata import extract_card_info
-from scrape_competition import (MAX_PARALLEL, bd_fetch, build_url, extract_prices,
-                                parse_competitors)
+from cardmarket_public import (MAX_PARALLEL, bd_fetch, build_url, extract_prices,
+                               parse_competitors)
 
 log = logging.getLogger("watchlist")
 
@@ -80,9 +81,50 @@ def evaluate_buy(item: dict, snap: dict, prev: dict | None, below_pct: float) ->
     return None
 
 
+def notify(db, limit: int = 12) -> int:
+    """Schickt noch nicht gemeldete Kaufsignale gebuendelt per Telegram.
+
+    Stand bis 17.09.2026 in signals.py und meldete auch Verkaufssignale. Seit der
+    Verkaeuferbereich bei TCG PowerTools liegt, gibt es nur noch die Kaufseite —
+    und damit keinen Grund mehr, das in einem eigenen Lauf zu tun.
+    """
+    try:
+        from scrape_brightdata import send_telegram
+    except Exception as e:
+        log.error("Telegram nicht verfuegbar: %s", e)
+        return 0
+
+    rows = db.execute("""
+        SELECT s.id, s.suggested_price, s.detail, w.name, w.game, w.condition,
+               w.language, w.product_url
+        FROM signals s
+        JOIN watchlist w ON w.id = s.watchlist_id
+        WHERE s.notified_at IS NULL AND s.dismissed_at IS NULL AND s.kind = ?
+        ORDER BY s.suggested_price DESC""", (BUY,)).fetchall()
+    if not rows:
+        log.info("Keine neuen Kaufsignale zu melden")
+        return 0
+
+    zeilen = [f"<b>Wunschliste — {len(rows)} neue Kaufsignale</b>", ""]
+    for (_id, preis, detail, name, game, cond, lang, url) in rows[:limit]:
+        zustand = f"{cond}/{lang}" if cond else (lang or "")
+        zeilen.append(f'\U0001f6d2 <a href="{url}">{name[:44]}</a> <i>{game[:3]} {zustand}</i>')
+        zeilen.append(f"   <b>{preis:.2f} \u20ac</b> — {detail}" if preis else f"   {detail}")
+    if len(rows) > limit:
+        zeilen.append(f"\n… und {len(rows) - limit} weitere in der Wunschliste")
+
+    send_telegram("\n".join(zeilen))
+    jetzt = datetime.now().isoformat(timespec="seconds")
+    db.executemany("UPDATE signals SET notified_at = ? WHERE id = ?",
+                   [(jetzt, r[0]) for r in rows])
+    db.commit()
+    return len(rows)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--notify", action="store_true", help="neue Kaufsignale per Telegram melden")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -206,6 +248,8 @@ def main() -> int:
             db.commit()
 
     log.info("Fertig: %d Kaufsignale, %d Fehler", hits, failed)
+    if args.notify and not args.dry_run:
+        log.info("%d per Telegram gemeldet", notify(db))
     return 0
 
 

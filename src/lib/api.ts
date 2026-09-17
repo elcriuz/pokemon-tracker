@@ -78,11 +78,6 @@ export const api = {
     fetchJSON<any>(`/binders/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteBinder: (id: number) =>
     fetchJSON<any>(`/binders/${id}`, { method: "DELETE" }),
-  getSales: (game = "") =>
-    fetchJSON<any>(`/sales${game ? `?game=${encodeURIComponent(game)}` : ""}`),
-
-  getSaleItems: (id: number) => fetchJSON<any>(`/sales/${id}/items`),
-
   getWatchlist: () => fetchJSON<any>("/watchlist"),
 
   addWatchlistItem: (body: any) =>
@@ -90,35 +85,6 @@ export const api = {
 
   removeWatchlistItem: (id: number) =>
     fetchJSON<any>(`/watchlist/${id}`, { method: "DELETE" }),
-
-  getOffers: (game = "") => {
-    const qs = game ? `?game=${encodeURIComponent(game)}` : ""
-    return fetchJSON<any>(`/offers${qs}`)
-  },
-
-  queuePrice: (listingId: number, price: number, signalId?: number) =>
-    fetchJSON<any>(`/offers/${listingId}/queue`, {
-      method: "POST",
-      body: JSON.stringify({ price, signal_id: signalId }),
-    }),
-
-  unqueuePrice: (listingId: number) =>
-    fetchJSON<any>(`/offers/queue/${listingId}`, { method: "DELETE" }),
-
-  getActions: (kind = "", game = "") => {
-    const q = new URLSearchParams()
-    if (kind) q.set("kind", kind)
-    if (game) q.set("game", game)
-    const qs = q.toString()
-    return fetchJSON<any>(`/actions${qs ? `?${qs}` : ""}`)
-  },
-
-  getRepriceQueue: () => fetchJSON<any>("/offers/queue"),
-
-  runRepriceQueue: () => fetchJSON<any>("/offers/queue/run", { method: "POST" }),
-
-  dismissSignal: (id: number) =>
-    fetchJSON<any>(`/offers/signals/${id}/dismiss`, { method: "POST" }),
 
   getCardShop: (showStash = false, showLosers = false) => {
     const params = new URLSearchParams()
