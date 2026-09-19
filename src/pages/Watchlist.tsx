@@ -174,18 +174,29 @@ export function Watchlist() {
             {items.map((i: any) => (
               <tr key={i.id} className="border-b border-border/50 hover:bg-muted/30">
                 <td className="py-2.5 pr-3">
-                  <a href={i.product_url} target="_blank" rel="noreferrer"
-                     className="hover:underline inline-flex items-center gap-1">
-                    {i.name}
-                    <ExternalLink className="w-3 h-3 opacity-40" />
-                  </a>
-                  <div className="text-[11px] text-muted-foreground">
-                    {i.game} · {i.kind === "sealed" ? "Sealed" : i.condition}/{i.language}
-                    {i.offers_count != null ? ` · ${i.offers_count} Angebote` : ""}
+                  <div className="flex items-center gap-3">
+                    {/* Ohne Bild bleibt der Platz stehen, damit die Namen bündig bleiben. */}
+                    {i.image ? (
+                      <img src={`/images/${i.image}`} alt="" loading="lazy"
+                        className={`w-8 h-11 rounded flex-shrink-0 ${i.kind === "sealed" ? "object-contain" : "object-cover"}`} />
+                    ) : (
+                      <div className="w-8 h-11 rounded flex-shrink-0 bg-muted/40" />
+                    )}
+                    <div className="min-w-0">
+                      <a href={i.product_url} target="_blank" rel="noreferrer"
+                         className="hover:underline inline-flex items-center gap-1">
+                        {i.name}
+                        <ExternalLink className="w-3 h-3 opacity-40" />
+                      </a>
+                      <div className="text-[11px] text-muted-foreground">
+                        {i.game} · {i.kind === "sealed" ? "Sealed" : i.condition}/{i.language}
+                        {i.offers_count != null ? ` · ${i.offers_count} Angebote` : ""}
+                      </div>
+                      {i.problem && (
+                        <div className="text-[11px] text-amber-400 mt-0.5">⚠ {i.problem}</div>
+                      )}
+                    </div>
                   </div>
-                  {i.problem && (
-                    <div className="text-[11px] text-amber-400 mt-0.5">⚠ {i.problem}</div>
-                  )}
                 </td>
                 <td className="py-2.5 px-3 text-right tabular-nums font-medium">
                   {formatEur(i.best_price)}

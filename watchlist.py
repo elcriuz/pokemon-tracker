@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 DB_PATH = ROOT / "data" / "tracker.db"
 
-from scrape_brightdata import extract_card_info
+from scrape_brightdata import download_image, extract_card_info
 from cardmarket_public import (MAX_PARALLEL, bd_fetch, build_url, extract_prices,
                                parse_competitors)
 
@@ -140,9 +140,9 @@ def main() -> int:
         return 2
 
     items = [dict(zip(["id", "product_url", "name", "condition", "language",
-                       "target_price", "max_price"], r))
+                       "target_price", "max_price", "image"], r))
              for r in db.execute("""SELECT id, product_url, name, condition, language,
-                                           target_price, max_price
+                                           target_price, max_price, image
                                     FROM watchlist WHERE active = 1""")]
     if not items:
         log.info("Watchlist ist leer")
@@ -179,11 +179,20 @@ def main() -> int:
 
             # Der aus der URL geratene Name wird durch den echten von der Seite
             # ersetzt, sobald wir sie einmal geholt haben.
-            title = (extract_card_info(html) or {}).get("page_title")
+            info = extract_card_info(html) or {}
+            title = info.get("page_title")
             if title and title.strip() and title.strip() != it["name"]:
                 db.execute("UPDATE watchlist SET name = ? WHERE id = ?",
                            (title.strip(), it["id"]))
                 it["name"] = title.strip()
+
+            # Vorschaubild für die Liste. download_image lädt nur, wenn die Datei
+            # noch fehlt — an normalen Tagen kostet der Aufruf also nichts.
+            if not args.dry_run:
+                image = download_image(info.get("image_url"), it["product_url"])
+                if image and image != it["image"]:
+                    db.execute("UPDATE watchlist SET image = ? WHERE id = ?",
+                               (image, it["id"]))
             prices = [c["price"] for c in offers]
             snap = {
                 "best_price": min(prices) if prices else None,

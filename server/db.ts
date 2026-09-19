@@ -108,6 +108,7 @@ function initSchema(db: Database.Database) {
       note         TEXT    NOT NULL DEFAULT '',
       active       INTEGER NOT NULL DEFAULT 1,
       last_error   TEXT,
+      image        TEXT    NOT NULL DEFAULT '',
       created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
       UNIQUE(product_url, condition, language)
     );
@@ -205,6 +206,7 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE prices ADD COLUMN stale_grade INTEGER NOT NULL DEFAULT 0") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN watch INTEGER NOT NULL DEFAULT 0") } catch {}
   try { db.exec("ALTER TABLE watchlist ADD COLUMN last_error TEXT") } catch {}
+  try { db.exec("ALTER TABLE watchlist ADD COLUMN image TEXT NOT NULL DEFAULT ''") } catch {}
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")

@@ -360,6 +360,15 @@ def extract_card_info(content):
         img_url = og_m.group(1)
         if "product-images" in img_url.lower():
             info["image_url"] = img_url
+    if "image_url" not in info:
+        # Sealed-Seiten tragen im og:image nur das Cardmarket-Logo. Das Produktbild
+        # steht dort allein im Bildbereich. Bewusst so eng gefasst: auf Kartenseiten
+        # liegt an derselben Stelle eine Slideshow, deren erstes Bild die
+        # *vorherige* Karte der Edition zeigt.
+        sec_m = re.search(r'<section id="image"[^>]*>\s*<div class="image[^"]*">\s*<img src="'
+                          r'(https://product-images\.[^"]+)"', content)
+        if sec_m:
+            info["image_url"] = sec_m.group(1)
     return info
 
 

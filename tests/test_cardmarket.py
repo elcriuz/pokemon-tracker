@@ -132,11 +132,27 @@ def test_sealed():
           f"{ {c['language'] for c in de} }")
 
 
+def test_vorschaubild():
+    """Das Bild der Wunschliste muss zum Produkt gehören, nicht zum Nachbarn."""
+    print("\nVorschaubilder")
+    from scrape_brightdata import extract_card_info
+
+    # Kartenseiten zeigen im Bildbereich eine Slideshow, die mit der *vorherigen*
+    # Karte der Edition beginnt (869859). Richtig ist das og:image (869860).
+    single = extract_card_info(fixture("product_de_nm")).get("image_url", "")
+    check("Single: Bild der Karte selbst", single.endswith("/869860.jpg"), single)
+
+    # Sealed trägt im og:image nur das Cardmarket-Logo.
+    sealed = extract_card_info(fixture("product_sealed_en")).get("image_url", "")
+    check("Sealed: Produktbild statt Logo", sealed.endswith("/885552.jpg"), sealed)
+
+
 if __name__ == "__main__":
     print("\033[1mCardmarket — Kaufseite\033[0m")
     test_produktseite()
     test_watchlist()
     test_sealed()
+    test_vorschaubild()
 
     total = _passed + len(_failures)
     print(f"\n{'─' * 46}")
