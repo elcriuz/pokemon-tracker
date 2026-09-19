@@ -387,11 +387,15 @@ def download_image(image_url, card_url):
         return url_hash + ext
 
     try:
-        resp = requests.get(image_url, timeout=30)
+        # Das Bild-CDN liefert ohne Referer ein 403 — der User-Agent ist ihm egal.
+        resp = requests.get(image_url, timeout=30,
+                            headers={"Referer": "https://www.cardmarket.com/"})
         if resp.status_code == 200 and len(resp.content) > 1000:
             filepath.write_bytes(resp.content)
             log.info(f"  Bild gespeichert: {filepath.name}")
             return url_hash + ext
+        # Nicht still scheitern: so blieb der Bildabruf ab 13.08.2026 wochenlang leer.
+        log.warning(f"  Bild-Download abgelehnt: HTTP {resp.status_code}, {len(resp.content)} Bytes")
     except Exception as e:
         log.warning(f"  Bild-Download fehlgeschlagen: {e}")
     return None
