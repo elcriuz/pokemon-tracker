@@ -59,6 +59,8 @@ def test_produktseite():
     orte = {c["origin"] for c in de}
     check("Standort je Angebot gelesen", all(c["origin"] for c in de), f"{orte}")
     check("Standorte sind bekannte Laender", all(vk.land_id(o) for o in orte), f"{orte}")
+    check("Verkaufszahl je Anbieter gelesen", all(c["sales"] is not None for c in de)
+          and de[0]["sales"] == 159, str([c["sales"] for c in de[:5]]))
 
     # Der Filter ist der Kern: ungefiltert zeigt eine Produktseite die 50
     # guenstigsten Angebote ueber ALLE Sprachen — bei einer gefragten Karte
@@ -159,6 +161,22 @@ def test_sealed():
           f"{ {c['language'] for c in de} }")
 
 
+def test_betrugsverdacht():
+    """Scam-Angebote: weit unter dem Markt von Konten ohne Verkaeufe."""
+    print("\nBetrugsverdacht")
+    s = wl.is_suspicious
+    check("142 € statt 670 €, 0 Verkaeufe -> verdaechtig", s(142.0, 670.0, 0))
+    check("258 € statt 600 €, 3 Verkaeufe -> verdaechtig", s(258.0, 600.0, 3))
+    check("200 € statt 600 €, 500 Verkaeufe -> unter einem Drittel, trotzdem verdaechtig",
+          s(200.0, 600.0, 500))
+    check("300 € statt 600 €, 500 Verkaeufe -> etablierter Haendler, echtes Schnaeppchen",
+          not s(300.0, 600.0, 500))
+    check("520 € statt 610 €, 5 Verkaeufe -> normales Angebot", not s(520.0, 610.0, 5))
+    check("Verkaufszahl unbekannt zaehlt wie frisches Konto", s(300.0, 600.0, None))
+    check("ohne Mittelfeld kein Urteil", not s(100.0, None, 0))
+    check("Schwellen sind einstellbar", not s(300.0, 600.0, 3, max_pct=45) and s(300.0, 600.0, 60, max_sales=100))
+
+
 def test_versand():
     """Versand nach Hause aus Cardmarkets eigener Tabelle — Zielland Österreich."""
     print("\nVersandkosten")
@@ -223,6 +241,7 @@ if __name__ == "__main__":
     test_produktseite()
     test_watchlist()
     test_sealed()
+    test_betrugsverdacht()
     test_versand()
     test_vorschaubild()
 

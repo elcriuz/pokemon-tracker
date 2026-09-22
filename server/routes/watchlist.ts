@@ -77,7 +77,7 @@ watchlistRouter.get("/", (_req, res) => {
   const rows = db.prepare(`
     SELECT w.*, s.captured_at, s.best_price, s.median_price, s.offers_count,
            s.market_trend, s.market_avg7, s.market_avg30,
-           s.best_total, s.best_shipping, s.best_origin, s.median_total
+           s.best_total, s.best_shipping, s.best_origin, s.median_total, s.suspicious
     FROM watchlist w
     LEFT JOIN watchlist_snapshots s
       ON s.watchlist_id = w.id

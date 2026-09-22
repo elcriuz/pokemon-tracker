@@ -60,6 +60,9 @@ _LANG_ALT = "|".join(map(re.escape, LANG_LABELS))
 LANG_RE = re.compile(r'(?:aria-label|data-original-title|data-bs-original-title)="(' + _LANG_ALT + r')"'
                      r'|showMsgBox\(this,`(' + _LANG_ALT + r')`\)')
 COMMENT_RE = re.compile(r'fst-italic small">([^<]+)</span>')
+# Verkaufszahl des Anbieters (Badge „159 Verkäufe"). Ein frisches Konto mit einem
+# Preis weit unter dem Markt ist auf Cardmarket fast immer Betrug.
+SALES_RE = re.compile(r'sell-count"[^>]*>\s*(\d+)\s*<')
 ROW_SPLIT_RE = re.compile(r'<div id="articleRow\d+"')
 # Herkunftsland des Angebots — davon haengt ab, was der Versand nach Hause kostet.
 from versandkosten import STANDORT_RE  # noqa: E402
@@ -107,12 +110,14 @@ def parse_competitors(html: str) -> list[dict]:
         cond = COND_RE.search(block)
         lm = LANG_RE.search(block)
         om = STANDORT_RE.search(block)
+        vm = SALES_RE.search(block)
         out.append({
             "price": price,
             "seller": sm.group(1) if sm else "",
             "condition": cond.group(1).upper() if cond else "",
             "language": LANG_LABELS.get(lm.group(1) or lm.group(2), "") if lm else "",
             "origin": om.group(1).strip() if om else "",
+            "sales": int(vm.group(1)) if vm else None,
         })
     return out
 

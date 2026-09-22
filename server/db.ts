@@ -131,6 +131,7 @@ function initSchema(db: Database.Database) {
       best_shipping REAL,
       best_origin   TEXT,
       median_total  REAL,
+      suspicious    INTEGER NOT NULL DEFAULT 0,  -- Angebote mit Betrugsverdacht, ignoriert
       UNIQUE(watchlist_id, captured_at)
     );
 
@@ -217,6 +218,7 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE watchlist_snapshots ADD COLUMN best_shipping REAL") } catch {}
   try { db.exec("ALTER TABLE watchlist_snapshots ADD COLUMN best_origin TEXT") } catch {}
   try { db.exec("ALTER TABLE watchlist_snapshots ADD COLUMN median_total REAL") } catch {}
+  try { db.exec("ALTER TABLE watchlist_snapshots ADD COLUMN suspicious INTEGER NOT NULL DEFAULT 0") } catch {}
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
@@ -234,6 +236,8 @@ function initSchema(db: Database.Database) {
   insert.run("cardmarket_user", "")
   insert.run("cardmarket_games", "Pokemon,Magic")
   insert.run("versand_ziel_id", "1")           // Cardmarket-Laender-ID des Empfaengers, 1 = Oesterreich
+  insert.run("scam_max_pct_of_median", "55")   // darunter gilt ein Angebot als Betrug, wenn ...
+  insert.run("scam_max_sales", "50")           // ... der Anbieter weniger Verkaeufe hat als das
   insert.run("sig_raise_uptrend_pct", "5")     // avg7 muss avg30 um X% schlagen
   insert.run("sig_raise_below_trend_pct", "10") // ... und mein Preis X% unter Trend liegen
   insert.run("sig_lower_days", "30")            // ab wann ein Angebot als Ladenhueter gilt

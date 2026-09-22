@@ -51,6 +51,29 @@ def median(values: list[float]) -> float | None:
     return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
 
 
+# Unter diesem Anteil des Mittelfelds gilt ein Angebot als Betrug, egal wer anbietet.
+SCAM_HARD_PCT = 35.0
+
+
+def is_suspicious(total: float | None, median_total: float | None, sales: int | None,
+                  max_pct: float = 55.0, max_sales: int = 50) -> bool:
+    """Betrugsverdacht: weit unter dem Markt, und der Anbieter hat kaum Verkaeufe.
+
+    Auf Cardmarket tauchen bei teurem Sealed regelmaessig frische Konten mit
+    Preisen bei 20-45 % des Marktes auf und verschwinden nach ein, zwei Tagen
+    wieder — beim Hobbit-Display 258 € statt 600 € (12.09.2026) und 142 € statt
+    670 € (19.09.2026), beide Male mit Kaufsignal per Telegram. Als Signal sind
+    sie wertlos, im Verlauf verfaelschen sie die Spanne. Unbekannte Verkaufszahl
+    (Markup geaendert?) zaehlt wie ein frisches Konto.
+    """
+    if not total or not median_total:
+        return False
+    anteil = total / median_total * 100
+    if anteil < SCAM_HARD_PCT:
+        return True
+    return anteil < max_pct and (sales is None or sales < max_sales)
+
+
 def evaluate_buy(item: dict, snap: dict, prev: dict | None, below_pct: float) -> dict | None:
     """Kaufsignal: Zielpreis erreicht, oder deutlich unter dem ueblichen Niveau.
 
@@ -147,6 +170,8 @@ def main() -> int:
     zone = get_setting(db, "brightdata_zone", "cardmarket")
     me = get_setting(db, "cardmarket_user")
     below_pct = get(db, "sig_buy_below_median_pct", 12)
+    scam_pct = get(db, "scam_max_pct_of_median", 55)
+    scam_sales = int(get(db, "scam_max_sales", 50))
     if not api_key:
         log.error("Kein Bright-Data-Key in settings")
         return 2
@@ -221,6 +246,16 @@ def main() -> int:
             for c in offers:
                 v = versand.kosten(c.get("origin"), c["price"], it["kind"])
                 c["shipping"], c["total"] = v["preis"], round(c["price"] + v["preis"], 2)
+            # Betrugsverdacht aussortieren, bevor das Guenstigste bestimmt wird —
+            # gemessen am Mittelfeld aller passenden Angebote.
+            med_alle = median([c["total"] for c in offers])
+            verdaechtig = [c for c in offers
+                           if is_suspicious(c["total"], med_alle, c.get("sales"), scam_pct, scam_sales)]
+            for c in verdaechtig:
+                log.info("  Verdaechtig, ignoriert: %.2f € von %s (%s Verkaeufe) bei Mittelfeld %.2f €",
+                         c["total"], c["seller"], c.get("sales", "?"), med_alle)
+            raus = {id(c) for c in verdaechtig}
+            offers = [c for c in offers if id(c) not in raus]
             best = min(offers, key=lambda c: c["total"]) if offers else None
             prices = [c["price"] for c in offers]
             snap = {
@@ -231,6 +266,7 @@ def main() -> int:
                 "median_price": median(prices),
                 "median_total": median([c["total"] for c in offers]),
                 "offers_count": len(prices),
+                "suspicious": len(verdaechtig),
                 "market_trend": market.get("trend"),
                 "market_avg7": market.get("avg7"),
                 "market_avg30": market.get("avg30"),
@@ -247,6 +283,8 @@ def main() -> int:
             problem = None
             if "articleRow" not in html:
                 problem = "Der Link führt nicht auf eine Kartenseite"
+            elif not offers and verdaechtig:
+                problem = f"Nur Angebote mit Betrugsverdacht ({len(verdaechtig)})"
             elif not offers:
                 problem = (f"Kein Angebot in {it['condition']}/{it['language']}" if it["condition"]
                            else f"Kein Angebot in Sprache {it['language']}")
@@ -272,12 +310,12 @@ def main() -> int:
             db.execute("""INSERT OR IGNORE INTO watchlist_snapshots
                 (watchlist_id, captured_at, best_price, median_price, offers_count,
                  market_trend, market_avg7, market_avg30,
-                 best_total, best_shipping, best_origin, median_total)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 best_total, best_shipping, best_origin, median_total, suspicious)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (it["id"], now, snap["best_price"], snap["median_price"],
                  snap["offers_count"], snap["market_trend"], snap["market_avg7"],
                  snap["market_avg30"], snap["best_total"], snap["best_shipping"],
-                 snap["best_origin"], snap["median_total"]))
+                 snap["best_origin"], snap["median_total"], snap["suspicious"]))
 
             if sig:
                 hits += 1

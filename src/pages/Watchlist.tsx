@@ -253,6 +253,12 @@ export function Watchlist() {
                   </span>
                   <div className="text-[11px] text-muted-foreground mt-1">
                     {i.offers_count != null ? `${i.offers_count} Angebote` : "wird geholt …"}
+                    {i.suspicious > 0 && (
+                      <span className="text-amber-400/80"
+                        title="Weit unter dem Markt von einem Konto ohne Verkäufe — vermutlich Betrug, nicht gewertet">
+                        {` · ${i.suspicious} verdächtig`}
+                      </span>
+                    )}
                   </div>
                   {i.problem && (
                     <div className="text-[11px] text-amber-400 mt-0.5">⚠ {i.problem}</div>
