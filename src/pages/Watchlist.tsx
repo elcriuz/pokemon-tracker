@@ -189,7 +189,8 @@ export function Watchlist() {
                       <div className="w-12 h-[68px] rounded-md flex-shrink-0 bg-muted/40" />
                     )}
                     <div className="min-w-0">
-                      <a href={i.product_url} target="_blank" rel="noreferrer"
+                      {/* Gefilterter Link: dieselbe Seite, die der Tracker vergleicht. */}
+                      <a href={i.offer_url ?? i.product_url} target="_blank" rel="noreferrer"
                          className="hover:underline inline-flex items-center gap-1">
                         {i.name}
                         <ExternalLink className="w-3 h-3 opacity-40" />

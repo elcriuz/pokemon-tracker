@@ -6,6 +6,22 @@ export const watchlistRouter = Router()
 const CONDITIONS = ["MT", "NM", "EX", "GD", "LP", "PL", "PO"]
 const LANGUAGES = ["de", "en", "fr", "es", "it", "ja", "zh", "pt", "ru", "ko"]
 
+// Cardmarkets Filter-IDs, dieselben wie in cardmarket_public.py (dort verifiziert).
+// Ohne Filter zeigt die Produktseite die 50 billigsten Angebote ueber alle
+// Sprachen — bei einer Box also erst mal Italienisch. Der Link aus der Liste
+// soll genau die Seite oeffnen, die der Tracker vergleicht.
+const LANGUAGE_IDS: Record<string, number> = {
+  en: 1, fr: 2, de: 3, es: 4, it: 5, zh: 6, ja: 7, pt: 8, ru: 9, ko: 10,
+}
+const CONDITION_IDS: Record<string, number> = { MT: 1, NM: 2, EX: 3, GD: 4, LP: 5, PL: 6, PO: 7 }
+
+function offerUrl(productUrl: string, condition: string, language: string) {
+  const params: string[] = []
+  if (LANGUAGE_IDS[language]) params.push(`language=${LANGUAGE_IDS[language]}`)
+  if (CONDITION_IDS[condition]) params.push(`minCondition=${CONDITION_IDS[condition]}`)
+  return params.length ? `${productUrl}?${params.join("&")}` : productUrl
+}
+
 /** Aus einer Cardmarket-URL Spiel und Kartenname ableiten. */
 /**
  * Zwei URL-Formen:
@@ -80,6 +96,7 @@ watchlistRouter.get("/", (_req, res) => {
     const high = prices.length ? Math.max(...prices) : null
     return {
       ...r,
+      offer_url: offerUrl(r.product_url, r.condition, r.language),
       signals: byItem.get(r.id) ?? [],
       history_low: low,
       history_high: high,

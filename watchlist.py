@@ -115,7 +115,9 @@ def notify(db, limit: int = 12) -> int:
     zeilen = [f"<b>Wunschliste — {len(rows)} neue Kaufsignale</b>", ""]
     for (_id, preis, detail, name, game, cond, lang, url) in rows[:limit]:
         zustand = f"{cond}/{lang}" if cond else (lang or "")
-        zeilen.append(f'\U0001f6d2 <a href="{url}">{name[:44]}</a> <i>{game[:3]} {zustand}</i>')
+        # Gefilterter Link — ungefiltert zeigt Cardmarket erst mal andere Sprachen.
+        zeilen.append(f'\U0001f6d2 <a href="{build_url(url, cond, lang)}">{name[:44]}</a> '
+                      f'<i>{game[:3]} {zustand}</i>')
         zeilen.append(f"   <b>{preis:.2f} \u20ac</b> — {detail}" if preis else f"   {detail}")
     if len(rows) > limit:
         zeilen.append(f"\n… und {len(rows) - limit} weitere in der Wunschliste")
