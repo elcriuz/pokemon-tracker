@@ -125,6 +125,12 @@ function initSchema(db: Database.Database) {
       market_trend REAL,
       market_avg7  REAL,
       market_avg30 REAL,
+      -- Seit 22.09.2026: was das guenstigste Angebot zu Hause kostet. best_price
+      -- bleibt der Kartenpreis, best_total ist Preis plus Versand.
+      best_total    REAL,
+      best_shipping REAL,
+      best_origin   TEXT,
+      median_total  REAL,
       UNIQUE(watchlist_id, captured_at)
     );
 
@@ -207,6 +213,10 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE cards ADD COLUMN watch INTEGER NOT NULL DEFAULT 0") } catch {}
   try { db.exec("ALTER TABLE watchlist ADD COLUMN last_error TEXT") } catch {}
   try { db.exec("ALTER TABLE watchlist ADD COLUMN image TEXT NOT NULL DEFAULT ''") } catch {}
+  try { db.exec("ALTER TABLE watchlist_snapshots ADD COLUMN best_total REAL") } catch {}
+  try { db.exec("ALTER TABLE watchlist_snapshots ADD COLUMN best_shipping REAL") } catch {}
+  try { db.exec("ALTER TABLE watchlist_snapshots ADD COLUMN best_origin TEXT") } catch {}
+  try { db.exec("ALTER TABLE watchlist_snapshots ADD COLUMN median_total REAL") } catch {}
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
@@ -223,6 +233,7 @@ function initSchema(db: Database.Database) {
   insert.run("scrape_interval_cold_days", "7")
   insert.run("cardmarket_user", "")
   insert.run("cardmarket_games", "Pokemon,Magic")
+  insert.run("versand_ziel_id", "1")           // Cardmarket-Laender-ID des Empfaengers, 1 = Oesterreich
   insert.run("sig_raise_uptrend_pct", "5")     // avg7 muss avg30 um X% schlagen
   insert.run("sig_raise_below_trend_pct", "10") // ... und mein Preis X% unter Trend liegen
   insert.run("sig_lower_days", "30")            // ab wann ein Angebot als Ladenhueter gilt

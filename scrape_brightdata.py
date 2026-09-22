@@ -29,6 +29,8 @@ from pathlib import Path
 import requests
 
 BASE_DIR = Path(__file__).parent
+
+from versandkosten import STANDORT_RE, ist_nicht_eu
 PORTFOLIO_FILE = BASE_DIR / "portfolio.csv"
 PRICES_DIR = BASE_DIR / "prices"
 LATEST_FILE = PRICES_DIR / "latest.json"
@@ -214,26 +216,35 @@ BAD_LISTING_RE = re.compile(
 
 _OFFER_SPLIT_RE = re.compile(r'<div id="articleRow\d+"')
 _OFFER_COMMENT_RE = re.compile(r'fst-italic small">([^<]+)</span>')
-_OFFER_LOCATION_RE = re.compile(r'title="Item location:\s*([^"]+)"', re.IGNORECASE)
+# Standort des Angebots. Cardmarket schreibt ihn ins aria-label („Artikelstandort:
+# Schweiz", auf /en/-Seiten „Item location: Switzerland"). Bis 22.09.2026 suchte
+# der Aufschlag nach title="Item location:" — das gibt es im Markup nicht mehr,
+# UK-Angebote gingen also ohne Aufschlag in den Vergleich.
+_OFFER_LOCATION_RE = STANDORT_RE
 
-# UK-Listings: Cardmarket nutzt IOSS bis 150€ Warenwert (EUSt inkludiert), darüber kommen
-# Einfuhrumsatzsteuer (20% AT) + Postaufschlag ca. 6-12€ dazu. Effektiver Aufschlag bei
-# einer 500€-Karte ≈ 21%. Wir runden auf 22% und wenden ihn nur auf Listings >150€ an.
-UK_UPLIFT_THRESHOLD_EUR = 150.0
-UK_UPLIFT_FACTOR = 1.22
+# Nicht-EU-Listings (UK, Schweiz, Norwegen …): Cardmarket nutzt IOSS bis 150€ Warenwert
+# (EUSt inkludiert), darüber kommen Einfuhrumsatzsteuer (20% AT) + Postaufschlag ca.
+# 6-12€ dazu. Effektiver Aufschlag bei einer 500€-Karte ≈ 21%. Wir runden auf 22% und
+# wenden ihn nur auf Listings >150€ an.
+IMPORT_UPLIFT_THRESHOLD_EUR = 150.0
+IMPORT_UPLIFT_FACTOR = 1.22
 
 
-def _is_uk_listing(block):
+def offer_location(block):
     m = _OFFER_LOCATION_RE.search(block)
-    return bool(m and "united kingdom" in m.group(1).lower())
+    return m.group(1).strip() if m else ""
 
 
-def _apply_uk_uplift(price, block):
-    """Apply post-Brexit import surcharge to UK listings above the IOSS threshold."""
-    if price is None or price <= UK_UPLIFT_THRESHOLD_EUR:
+def _is_non_eu_listing(block):
+    return ist_nicht_eu(offer_location(block))
+
+
+def _apply_import_uplift(price, block):
+    """Einfuhrabgaben auf Nicht-EU-Listings über der IOSS-Grenze aufschlagen."""
+    if price is None or price <= IMPORT_UPLIFT_THRESHOLD_EUR:
         return price, False
-    if _is_uk_listing(block):
-        return round(price * UK_UPLIFT_FACTOR, 2), True
+    if _is_non_eu_listing(block):
+        return round(price * IMPORT_UPLIFT_FACTOR, 2), True
     return price, False
 
 
@@ -263,9 +274,9 @@ def extract_min_listing_price(content):
         if comment and _comment_is_graded(comment):
             log.info(f"  Listing gefiltert (graded): {price:.2f}€ — {comment[:80]!r}")
             continue
-        adjusted, applied = _apply_uk_uplift(price, block)
+        adjusted, applied = _apply_import_uplift(price, block)
         if applied:
-            log.info(f"  UK-Uplift: {price:.2f}€ → {adjusted:.2f}€ (+{(UK_UPLIFT_FACTOR-1)*100:.0f}% EUSt/Zoll)")
+            log.info(f"  Einfuhr-Aufschlag: {price:.2f}€ → {adjusted:.2f}€ (+{(IMPORT_UPLIFT_FACTOR-1)*100:.0f}% EUSt/Zoll)")
         kept.append(adjusted)
     return min(kept) if kept else None
 
@@ -325,9 +336,9 @@ def extract_grade_lows(content):
         price = parse_de_price(price_m.group(1))
         if price is None:
             continue
-        adjusted, applied = _apply_uk_uplift(price, block)
+        adjusted, applied = _apply_import_uplift(price, block)
         if applied:
-            log.info(f"  UK-Uplift (graded): {price:.2f}€ → {adjusted:.2f}€ — {comment[:40]!r}")
+            log.info(f"  Einfuhr-Aufschlag (graded): {price:.2f}€ → {adjusted:.2f}€ — {comment[:40]!r}")
         for key, pat in _GRADE_LABEL_PATTERNS.items():
             if pat.match(comment):
                 if key not in lows or adjusted < lows[key]:

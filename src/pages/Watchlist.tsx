@@ -90,8 +90,8 @@ export function Watchlist() {
         <div>
           <h1 className="text-2xl font-semibold">Wunschliste</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Nicht nur „ich suche das“, sondern <strong>was es kosten darf</strong> — und wie sich
-            der Preis seither entwickelt hat.
+            Nicht nur „ich suche das“, sondern <strong>was es kosten darf</strong> — inklusive
+            Versand, und wie sich der Preis seither entwickelt hat.
           </p>
         </div>
         <div className="flex items-end gap-6">
@@ -141,7 +141,7 @@ export function Watchlist() {
               </select>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground block mb-1">Zielpreis (optional)</label>
+              <label className="text-xs text-muted-foreground block mb-1">Zielpreis inkl. Versand (optional)</label>
               <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="34,00"
                 className="w-24 px-2.5 py-1.5 rounded bg-background border border-border text-sm" />
             </div>
@@ -163,8 +163,14 @@ export function Watchlist() {
           <thead className="text-xs uppercase tracking-wide text-muted-foreground">
             <tr className="border-b border-border">
               <th className="text-left py-2 pr-3 font-medium">Karte</th>
-              <th className="text-right py-2 px-3 font-medium">Günstigstes</th>
-              <th className="text-right py-2 px-3 font-medium">Mittelfeld</th>
+              <th className="text-right py-2 px-3 font-medium">
+                Günstigstes
+                <div className="normal-case tracking-normal text-[10px] opacity-60">inkl. Versand</div>
+              </th>
+              <th className="text-right py-2 px-3 font-medium">
+                Mittelfeld
+                <div className="normal-case tracking-normal text-[10px] opacity-60">inkl. Versand</div>
+              </th>
               <th className="text-right py-2 px-3 font-medium">Ziel</th>
               <th className="text-left py-2 px-3 font-medium">Beobachtete Spanne</th>
               <th className="text-left py-2 pl-3 font-medium"></th>
@@ -178,9 +184,9 @@ export function Watchlist() {
                     {/* Ohne Bild bleibt der Platz stehen, damit die Namen bündig bleiben. */}
                     {i.image ? (
                       <img src={`/images/${i.image}`} alt="" loading="lazy"
-                        className={`w-8 h-11 rounded flex-shrink-0 ${i.kind === "sealed" ? "object-contain" : "object-cover"}`} />
+                        className={`w-12 h-[68px] rounded-md flex-shrink-0 ${i.kind === "sealed" ? "object-contain" : "object-cover"}`} />
                     ) : (
-                      <div className="w-8 h-11 rounded flex-shrink-0 bg-muted/40" />
+                      <div className="w-12 h-[68px] rounded-md flex-shrink-0 bg-muted/40" />
                     )}
                     <div className="min-w-0">
                       <a href={i.product_url} target="_blank" rel="noreferrer"
@@ -198,18 +204,24 @@ export function Watchlist() {
                     </div>
                   </div>
                 </td>
-                <td className="py-2.5 px-3 text-right tabular-nums font-medium">
-                  {formatEur(i.best_price)}
+                <td className="py-2.5 px-3 text-right tabular-nums">
+                  <div className="font-medium">{formatEur(i.best_total ?? i.best_price)}</div>
+                  {/* Bis der erste Abruf mit Versand durch ist, steht hier der reine Kartenpreis. */}
+                  <div className="text-[10px] text-muted-foreground whitespace-nowrap">
+                    {i.best_shipping != null
+                      ? `${formatEur(i.best_price)} + ${formatEur(i.best_shipping)} · ${i.best_origin ?? "?"}`
+                      : i.best_price != null ? "ohne Versand" : ""}
+                  </div>
                 </td>
                 <td className="py-2.5 px-3 text-right tabular-nums text-muted-foreground">
-                  {formatEur(i.median_price)}
+                  {formatEur(i.median_total ?? i.median_price)}
                 </td>
                 <td className="py-2.5 px-3 text-right tabular-nums text-muted-foreground">
                   {formatEur(i.target_price)}
                 </td>
                 <td className="py-2.5 px-3">
                   <PriceRange low={i.history_low} high={i.history_high}
-                              current={i.best_price} points={i.history_points} />
+                              current={i.best_total ?? i.best_price} points={i.history_points} />
                 </td>
                 <td className="py-2.5 pl-3">
                   <div className="flex items-center gap-2">

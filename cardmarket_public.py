@@ -51,16 +51,18 @@ LANG_LABELS = {"Deutsch": "de", "Englisch": "en", "Französisch": "fr", "Spanisc
 LANG_RE = re.compile(r'aria-label="(' + "|".join(map(re.escape, LANG_LABELS)) + r')"')
 COMMENT_RE = re.compile(r'fst-italic small">([^<]+)</span>')
 ROW_SPLIT_RE = re.compile(r'<div id="articleRow\d+"')
+# Herkunftsland des Angebots — davon haengt ab, was der Versand nach Hause kostet.
+from versandkosten import STANDORT_RE  # noqa: E402
 
 # Die aufwendig gepflegten Filter des Preis-Scrapers mitbenutzen statt neu bauen:
 # "nur Huelle", "ohne Karte", graded-Kommentare und UK-Einfuhraufschlag.
 try:
-    from scrape_brightdata import (BAD_LISTING_RE, _apply_uk_uplift,
+    from scrape_brightdata import (BAD_LISTING_RE, _apply_import_uplift,
                                    _comment_is_graded, extract_prices)
 except Exception:  # pragma: no cover - Fallback, falls sich das Modul aendert
     BAD_LISTING_RE = None
     _comment_is_graded = lambda c: False
-    _apply_uk_uplift = lambda p, b: (p, False)
+    _apply_import_uplift = lambda p, b: (p, False)
     extract_prices = lambda h: {}
 
 
@@ -90,15 +92,17 @@ def parse_competitors(html: str) -> list[dict]:
         if comment and _comment_is_graded(comment):
             continue
 
-        price, _ = _apply_uk_uplift(price, block)
+        price, _ = _apply_import_uplift(price, block)
         sm = SELLER_RE.search(block)
         cond = COND_RE.search(block)
         lm = LANG_RE.search(block)
+        om = STANDORT_RE.search(block)
         out.append({
             "price": price,
             "seller": sm.group(1) if sm else "",
             "condition": cond.group(1).upper() if cond else "",
             "language": LANG_LABELS.get(lm.group(1), "") if lm else "",
+            "origin": om.group(1).strip() if om else "",
         })
     return out
 

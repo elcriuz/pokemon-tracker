@@ -23,6 +23,8 @@ sys.path.insert(0, str(ROOT))
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 import cardmarket_public as cm
+import scrape_brightdata as sb
+import versandkosten as vk
 import watchlist as wl
 
 _failures: list[str] = []
@@ -53,6 +55,10 @@ def test_produktseite():
     check("gefilterte Seite liefert Angebote", len(de) >= 20, f"{len(de)}")
     check("Verkaeufer werden gelesen", all(c["seller"] for c in de))
     check("Preise sind Zahlen", all(isinstance(c["price"], float) for c in de))
+    # Der Standort entscheidet ueber den Versand — ohne ihn gilt Deutschland.
+    orte = {c["origin"] for c in de}
+    check("Standort je Angebot gelesen", all(c["origin"] for c in de), f"{orte}")
+    check("Standorte sind bekannte Laender", all(vk.land_id(o) for o in orte), f"{orte}")
 
     # Der Filter ist der Kern: ungefiltert zeigt eine Produktseite die 50
     # guenstigsten Angebote ueber ALLE Sprachen — bei einer gefragten Karte
@@ -77,28 +83,31 @@ def test_watchlist():
     check("Median bei gerader Anzahl", wl.median([1.0, 2.0, 3.0, 4.0]) == 2.5)
     check("Median einer leeren Liste", wl.median([]) is None)
 
+    # Gerechnet wird mit dem Gesamtpreis (Karte plus Versand).
     item = {"id": 1, "name": "X", "target_price": 30.0}
-    snap = {"best_price": 28.0, "median_price": 40.0}
+    snap = {"best_total": 28.0, "median_total": 40.0, "best_shipping": 7.61, "best_origin": "Österreich"}
     sig = wl.evaluate_buy(item, snap, None, 12)
     check("Zielpreis erreicht -> kaufen", sig is not None and "Zielpreis" in sig["detail"])
+    check("Signal nennt den Versand", sig is not None and "7.61 € aus Österreich" in sig["detail"],
+          sig["detail"] if sig else "")
 
-    sig2 = wl.evaluate_buy(item, {"best_price": 35.0, "median_price": 36.0}, None, 12)
+    sig2 = wl.evaluate_buy(item, {"best_total": 35.0, "median_total": 36.0}, None, 12)
     check("über Zielpreis und nah am Mittelfeld -> kein Signal", sig2 is None)
 
     # Ohne Zielpreis zaehlt allein der Abstand zum Mittelfeld.
     frei = {"id": 2, "name": "Y", "target_price": None}
-    sig3 = wl.evaluate_buy(frei, {"best_price": 30.0, "median_price": 40.0}, None, 12)
+    sig3 = wl.evaluate_buy(frei, {"best_total": 30.0, "median_total": 40.0}, None, 12)
     check("ohne Zielpreis: deutlich unter Mittelfeld -> kaufen", sig3 is not None)
-    sig4 = wl.evaluate_buy(frei, {"best_price": 38.0, "median_price": 40.0}, None, 12)
+    sig4 = wl.evaluate_buy(frei, {"best_total": 38.0, "median_total": 40.0}, None, 12)
     check("ohne Zielpreis: nah am Mittelfeld -> kein Signal", sig4 is None)
 
-    sig5 = wl.evaluate_buy(frei, {"best_price": 30.0, "median_price": 40.0},
-                           {"best_price": 36.0}, 12)
+    sig5 = wl.evaluate_buy(frei, {"best_total": 30.0, "median_total": 40.0},
+                           {"best_total": 36.0}, 12)
     check("Preisrutsch seit dem letzten Blick wird erwähnt",
           sig5 is not None and "günstiger" in sig5["detail"])
 
     check("ohne Angebote kein Signal",
-          wl.evaluate_buy(item, {"best_price": None, "median_price": None}, None, 12) is None)
+          wl.evaluate_buy(item, {"best_total": None, "median_total": None}, None, 12) is None)
 
 
 def test_sealed():
@@ -132,6 +141,48 @@ def test_sealed():
           f"{ {c['language'] for c in de} }")
 
 
+def test_versand():
+    """Versand nach Hause aus Cardmarkets eigener Tabelle — Zielland Österreich."""
+    print("\nVersandkosten")
+    import json
+    fest = json.loads(vk.FIXTURE.read_text(encoding="utf-8"))
+    t = vk.Versandtabelle({int(k): v for k, v in fest["laender"].items()})
+
+    k = lambda *a: t.kosten(*a)["preis"]
+    # Ab 25 € ist Tracking Pflicht, und jede Versandart gilt nur bis zu ihrem
+    # Hoechstwert — aus Deutschland heisst das Paket, keine Briefmarke.
+    check("DE, 20 € Karte: Brief reicht", k("Deutschland", 20, "single") == 1.55, str(k("Deutschland", 20)))
+    check("DE, 300 € Karte: DHL-Paket 15,49", k("Deutschland", 300, "single") == 15.49, str(k("Deutschland", 300)))
+    check("DE, 849 € Karte: Wertpaket 32,49", k("Deutschland", 849, "single") == 32.49, str(k("Deutschland", 849)))
+    check("AT, 300 € Karte: Paket 7,61", k("Österreich", 300, "single") == 7.61, str(k("Österreich", 300)))
+    check("AT, 300 € Display: gleicher Paketpreis", k("Österreich", 300, "sealed") == 7.61,
+          str(k("Österreich", 300, "sealed")))
+    check("CH, 300 € Karte: 40,43", k("Schweiz", 300, "single") == 40.43, str(k("Schweiz", 300)))
+    check("englischer Standort wird erkannt", k("Germany", 300, "single") == 15.49)
+    ohne = t.kosten("", 300, "single")
+    check("ohne Standort: Deutschland, als Schaetzung markiert",
+          ohne["geschaetzt"] and ohne["land_id"] == 7 and ohne["preis"] == 15.49, str(ohne))
+    # Cardmarket deckt bis 1.000.000 € ab (Kurier mit Vollversicherung) — erst
+    # darueber bleibt nur der hoechste Eintrag als Naeherung.
+    check("40.000 € Karte: Kurier, kein Schaetzwert",
+          not t.kosten("Deutschland", 40000, "single")["geschaetzt"])
+    hoch = t.kosten("Deutschland", 2_000_000, "single")
+    check("ueber jeder Wertstufe: hoechster Eintrag, geschaetzt",
+          hoch["geschaetzt"] and hoch["preis"] > 1000, str(hoch))
+    check("Versandart hat Tracking", t.kosten("Deutschland", 300)["methode"].startswith("Registered"))
+
+    # Einfuhrabgaben: bis 22.09.2026 suchte der Aufschlag nach title="Item location:",
+    # das die Seite nicht mehr hat — jetzt gilt das aria-label, fuer alle Nicht-EU-Laender.
+    ch = 'aria-label="Artikelstandort: Schweiz" data-bs-original-title="Artikelstandort: Schweiz"'
+    de = 'aria-label="Artikelstandort: Deutschland"'
+    uk = 'aria-label="Item location: United Kingdom"'
+    check("Schweiz ueber 150 €: +22 %", sb._apply_import_uplift(300.0, ch) == (366.0, True))
+    check("Schweiz unter 150 €: nichts (IOSS)", sb._apply_import_uplift(100.0, ch) == (100.0, False))
+    check("Deutschland: kein Aufschlag", sb._apply_import_uplift(300.0, de) == (300.0, False))
+    check("UK auf englischer Seite: +22 %", sb._apply_import_uplift(300.0, uk) == (366.0, True))
+    check("Standort wird aus dem Block gelesen", sb.offer_location(ch) == "Schweiz")
+
+
 def test_vorschaubild():
     """Das Bild der Wunschliste muss zum Produkt gehören, nicht zum Nachbarn."""
     print("\nVorschaubilder")
@@ -152,6 +203,7 @@ if __name__ == "__main__":
     test_produktseite()
     test_watchlist()
     test_sealed()
+    test_versand()
     test_vorschaubild()
 
     total = _passed + len(_failures)

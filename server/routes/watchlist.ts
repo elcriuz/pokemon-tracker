@@ -42,7 +42,8 @@ watchlistRouter.get("/", (_req, res) => {
   const db = getDb()
   const rows = db.prepare(`
     SELECT w.*, s.captured_at, s.best_price, s.median_price, s.offers_count,
-           s.market_trend, s.market_avg7, s.market_avg30
+           s.market_trend, s.market_avg7, s.market_avg30,
+           s.best_total, s.best_shipping, s.best_origin, s.median_total
     FROM watchlist w
     LEFT JOIN watchlist_snapshots s
       ON s.watchlist_id = w.id
@@ -67,10 +68,14 @@ watchlistRouter.get("/", (_req, res) => {
     // Der eigentliche Mehrwert gegenueber einer Wantlist: Wo steht der Preis
     // gemessen an dem, was wir seit dem Eintragen gesehen haben?
     const hist = db.prepare(`
-      SELECT best_price FROM watchlist_snapshots
+      SELECT best_price, best_total FROM watchlist_snapshots
       WHERE watchlist_id = ? AND best_price IS NOT NULL ORDER BY captured_at
     `).all(r.id) as any[]
-    const prices = hist.map((h) => h.best_price)
+    // Preisstaende vor dem 22.09.2026 kennen keinen Versand. Damit die Spanne zum
+    // heutigen Gesamtpreis passt, bekommen sie den heutigen Versand dazu — der
+    // haengt am Herkunftsland und der Wertstufe und aendert sich kaum.
+    const prices = hist.map((h) => h.best_total ?? h.best_price + (r.best_shipping ?? 0))
+    const current = r.best_total ?? r.best_price
     const low = prices.length ? Math.min(...prices) : null
     const high = prices.length ? Math.max(...prices) : null
     return {
@@ -81,8 +86,8 @@ watchlistRouter.get("/", (_req, res) => {
       history_points: prices.length,
       problem: r.last_error ?? null,
       // 0 = so guenstig wie nie beobachtet, 1 = Hoechststand
-      position: low != null && high != null && high > low && r.best_price != null
-        ? (r.best_price - low) / (high - low)
+      position: low != null && high != null && high > low && current != null
+        ? (current - low) / (high - low)
         : null,
     }
   })
@@ -154,7 +159,8 @@ watchlistRouter.get("/history/:id", (req, res) => {
   const db = getDb()
   res.json({
     items: db.prepare(`
-      SELECT captured_at, best_price, median_price, offers_count, market_trend
+      SELECT captured_at, best_price, median_price, offers_count, market_trend,
+             best_total, best_shipping, best_origin, median_total
       FROM watchlist_snapshots WHERE watchlist_id = ? ORDER BY captured_at
     `).all(req.params.id),
   })

@@ -27,6 +27,7 @@ DB_PATH = ROOT / "data" / "tracker.db"
 from scrape_brightdata import download_image, extract_card_info
 from cardmarket_public import (MAX_PARALLEL, bd_fetch, build_url, extract_prices,
                                parse_competitors)
+from versandkosten import Versandtabelle, lade_tabelle
 
 log = logging.getLogger("watchlist")
 
@@ -50,33 +51,39 @@ def median(values: list[float]) -> float | None:
 
 
 def evaluate_buy(item: dict, snap: dict, prev: dict | None, below_pct: float) -> dict | None:
-    """Kaufsignal: Zielpreis erreicht, oder deutlich unter dem ueblichen Niveau."""
-    best = snap.get("best_price")
+    """Kaufsignal: Zielpreis erreicht, oder deutlich unter dem ueblichen Niveau.
+
+    Gerechnet wird mit dem, was die Karte zu Hause kostet: Preis plus Versand.
+    """
+    best = snap.get("best_total")
     if not best:
         return None
+    versand = ""
+    if snap.get("best_shipping") is not None:
+        versand = f" · Versand {snap['best_shipping']:.2f} € aus {snap.get('best_origin') or '?'}"
 
     target = item.get("target_price")
     if target and best <= target:
         return {
             "kind": BUY,
             "price": best,
-            "detail": f"Zielpreis erreicht: {best:.2f} € (Ziel {target:.2f} €)",
+            "detail": f"Zielpreis erreicht: {best:.2f} € inkl. Versand (Ziel {target:.2f} €){versand}",
         }
 
     # Ohne Zielpreis gilt der eigene Verlauf als Massstab: deutlich unter dem
     # Mittelfeld heisst, dass gerade jemand billiger raus will.
-    med = snap.get("median_price")
+    med = snap.get("median_total")
     if med and best < med * (1 - below_pct / 100):
         drop = ""
-        if prev and prev.get("best_price"):
-            delta = best / prev["best_price"] - 1
+        if prev and prev.get("best_total"):
+            delta = best / prev["best_total"] - 1
             if delta < -0.05:
                 drop = f", {abs(delta)*100:.0f}% günstiger als beim letzten Blick"
         return {
             "kind": BUY,
             "price": best,
-            "detail": (f"{best:.2f} € liegt {(1-best/med)*100:.0f}% unter dem "
-                       f"Mittelfeld ({med:.2f} €){drop}"),
+            "detail": (f"{best:.2f} € inkl. Versand liegt {(1-best/med)*100:.0f}% unter dem "
+                       f"Mittelfeld ({med:.2f} €){drop}{versand}"),
         }
     return None
 
@@ -140,14 +147,15 @@ def main() -> int:
         return 2
 
     items = [dict(zip(["id", "product_url", "name", "condition", "language",
-                       "target_price", "max_price", "image"], r))
+                       "target_price", "max_price", "image", "kind"], r))
              for r in db.execute("""SELECT id, product_url, name, condition, language,
-                                           target_price, max_price, image
+                                           target_price, max_price, image, kind
                                     FROM watchlist WHERE active = 1""")]
     if not items:
         log.info("Watchlist ist leer")
         return 0
     log.info("%d Wunschkarten", len(items))
+    versand = Versandtabelle(lade_tabelle(ziel=int(get(db, "versand_ziel_id", 1))))
 
     def load(it):
         try:
@@ -193,20 +201,31 @@ def main() -> int:
                 if image and image != it["image"]:
                     db.execute("UPDATE watchlist SET image = ? WHERE id = ?",
                                (image, it["id"]))
+            # Was das Angebot zu Hause kostet: Cardmarkets Versandtabelle fuer das
+            # Herkunftsland, darin die guenstigste Versandart, die den Wert abdeckt.
+            # Das guenstigste Angebot ist das mit dem niedrigsten Gesamtpreis.
+            for c in offers:
+                v = versand.kosten(c.get("origin"), c["price"], it["kind"])
+                c["shipping"], c["total"] = v["preis"], round(c["price"] + v["preis"], 2)
+            best = min(offers, key=lambda c: c["total"]) if offers else None
             prices = [c["price"] for c in offers]
             snap = {
-                "best_price": min(prices) if prices else None,
+                "best_price": best["price"] if best else None,
+                "best_total": best["total"] if best else None,
+                "best_shipping": best["shipping"] if best else None,
+                "best_origin": best.get("origin") if best else None,
                 "median_price": median(prices),
+                "median_total": median([c["total"] for c in offers]),
                 "offers_count": len(prices),
                 "market_trend": market.get("trend"),
                 "market_avg7": market.get("avg7"),
                 "market_avg30": market.get("avg30"),
             }
 
-            prev = db.execute("""SELECT best_price, median_price FROM watchlist_snapshots
+            prev = db.execute("""SELECT best_total, median_total FROM watchlist_snapshots
                                  WHERE watchlist_id = ? ORDER BY captured_at DESC LIMIT 1""",
                               (it["id"],)).fetchone()
-            prev_d = {"best_price": prev[0], "median_price": prev[1]} if prev else None
+            prev_d = {"best_total": prev[0], "median_total": prev[1]} if prev else None
 
             # Ein Link, der auf eine Set-Uebersicht statt auf eine Karte zeigt,
             # liefert dauerhaft null Angebote. Ohne Hinweis liegt so ein Eintrag
@@ -226,9 +245,11 @@ def main() -> int:
 
             sig = evaluate_buy(it, snap, prev_d, below_pct)
             mark = "  ← KAUFEN" if sig else ""
-            log.info("  %-34s %s € (Median %s, %d Angebote)%s", it["name"][:34],
-                     f"{snap['best_price']:.2f}" if snap["best_price"] else "—",
-                     f"{snap['median_price']:.2f}" if snap["median_price"] else "—",
+            log.info("  %-34s %s € inkl. %s € Versand (Median %s, %d Angebote)%s",
+                     it["name"][:34],
+                     f"{snap['best_total']:.2f}" if snap["best_total"] else "—",
+                     f"{snap['best_shipping']:.2f}" if snap["best_shipping"] is not None else "—",
+                     f"{snap['median_total']:.2f}" if snap["median_total"] else "—",
                      snap["offers_count"], mark)
 
             if args.dry_run:
@@ -236,10 +257,13 @@ def main() -> int:
 
             db.execute("""INSERT OR IGNORE INTO watchlist_snapshots
                 (watchlist_id, captured_at, best_price, median_price, offers_count,
-                 market_trend, market_avg7, market_avg30) VALUES (?,?,?,?,?,?,?,?)""",
+                 market_trend, market_avg7, market_avg30,
+                 best_total, best_shipping, best_origin, median_total)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (it["id"], now, snap["best_price"], snap["median_price"],
                  snap["offers_count"], snap["market_trend"], snap["market_avg7"],
-                 snap["market_avg30"]))
+                 snap["market_avg30"], snap["best_total"], snap["best_shipping"],
+                 snap["best_origin"], snap["median_total"]))
 
             if sig:
                 hits += 1
