@@ -124,16 +124,34 @@ def test_sealed():
     check("Marktdaten auch bei Sealed", all(m.get(k) for k in ("trend", "avg7", "avg30")),
           str(m)[:80])
 
-    # Der Watchlist-Filter darf bei leerem Zustand nicht alles wegwerfen.
+    # Der Watchlist-Filter darf bei leerem Zustand nicht alles wegwerfen — und
+    # ein Angebot ohne lesbare Sprache darf nicht durchrutschen.
     item = {"condition": "", "language": "en"}
-    passend = [c for c in comp
-               if (not item["condition"] or c["condition"] == item["condition"])
-               and (not item["language"] or not c.get("language")
-                    or c["language"] == item["language"])]
-    check("Sealed-Filter behaelt alle passenden Angebote", len(passend) == len(comp))
+    filt = lambda cs: [c for c in cs
+                       if (not item["condition"] or c["condition"] == item["condition"])
+                       and (not item["language"] or c.get("language") == item["language"])]
+    check("Sealed-Filter behaelt alle passenden Angebote", len(filt(comp)) == len(comp))
+    check("Angebot ohne Sprache faellt raus", filt([{"condition": "", "language": ""}]) == [])
     check("Median liegt in der Preisspanne",
           min(c["price"] for c in comp) <= wl.median([c["price"] for c in comp])
           <= max(c["price"] for c in comp))
+
+    # Englische Seiten (/en/-Links) tragen englische Labels.
+    en_block = ('<div id="articleRow1" class="row"><a href="/en/Users/x">x</a>'
+                '<span class="article-condition condition-nm"></span>'
+                '<span aria-label="German"></span>'
+                '<span class="color-primary small text-end text-nowrap fw-bold">12,00 €</span></div>')
+    en = cm.parse_competitors(en_block)
+    check("englische Sprach-Labels werden gelesen", len(en) == 1 and en[0]["language"] == "de",
+          str(en))
+    # … und Markup-Varianten ohne aria-label.
+    tt = cm.parse_competitors(en_block.replace('aria-label="German"', 'data-original-title="Englisch"'))
+    mb = cm.parse_competitors(en_block.replace('<span aria-label="German"></span>',
+                                               '<span onmouseover="showMsgBox(this,`Japanisch`)"></span>'))
+    check("Sprache aus dem Tooltip", tt and tt[0]["language"] == "en", str(tt))
+    check("Sprache aus dem onmouseover", mb and mb[0]["language"] == "ja", str(mb))
+    ohne = cm.parse_competitors(en_block.replace('<span aria-label="German"></span>', ""))
+    check("ohne Label bleibt die Sprache leer", ohne and ohne[0]["language"] == "", str(ohne))
 
     # Singles-Fixture: Sprache muss dort weiterhin stimmen (de-Filter)
     de = cm.parse_competitors(fixture("product_de_nm"))
@@ -159,6 +177,8 @@ def test_versand():
           str(k("Österreich", 300, "sealed")))
     check("CH, 300 € Karte: 40,43", k("Schweiz", 300, "single") == 40.43, str(k("Schweiz", 300)))
     check("englischer Standort wird erkannt", k("Germany", 300, "single") == 15.49)
+    check("englischer Standort wird deutsch benannt", vk.land_name("Germany") == "Deutschland"
+          and vk.land_name("Vereinigtes Königreich") == "Großbritannien" and vk.land_name("") == "")
     ohne = t.kosten("", 300, "single")
     check("ohne Standort: Deutschland, als Schaetzung markiert",
           ohne["geschaetzt"] and ohne["land_id"] == 7 and ohne["preis"] == 15.49, str(ohne))

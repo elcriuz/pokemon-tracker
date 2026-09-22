@@ -27,7 +27,7 @@ DB_PATH = ROOT / "data" / "tracker.db"
 from scrape_brightdata import download_image, extract_card_info
 from cardmarket_public import (MAX_PARALLEL, bd_fetch, build_url, extract_prices,
                                parse_competitors)
-from versandkosten import Versandtabelle, lade_tabelle
+from versandkosten import Versandtabelle, lade_tabelle, land_name
 
 log = logging.getLogger("watchlist")
 
@@ -177,12 +177,17 @@ def main() -> int:
             # Eigene Angebote gehoeren nicht in den Kaufpreis-Vergleich.
             # Sealed hat keinen Zustand (condition leer) — dann zaehlt nur die
             # Sprache. Die wird zusaetzlich clientseitig geprueft, weil der
-            # ?language=-Filter auf Sealed-Seiten nicht sicher greift.
-            offers = [c for c in parse_competitors(html)
-                      if c["seller"].lower() != (me or "").lower()
-                      and (not it["condition"] or c["condition"] == it["condition"])
-                      and (not it["language"] or not c.get("language")
-                           or c["language"] == it["language"])]
+            # ?language=-Filter nicht sicher greift: die /de/-Seite von „Der Eine
+            # Ring" liefert mit ?language=3 lauter englische Angebote. Ein Angebot
+            # ohne lesbare Sprache ist darum nicht vergleichbar und faellt raus.
+            alle = [c for c in parse_competitors(html)
+                    if c["seller"].lower() != (me or "").lower()]
+            offers = [c for c in alle
+                      if (not it["condition"] or c["condition"] == it["condition"])
+                      and (not it["language"] or c.get("language") == it["language"])]
+            if alle and not any(c.get("language") for c in alle):
+                log.warning("  %-34s Sprache der Angebote nicht lesbar — Markup geaendert?",
+                            it["name"][:34])
             market = extract_prices(html) or {}
 
             # Der aus der URL geratene Name wird durch den echten von der Seite
@@ -213,7 +218,7 @@ def main() -> int:
                 "best_price": best["price"] if best else None,
                 "best_total": best["total"] if best else None,
                 "best_shipping": best["shipping"] if best else None,
-                "best_origin": best.get("origin") if best else None,
+                "best_origin": land_name(best.get("origin")) if best else None,
                 "median_price": median(prices),
                 "median_total": median([c["total"] for c in offers]),
                 "offers_count": len(prices),

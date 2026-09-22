@@ -44,11 +44,21 @@ PRICE_RE = re.compile(r'<span class="color-primary[^"]*fw-bold[^"]*">\s*([\d.,]+
 COND_RE = re.compile(r'article-condition\s+condition-(\w+)')
 SELLER_RE = re.compile(r'/Users/([^/"?]+)"')
 # Sprache des Angebots (Sprach-Icon). Bei Sealed gibt es keinen Zustand — dort ist
-# die Sprache das einzige Merkmal, nach dem verglichen werden kann.
+# die Sprache das einzige Merkmal, nach dem verglichen werden kann. Auf /en/-Seiten
+# heissen die Labels englisch — ohne sie blieb die Sprache dort leer, und der
+# Sprachfilter liess alles durch.
 LANG_LABELS = {"Deutsch": "de", "Englisch": "en", "Französisch": "fr", "Spanisch": "es",
                "Italienisch": "it", "Japanisch": "ja", "Chinesisch": "zh",
-               "Portugiesisch": "pt", "Russisch": "ru", "Koreanisch": "ko"}
-LANG_RE = re.compile(r'aria-label="(' + "|".join(map(re.escape, LANG_LABELS)) + r')"')
+               "Portugiesisch": "pt", "Russisch": "ru", "Koreanisch": "ko",
+               "German": "de", "English": "en", "French": "fr", "Spanish": "es",
+               "Italian": "it", "Japanese": "ja", "S-Chinese": "zh", "T-Chinese": "zh-t",
+               "Portuguese": "pt", "Russian": "ru", "Korean": "ko"}
+# Das Sprach-Icon traegt sein Label mal im aria-label, mal nur im Tooltip oder im
+# onmouseover — Cardmarket liefert nicht bei jedem Abruf dasselbe Markup. Am 19.09.
+# und 22.09.2026 blieb die Sprache so bei einzelnen Abrufen leer.
+_LANG_ALT = "|".join(map(re.escape, LANG_LABELS))
+LANG_RE = re.compile(r'(?:aria-label|data-original-title|data-bs-original-title)="(' + _LANG_ALT + r')"'
+                     r'|showMsgBox\(this,`(' + _LANG_ALT + r')`\)')
 COMMENT_RE = re.compile(r'fst-italic small">([^<]+)</span>')
 ROW_SPLIT_RE = re.compile(r'<div id="articleRow\d+"')
 # Herkunftsland des Angebots — davon haengt ab, was der Versand nach Hause kostet.
@@ -101,7 +111,7 @@ def parse_competitors(html: str) -> list[dict]:
             "price": price,
             "seller": sm.group(1) if sm else "",
             "condition": cond.group(1).upper() if cond else "",
-            "language": LANG_LABELS.get(lm.group(1), "") if lm else "",
+            "language": LANG_LABELS.get(lm.group(1) or lm.group(2), "") if lm else "",
             "origin": om.group(1).strip() if om else "",
         })
     return out

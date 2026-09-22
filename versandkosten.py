@@ -72,6 +72,12 @@ LAENDER = {
     "Japan": 36,
     "Island": 37, "Iceland": 37,
 }
+# Kanonischer deutscher Name je ID: die Produktseite liefert je nach URL-Sprache
+# „Germany" oder „Deutschland" — gespeichert und angezeigt wird immer dasselbe.
+LAND_NAMEN: dict[int, str] = {}
+for _name, _id in LAENDER.items():
+    LAND_NAMEN.setdefault(_id, _name)
+
 # Außerhalb der EU-Zollunion: dort kommt über 150 € Warenwert die
 # Einfuhrumsatzsteuer dazu (siehe scrape_brightdata._apply_import_uplift).
 NICHT_EU = {4, 13, 18, 24, 29, 36, 37}
@@ -97,6 +103,11 @@ def parse_eur(s: str) -> float:
 
 def land_id(standort: str | None) -> int | None:
     return LAENDER.get((standort or "").strip())
+
+
+def land_name(standort: str | None) -> str:
+    lid = land_id(standort)
+    return LAND_NAMEN.get(lid, (standort or "").strip())
 
 
 def ist_nicht_eu(standort: str | None) -> bool:
