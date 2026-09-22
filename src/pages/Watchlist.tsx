@@ -1,7 +1,23 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/lib/api"
-import { ShoppingCart, ExternalLink, Trash2, Plus, X } from "lucide-react"
+import { ShoppingCart, ExternalLink, Trash2, Plus, X, Clock } from "lucide-react"
+
+/** „vor 12 Min." — die Seite laedt jede Minute neu, der Text wandert also mit. */
+function relativ(iso: string | null | undefined): string {
+  if (!iso) return "noch nie"
+  const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000))
+  if (min < 1) return "gerade eben"
+  if (min < 60) return `vor ${min} Min.`
+  const h = Math.round(min / 60)
+  if (h < 24) return `vor ${h} Std.`
+  const d = Math.round(h / 24)
+  return d === 1 ? "gestern" : `vor ${d} Tagen`
+}
+
+function absolut(iso: string): string {
+  return new Date(iso).toLocaleString("de-AT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+}
 
 function formatEur(val: number | null) {
   if (val == null) return "–"
@@ -105,6 +121,12 @@ export function Watchlist() {
   }
   for (const g of groups) g.items.sort((a, b) => a.language.localeCompare(b.language))
 
+  // Wann zuletzt frische Daten kamen — der juengste Preisstand ueber alle Eintraege.
+  // Einzelne Eintraege koennen aelter sein (Abruf fehlgeschlagen), das steht dann an der Zeile.
+  const zuletzt = items.reduce((m: string | null, i: any) =>
+    i.captured_at && (!m || i.captured_at > m) ? i.captured_at : m, null)
+  const zuletztMs = zuletzt ? new Date(zuletzt).getTime() : 0
+
   return (
     <div className="p-6 space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -113,6 +135,12 @@ export function Watchlist() {
           <p className="text-sm text-muted-foreground mt-1">
             Nicht nur „ich suche das“, sondern <strong>was es kosten darf</strong> — inklusive
             Versand, und wie sich der Preis seither entwickelt hat.
+          </p>
+          <p className="text-xs text-muted-foreground mt-1.5 inline-flex items-center gap-1"
+             title={zuletzt ? absolut(zuletzt) : undefined}>
+            <Clock className="w-3 h-3" />
+            Frische Daten: {relativ(zuletzt)}
+            {zuletzt && <span className="opacity-60">({absolut(zuletzt)})</span>}
           </p>
         </div>
         <div className="flex items-end gap-6">
@@ -260,6 +288,12 @@ export function Watchlist() {
                       </span>
                     )}
                   </div>
+                  {/* Nur wenn dieser Eintrag hinter dem juengsten Abruf zurueckhaengt. */}
+                  {i.captured_at && zuletztMs - new Date(i.captured_at).getTime() > 60 * 60_000 && (
+                    <div className="text-[11px] text-amber-400/80" title={absolut(i.captured_at)}>
+                      Stand {relativ(i.captured_at)}
+                    </div>
+                  )}
                   {i.problem && (
                     <div className="text-[11px] text-amber-400 mt-0.5">⚠ {i.problem}</div>
                   )}
