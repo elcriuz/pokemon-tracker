@@ -1,7 +1,25 @@
 import { Router } from "express"
+import { spawn } from "child_process"
+import path from "path"
+import { fileURLToPath } from "url"
 import { getDb } from "../db"
 
 export const watchlistRouter = Router()
+
+const BASE = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..")
+
+// Preise fuer frisch angelegte Eintraege sofort holen statt beim naechsten Cron —
+// eine Zeile ohne Zahl sagt nichts. Laeuft im Hintergrund, die Antwort wartet
+// nicht darauf; das Deploy-Script sieht den Lauf und verschiebt Neustarts.
+function fetchNow(ids: number[]) {
+  try {
+    const proc = spawn("python3", ["watchlist.py", "--only", ...ids.map(String)],
+      { cwd: BASE, stdio: "ignore" })
+    proc.on("error", (e) => console.error("watchlist.py --only:", e))
+  } catch (e) {
+    console.error("watchlist.py --only:", e)
+  }
+}
 
 const CONDITIONS = ["MT", "NM", "EX", "GD", "LP", "PL", "PO"]
 const LANGUAGES = ["de", "en", "fr", "es", "it", "ja", "zh", "pt", "ru", "ko"]
@@ -122,7 +140,7 @@ watchlistRouter.get("/", (_req, res) => {
 
 watchlistRouter.post("/", (req, res) => {
   const db = getDb()
-  const { url, condition, language, target_price, note } = req.body ?? {}
+  const { url, condition, language, languages, target_price, note } = req.body ?? {}
   if (!url || typeof url !== "string") {
     return res.status(400).json({ error: "Cardmarket-Link fehlt" })
   }
@@ -135,22 +153,34 @@ watchlistRouter.post("/", (req, res) => {
   }
   // Sealed hat keinen Zustand — leer speichern, sonst filtert der Abruf ins Leere.
   const cond = parsed.kind === "sealed" ? "" : (CONDITIONS.includes(condition) ? condition : "NM")
-  const lang = LANGUAGES.includes(language) ? language : "de"
+  // Mehrere Sprachen auf einmal: je Sprache ein Eintrag, denn jede ist ihr eigener
+  // Markt mit eigenem Verlauf und Signal. Die Liste zeigt sie gruppiert.
+  const wanted: string[] = (Array.isArray(languages) && languages.length ? languages : [language])
+    .filter((l: any) => LANGUAGES.includes(l))
+  if (!wanted.length) wanted.push("de")
 
-  try {
-    const info = db.prepare(`
-      INSERT INTO watchlist (product_url, name, game, kind, condition, language,
-                             target_price, note)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(url.split("?")[0], parsed.name, parsed.game, parsed.kind, cond, lang,
-           target_price ? Number(target_price) : null, note ?? "")
-    res.json({ id: info.lastInsertRowid, ...parsed, condition: cond, language: lang })
-  } catch (e: any) {
-    if (String(e).includes("UNIQUE")) {
-      return res.status(409).json({ error: "Steht in dieser Ausführung schon auf der Liste" })
+  const insert = db.prepare(`
+    INSERT INTO watchlist (product_url, name, game, kind, condition, language,
+                           target_price, note)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const ids: number[] = []
+  const created: string[] = []
+  for (const lang of wanted) {
+    try {
+      const info = insert.run(url.split("?")[0], parsed.name, parsed.game, parsed.kind, cond, lang,
+                              target_price ? Number(target_price) : null, note ?? "")
+      ids.push(Number(info.lastInsertRowid))
+      created.push(lang)
+    } catch (e: any) {
+      if (!String(e).includes("UNIQUE")) throw e
     }
-    throw e
   }
+  if (!ids.length) {
+    return res.status(409).json({ error: "Steht in dieser Ausführung schon auf der Liste" })
+  }
+  fetchNow(ids)
+  res.json({ ids, id: ids[0], ...parsed, condition: cond, languages: created })
 })
 
 watchlistRouter.patch("/:id", (req, res) => {

@@ -9,6 +9,7 @@ sich erkennen laesst, ob 34 Euro heute guenstig sind oder ob es letzte Woche
   python3 watchlist.py              # Preise holen, Kaufsignale schreiben
   python3 watchlist.py --notify     # und die neuen per Telegram melden
   python3 watchlist.py --dry-run
+  python3 watchlist.py --only 14 15  # nur diese Eintraege, z. B. frisch angelegte
 """
 from __future__ import annotations
 
@@ -134,6 +135,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--notify", action="store_true", help="neue Kaufsignale per Telegram melden")
+    ap.add_argument("--only", type=int, nargs="+", metavar="ID",
+                    help="nur diese Eintraege holen — der Server ruft das beim Anlegen auf")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -148,11 +151,15 @@ def main() -> int:
         log.error("Kein Bright-Data-Key in settings")
         return 2
 
+    sql = """SELECT id, product_url, name, condition, language, target_price, max_price,
+                    image, kind FROM watchlist WHERE active = 1"""
+    params: tuple = ()
+    if args.only:
+        sql += f" AND id IN ({','.join('?' * len(args.only))})"
+        params = tuple(args.only)
     items = [dict(zip(["id", "product_url", "name", "condition", "language",
                        "target_price", "max_price", "image", "kind"], r))
-             for r in db.execute("""SELECT id, product_url, name, condition, language,
-                                           target_price, max_price, image, kind
-                                    FROM watchlist WHERE active = 1""")]
+             for r in db.execute(sql, params)]
     if not items:
         log.info("Watchlist ist leer")
         return 0
