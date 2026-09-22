@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { LayoutDashboard, BarChart3, Settings, Zap, Monitor, Terminal, X, ScanSearch, Store, Eye } from "lucide-react"
+import { LayoutDashboard, BarChart3, Settings, Zap, Monitor, Terminal, X, ScanSearch, Store, Eye, Wallet } from "lucide-react"
 import { useState, useEffect } from "react"
 import { api } from "@/lib/api"
 import { LogPanel } from "@/components/scrape/LogPanel"
@@ -22,6 +22,23 @@ export function AppShell({ children }: { children: ReactNode }) {
     queryFn: api.getScrapeStatus,
     refetchInterval: (query) => query.state.data?.isRunning ? 3000 : 30_000,
   })
+  // Bright-Data-Guthaben: laedt nicht automatisch nach, deshalb immer im Blick.
+  const { data: usage } = useQuery({
+    queryKey: ["brightdataUsage"],
+    queryFn: api.getBrightdataUsage,
+    refetchInterval: 10 * 60_000,
+  })
+  const net: number | null = usage && !usage.error ? usage.net : null
+  const daysLeft: number | null = usage && !usage.error ? usage.days_left : null
+  const guthabenTon = net == null ? "text-muted-foreground/50"
+    : net < 3 || (daysLeft != null && daysLeft < 7) ? "text-red-400"
+    : net < 8 || (daysLeft != null && daysLeft < 21) ? "text-amber-400"
+    : "text-muted-foreground"
+  const guthabenTitel = usage?.error ? `Bright Data: ${usage.error}`
+    : net == null ? "Bright Data: Guthaben wird geladen"
+    : `Bright Data: ${net.toFixed(2)} $ verfügbar` +
+      (daysLeft != null ? ` · reicht ca. ${daysLeft} Tage` : "") +
+      ` · heute ${usage.today.reqs} Abrufe (${usage.today.cost.toFixed(2)} $)`
   const [showPanel, setShowPanel] = useState(false)
   const [manualClose, setManualClose] = useState(false)
   const [panelEngine, setPanelEngine] = useState<string | null>(null)
@@ -75,18 +92,28 @@ export function AppShell({ children }: { children: ReactNode }) {
             )
           })}
         </nav>
-        {/* Panel toggle (VNC for Patchright on remote, Log for Decodo everywhere) */}
-        {((scrapeStatus?.engine === "brightdata") || hasVnc) && scrapeStatus?.isRunning && (
-          <button
-            onClick={() => { setShowPanel((v) => !v); setManualClose(false) }}
-            title={scrapeStatus?.engine === "brightdata" ? "Scraper Log" : "Live View"}
-            className={`mt-auto p-2.5 rounded-lg transition-colors ${
-              showPanel ? "bg-yellow-500/20 text-yellow-400" : "text-muted-foreground hover:text-yellow-400"
-            }`}
-          >
-            {scrapeStatus?.engine === "brightdata" ? <Terminal className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
-          </button>
-        )}
+        <div className="mt-auto flex flex-col items-center gap-3">
+          {/* Panel toggle (VNC for Patchright on remote, Log for Decodo everywhere) */}
+          {((scrapeStatus?.engine === "brightdata") || hasVnc) && scrapeStatus?.isRunning && (
+            <button
+              onClick={() => { setShowPanel((v) => !v); setManualClose(false) }}
+              title={scrapeStatus?.engine === "brightdata" ? "Scraper Log" : "Live View"}
+              className={`p-2.5 rounded-lg transition-colors ${
+                showPanel ? "bg-yellow-500/20 text-yellow-400" : "text-muted-foreground hover:text-yellow-400"
+              }`}
+            >
+              {scrapeStatus?.engine === "brightdata" ? <Terminal className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
+            </button>
+          )}
+          {/* Guthaben — Details unter Einstellungen */}
+          <Link to="/settings" title={guthabenTitel}
+            className={`flex flex-col items-center gap-0.5 p-2 rounded-lg hover:bg-secondary/50 transition-colors ${guthabenTon}`}>
+            <Wallet className="w-4 h-4" />
+            <span className="text-[10px] tabular-nums leading-none">
+              {net == null ? "–" : `${net < 10 ? net.toFixed(1) : Math.round(net)} $`}
+            </span>
+          </Link>
+        </div>
       </aside>
 
       {/* Main Content — shrinks when panel is open */}

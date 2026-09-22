@@ -12,6 +12,7 @@ export function Settings() {
   const { data: settings, isLoading } = useQuery({ queryKey: ["settings"], queryFn: api.getSettings })
   const { data: binders } = useQuery({ queryKey: ["binders"], queryFn: api.getBinders })
   const { data: scrapeHistory } = useQuery({ queryKey: ["scrapeHistory"], queryFn: () => api.getScrapeStatus() })
+  const { data: usage } = useQuery({ queryKey: ["brightdataUsage"], queryFn: api.getBrightdataUsage, refetchInterval: 10 * 60_000 })
   const queryClient = useQueryClient()
 
   const [form, setForm] = useState({ alert_threshold_pct: "10", alert_threshold_eur: "35", telegram_bot_token: "", telegram_chat_id: "", brightdata_api_key: "", brightdata_zone: "cardmarket" })
@@ -226,6 +227,58 @@ export function Settings() {
           <p className="text-xs text-muted-foreground">
             Web Unlocker API von brightdata.com — async parallel Scraping, $1.50/1K Requests (PAYG)
           </p>
+        </div>
+
+        {/* Guthaben und Verbrauch. Bright Data laedt nicht automatisch nach — ein
+            leeres Konto merkt man sonst erst daran, dass keine Preise mehr kommen. */}
+        <div className="p-4 rounded-lg bg-card border border-border">
+          {!usage ? (
+            <p className="text-sm text-muted-foreground">Guthaben wird geladen …</p>
+          ) : usage.error ? (
+            <p className="text-sm text-negative flex items-center gap-1"><AlertCircle className="w-4 h-4" /> {usage.error}</p>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div>
+                  <div className={`text-2xl font-semibold tabular-nums ${usage.net < 3 ? "text-red-400" : usage.net < 8 ? "text-amber-400" : ""}`}>
+                    {usage.net.toFixed(2)} $
+                  </div>
+                  <div className="text-xs text-muted-foreground">verfügbar</div>
+                  <div className="text-[11px] text-muted-foreground/70 tabular-nums">
+                    {usage.balance.toFixed(2)} $ Guthaben − {usage.pending.toFixed(2)} $ offen
+                  </div>
+                </div>
+                <div>
+                  <div className="text-2xl font-semibold tabular-nums">
+                    {usage.days_left != null ? `~${usage.days_left} Tage` : "–"}
+                  </div>
+                  <div className="text-xs text-muted-foreground">Reichweite</div>
+                  <div className="text-[11px] text-muted-foreground/70 tabular-nums">
+                    bei {usage.per_day.toFixed(2)} $ pro Tag
+                  </div>
+                </div>
+                <div>
+                  <div className="text-2xl font-semibold tabular-nums">{usage.today.reqs}</div>
+                  <div className="text-xs text-muted-foreground">Abrufe heute</div>
+                  <div className="text-[11px] text-muted-foreground/70 tabular-nums">{usage.today.cost.toFixed(2)} $</div>
+                </div>
+                <div>
+                  <div className="text-2xl font-semibold tabular-nums">{usage.month.reqs}</div>
+                  <div className="text-xs text-muted-foreground">Abrufe diesen Monat</div>
+                  <div className="text-[11px] text-muted-foreground/70 tabular-nums">
+                    {usage.month.cost.toFixed(2)} $
+                    {usage.per_request != null ? ` · ${(usage.per_request * 100).toFixed(2)} ¢ je Abruf` : ""}
+                  </div>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Zone <span className="font-mono">{usage.zone}</span> · Stand {new Date(usage.fetched_at).toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" })} ·{" "}
+                <a href="https://brightdata.com/cp" target="_blank" rel="noreferrer" className="underline hover:text-foreground">
+                  bei Bright Data aufladen
+                </a>
+              </p>
+            </div>
+          )}
         </div>
       </section>
 

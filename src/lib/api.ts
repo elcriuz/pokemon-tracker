@@ -68,6 +68,7 @@ export const api = {
   getScrapeLogs: () => fetchJSON<{ engine: string | null; lines: string[] }>("/scrape/logs"),
   getPortfolioHistory: () => fetchJSON<any[]>("/portfolio/history"),
   getSettings: () => fetchJSON<Record<string, string>>("/settings"),
+  getBrightdataUsage: () => fetchJSON<any>("/brightdata/usage"),
   updateSettings: (data: Record<string, string>) =>
     fetchJSON<any>("/settings", { method: "PUT", body: JSON.stringify(data) }),
   testTelegram: () => fetchJSON<any>("/telegram/test", { method: "POST" }),
