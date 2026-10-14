@@ -228,6 +228,11 @@ function initSchema(db: Database.Database) {
   }
   db.exec(`CREATE TABLE IF NOT EXISTS blocked_sellers (
     seller TEXT PRIMARY KEY, reason TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`)
+  // Protokoll fuer die Sniper-Seite: Preislaeufe (watchlist.py) und Schritte des Helfers.
+  db.exec(`CREATE TABLE IF NOT EXISTS sniper_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL,
+    watchlist_id INTEGER, signal_id INTEGER, text TEXT NOT NULL, data TEXT)`)
+  db.exec("CREATE INDEX IF NOT EXISTS idx_sniper_events_ts ON sniper_events (ts)")
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")

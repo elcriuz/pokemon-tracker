@@ -33,6 +33,29 @@ function offerUrl(productUrl: string, condition: string, language: string) {
   return p.length ? `${productUrl}?${p.join("&")}` : productUrl
 }
 
+function setSetting(key: string, value: string) {
+  getDb().prepare(`INSERT INTO settings (key, value) VALUES (?, ?)
+                   ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(key, value)
+}
+
+function getSetting(key: string): string | null {
+  return (getDb().prepare("SELECT value FROM settings WHERE key = ?").get(key) as any)?.value ?? null
+}
+
+function logEvent(kind: string, text: string, opts: { signal_id?: number | null; watchlist_id?: number | null; data?: any } = {}) {
+  getDb().prepare(`INSERT INTO sniper_events (ts, source, kind, watchlist_id, signal_id, text, data)
+                   VALUES (${NOW}, 'helfer', ?, ?, ?, ?, ?)`)
+    .run(kind, opts.watchlist_id ?? null, opts.signal_id ?? null, text.slice(0, 500),
+         opts.data == null ? null : JSON.stringify(opts.data).slice(0, 4000))
+}
+
+const RESULT_TEXT: Record<string, string> = {
+  carted: "🛒 Im Warenkorb",
+  failed: "⚠ Nicht eingelegt — Alarm „selbst einlegen\"",
+  blocked: "⛔ Verschickt nicht nach AT — verworfen, Verkäufer gesperrt",
+  gone: "Angebot schon weg",
+}
+
 function alert(id: number) {
   try {
     const proc = spawn("python3", ["watchlist.py", "--alert", String(id)], { cwd: BASE, stdio: "ignore" })
@@ -44,10 +67,11 @@ function alert(id: number) {
 
 // Der Helfer fragt alle 30 s. Jede Anfrage zaehlt als Lebenszeichen — daran
 // erkennt watchlist.py, ob es auf den Check warten soll.
-sniperRouter.get("/pending", (_req, res) => {
+sniperRouter.get("/pending", (req, res) => {
   const db = getDb()
   db.prepare(`INSERT INTO settings (key, value) VALUES ('sniper_helper_seen', ${NOW})
               ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run()
+  if (typeof req.query.v === "string") setSetting("sniper_helper_version", req.query.v.slice(0, 20))
   const rows = db.prepare(`
     SELECT s.id, s.article_id, s.offer_key, s.suggested_price, s.check_detail, w.name, w.product_url,
            w.condition, w.language
@@ -82,10 +106,16 @@ sniperRouter.post("/:id/result", (req, res) => {
   if (!["carted", "failed", "blocked", "gone"].includes(status)) {
     return res.status(400).json({ error: "status muss carted, failed, blocked oder gone sein" })
   }
-  const sig = db.prepare("SELECT id, offer_key, check_detail FROM signals WHERE id = ?").get(req.params.id) as any
+  const sig = db.prepare("SELECT id, watchlist_id, offer_key, check_detail FROM signals WHERE id = ?").get(req.params.id) as any
   if (!sig) return res.status(404).json({ error: "Signal nicht gefunden" })
+  const dry = sig.check_detail === "dry"
+  logEvent("ergebnis", `${dry ? "Testlauf: " : ""}${RESULT_TEXT[status]}${detail ? ` — ${detail}` : ""}`,
+           { signal_id: sig.id, watchlist_id: sig.watchlist_id, data: { status, dry } })
+  if (status === "failed" && /ausgeloggt/i.test(detail ?? "")) {
+    setSetting("sniper_helper_login", JSON.stringify({ state: "out", at: new Date().toISOString(), detail }))
+  }
   // Testlauf: Ergebnis festhalten, aber nie Alarm und nie Sperrliste.
-  if (sig.check_detail === "dry") {
+  if (dry) {
     db.prepare(`UPDATE signals SET check_status = ?, check_detail = ?, notified_at = ${NOW},
                 dismissed_at = ${NOW} WHERE id = ?`).run(`dry-${status}`, detail ?? null, sig.id)
     return res.json({ ok: true, dry: true })
@@ -108,4 +138,52 @@ sniperRouter.post("/:id/result", (req, res) => {
 
 sniperRouter.get("/blocked", (_req, res) => {
   res.json({ items: getDb().prepare("SELECT * FROM blocked_sellers ORDER BY created_at DESC").all() })
+})
+
+// Schritte, die der Helfer meldet. kind = login aktualisiert nur den Login-Stand
+// und landet nur im Protokoll, wenn er sich geaendert hat.
+sniperRouter.post("/event", (req, res) => {
+  const { kind, text, data, signal_id } = req.body ?? {}
+  if (typeof kind !== "string" || typeof text !== "string") {
+    return res.status(400).json({ error: "kind und text noetig" })
+  }
+  if (kind === "login") {
+    const prev = JSON.parse(getSetting("sniper_helper_login") || "{}")
+    setSetting("sniper_helper_login", JSON.stringify({ state: data?.state, at: new Date().toISOString(), detail: text }))
+    if (prev.state === data?.state) return res.json({ ok: true })
+  }
+  const wl = signal_id
+    ? (getDb().prepare("SELECT watchlist_id FROM signals WHERE id = ?").get(signal_id) as any)?.watchlist_id
+    : null
+  logEvent(kind.slice(0, 20), text, { signal_id: signal_id ?? null, watchlist_id: wl, data })
+  res.json({ ok: true })
+})
+
+// Alles fuer die Sniper-Seite in einem Aufruf.
+sniperRouter.get("/status", (req, res) => {
+  const db = getDb()
+  const limit = Math.min(500, Number(req.query.limit) || 150)
+  const seen = getSetting("sniper_helper_seen")
+  const online = !!seen && Date.now() - new Date(seen).getTime() < 90_000
+  const items = db.prepare(`SELECT id, name, language, product_url, image, kind FROM watchlist
+                            WHERE active = 1 AND sniper = 1 ORDER BY name`).all() as any[]
+  const lastRun = db.prepare(`SELECT * FROM sniper_events WHERE source = 'lauf' AND watchlist_id = ?
+                              ORDER BY ts DESC, id DESC LIMIT 1`)
+  const events = db.prepare(`SELECT e.*, w.name FROM sniper_events e LEFT JOIN watchlist w ON w.id = e.watchlist_id
+                             ORDER BY e.ts DESC, e.id DESC LIMIT ?`).all(limit) as any[]
+  const parse = (e: any) => e && ({ ...e, data: e.data ? JSON.parse(e.data) : null })
+  res.json({
+    helper: {
+      seen, online,
+      version: getSetting("sniper_helper_version"),
+      login: JSON.parse(getSetting("sniper_helper_login") || "null"),
+    },
+    last_run: (db.prepare("SELECT MAX(ts) AS ts FROM sniper_events WHERE source = 'lauf'").get() as any)?.ts ?? null,
+    items: items.map((i) => ({ ...i, last: parse(lastRun.get(i.id)) })),
+    events: events.map(parse),
+    signals: db.prepare(`SELECT s.id, s.created_at, s.suggested_price, s.offer_key, s.check_status, s.check_detail,
+                                s.detail, w.name FROM signals s JOIN watchlist w ON w.id = s.watchlist_id
+                         WHERE s.check_status IS NOT NULL ORDER BY s.created_at DESC LIMIT 20`).all(),
+    blocked: db.prepare("SELECT * FROM blocked_sellers ORDER BY created_at DESC").all(),
+  })
 })

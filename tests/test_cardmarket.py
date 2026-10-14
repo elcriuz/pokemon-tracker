@@ -197,6 +197,13 @@ def test_sniper():
     check("Sniper: sehr weit unten = Konto prüfen", weit and "prüfen" in weit["detail"], str(weit))
     check("Sniper: ohne Vergleich kein Signal", s([o("a", 300, 7)], None) is None)
 
+    # Die Sniper-Seite zeigt, ab welchem Preis es klingeln wuerde.
+    lage = wl.snipe_lage(markt, 342.6)
+    check("Sniper-Lage: Bestes und Naechstes", lage["best_total"] == 340 and lage["zweit"] == 347, str(lage))
+    # Referenz 342,6 €: 3 % = 332,32 €, 10 € darunter = 332,60 € → das strengere gilt.
+    check("Sniper-Lage: Schwelle = strengere der beiden Grenzen", lage["schwelle"] == 332.32, str(lage))
+    check("Sniper-Lage: leerer Markt", wl.snipe_lage([], None)["schwelle"] is None)
+
     # Die Artikelnummer braucht der Helfer im Browser, um genau dieses Angebot zu finden.
     ids = [c["article_id"] for c in cm.parse_competitors(fixture("product_sealed_en"))]
     check("Sniper: Artikelnummer je Angebot gelesen", ids and all(isinstance(i, int) for i in ids), str(ids[:3]))

@@ -199,6 +199,41 @@ def evaluate_snipe(offers: list[dict], boden: float | None, min_pct: float = 3.0
     }
 
 
+def snipe_lage(offers: list[dict], boden: float | None, min_pct: float = 3.0,
+               min_eur: float = 10.0) -> dict:
+    """Wo steht der Markt fuer die Sniper-Seite: Bestes, Naechstes, Boden, Schwelle.
+
+    Dieselbe Rechnung wie evaluate_snipe, nur immer mit Ergebnis — damit man
+    sieht, wie weit der naechste Schnapper noch weg ist.
+    """
+    reihe = sorted(offers, key=lambda c: c["total"])
+    best = reihe[0] if reihe else None
+    zweit = next((c["total"] for c in reihe[1:]
+                  if best and (c["seller"] != best["seller"] or c["total"] != best["total"])), None)
+    refs = [x for x in (zweit, boden) if x]
+    ref = min(refs) if refs else None
+    return {
+        "best_total": best["total"] if best else None,
+        "best_price": best["price"] if best else None,
+        "shipping": best["shipping"] if best else None,
+        "seller": best["seller"] if best else None,
+        "origin": land_name(best.get("origin")) if best else None,
+        "zweit": zweit,
+        "boden": boden,
+        "schwelle": round(min(ref * (1 - min_pct / 100), ref - min_eur), 2) if ref else None,
+        "offers": len(offers),
+    }
+
+
+def log_event(db, kind: str, text: str, watchlist_id: int | None = None,
+              signal_id: int | None = None, data: dict | None = None) -> None:
+    """Eintrag fuers Protokoll der Sniper-Seite (Tabelle sniper_events)."""
+    db.execute("""INSERT INTO sniper_events (ts, source, kind, watchlist_id, signal_id, text, data)
+                  VALUES (?, 'lauf', ?, ?, ?, ?, ?)""",
+               (datetime.now().isoformat(timespec="seconds"), kind, watchlist_id, signal_id,
+                text[:500], json.dumps(data) if data is not None else None))
+
+
 def gesperrte_verkaeufer(db) -> set[str]:
     """Verkaeufer, die laut Sniper-Helfer nicht nach Oesterreich verschicken.
 
@@ -230,6 +265,7 @@ def send_sniper_alert(db, signal_id: int) -> bool:
     if not r:
         return False
     preis, detail, status, check, name, game, cond, lang, url = r
+    wl = db.execute("SELECT watchlist_id FROM signals WHERE id = ?", (signal_id,)).fetchone()[0]
     angebot = build_url(url, cond, lang)
     if status == "carted":
         titel = f"🛒 Im Warenkorb: {preis:.0f} €"
@@ -246,7 +282,9 @@ def send_sniper_alert(db, signal_id: int) -> bool:
     send_telegram(f'{kopf}\n<a href="{angebot}">{name[:60]}</a> <i>{lang}</i>\n'
                   f'<b>{preis:.2f} \u20ac</b> — {detail}'
                   + (f'\n<a href="{link}">Zum Warenkorb</a>' if status == "carted" else ""))
-    ha_push(get_setting(db, "sniper_ha_webhook"), titel, f"{name[:60]} ({lang}) — {detail}", link)
+    ok = ha_push(get_setting(db, "sniper_ha_webhook"), titel, f"{name[:60]} ({lang}) — {detail}", link)
+    log_event(db, "alarm", f"Alarm raus: {titel} · Telegram + {'Critical Push' if ok else 'Push FEHLGESCHLAGEN'}",
+              wl, signal_id, {"status": status, "push": ok})
     db.execute("UPDATE signals SET notified_at = ? WHERE id = ?",
                (datetime.now().isoformat(timespec="seconds"), signal_id))
     db.commit()
@@ -312,6 +350,8 @@ def notify(db, limit: int = 12) -> int:
             continue
         if status in ("pending", "claimed", None):
             db.execute("UPDATE signals SET check_status = 'unchecked' WHERE id = ?", (r[0],))
+            log_event(db, "warnung", "Helfer offline oder > 5 Min. ohne Ergebnis — Alarm geht ungeprüft raus",
+                      None, r[0])
         send_sniper_alert(db, r[0])
     rows = [r[:8] for r in rows if not r[8]]
     jetzt = datetime.now().isoformat(timespec="seconds")
@@ -394,12 +434,18 @@ def main() -> int:
 
     now = datetime.now().isoformat(timespec="seconds")
     hits = failed = 0
+    if args.sniper and not args.dry_run:
+        db.execute("DELETE FROM sniper_events WHERE ts < ?",
+                   ((datetime.now() - timedelta(days=14)).isoformat(timespec="seconds"),))
 
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
         for it, html, err in pool.map(load, items):
             if err is not None:
                 log.error("  %s — Abruf fehlgeschlagen: %s", it["name"][:34], err)
                 failed += 1
+                if it["sniper"] and not args.dry_run:
+                    log_event(db, "fehler", f"Abruf fehlgeschlagen: {err}", it["id"])
+                    db.commit()
                 continue
 
             # Eigene Angebote gehoeren nicht in den Kaufpreis-Vergleich.
@@ -492,8 +538,12 @@ def main() -> int:
 
             # Sniper-Eintraege messen das Angebot am Rest des Marktes, nicht am Median.
             if it["sniper"]:
-                sig = evaluate_snipe(offers, boden_7d(db, it["id"], now), snipe_pct,
-                                     snipe_pruef, it["target_price"], snipe_eur)
+                boden = boden_7d(db, it["id"], now)
+                sig = evaluate_snipe(offers, boden, snipe_pct, snipe_pruef, it["target_price"], snipe_eur)
+                lage = snipe_lage(offers, boden, snipe_pct, snipe_eur)
+                lage.update(verdaechtig=len(verdaechtig), gesperrt=len(
+                    [c for c in parse_competitors(html) if c["seller"].lower() in gesperrt]),
+                    problem=problem, schnapper=bool(sig))
             else:
                 sig = evaluate_buy(it, snap, prev_d, below_pct)
             mark = "  ← KAUFEN" if sig else ""
@@ -517,6 +567,16 @@ def main() -> int:
                  snap["market_avg30"], snap["best_total"], snap["best_shipping"],
                  snap["best_origin"], snap["median_total"], snap["suspicious"]))
 
+            if it["sniper"]:
+                eur = lambda v: f"{v:.2f} €".replace(".", ",") if v is not None else "—"
+                if lage["best_total"] is None:
+                    text = problem or "Kein Angebot"
+                else:
+                    text = (f"Bestes {eur(lage['best_total'])} von {lage['seller']} · nächstes "
+                            f"{eur(lage['zweit'])} · Boden {eur(lage['boden'])} → Schnapper ab ≤ "
+                            f"{eur(lage['schwelle'])}" + (" · 🎯 SCHNAPPER" if sig else ""))
+                log_event(db, "lauf", text, it["id"], data=lage)
+
             if sig and not schon_gemeldet(db, it["id"], sig):
                 hits += 1
                 db.execute("""INSERT INTO signals
@@ -525,6 +585,11 @@ def main() -> int:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (it["id"], BUY, now, None, sig["price"], sig["detail"], sig.get("offer_key"),
                      sig.get("article_id"), "pending" if it["sniper"] else None))
+                if it["sniper"]:
+                    log_event(db, "schnapper", f"🎯 Schnapper erkannt: {sig['detail']} — warte auf den Helfer",
+                              it["id"], db.execute("SELECT last_insert_rowid()").fetchone()[0])
+            elif sig and it["sniper"]:
+                log_event(db, "info", "Schnapper schon gemeldet — Wiedervorlagesperre", it["id"])
             db.commit()
 
     log.info("Fertig: %d Kaufsignale, %d Fehler", hits, failed)
@@ -570,7 +635,11 @@ def ensure_schema(db) -> None:
                  "ALTER TABLE signals ADD COLUMN claimed_at TEXT",
                  """CREATE TABLE IF NOT EXISTS blocked_sellers (
                       seller TEXT PRIMARY KEY, reason TEXT,
-                      created_at TEXT NOT NULL DEFAULT (datetime('now')))"""):
+                      created_at TEXT NOT NULL DEFAULT (datetime('now')))""",
+                 """CREATE TABLE IF NOT EXISTS sniper_events (
+                      id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, source TEXT NOT NULL,
+                      kind TEXT NOT NULL, watchlist_id INTEGER, signal_id INTEGER,
+                      text TEXT NOT NULL, data TEXT)"""):
         try:
             db.execute(stmt)
         except sqlite3.OperationalError:

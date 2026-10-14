@@ -8,6 +8,7 @@ import { Analytics } from "./pages/Analytics"
 import { ScanLog } from "./pages/ScanLog"
 import { CardShop } from "./pages/CardShop"
 import { Watchlist } from "./pages/Watchlist"
+import { Sniper } from "./pages/Sniper"
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000 } },
@@ -25,6 +26,7 @@ export default function App() {
             <Route path="/scans" element={<ScanLog />} />
             <Route path="/cardshop" element={<CardShop />} />
             <Route path="/watchlist" element={<Watchlist />} />
+            <Route path="/sniper" element={<Sniper />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </AppShell>
