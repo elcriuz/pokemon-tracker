@@ -82,8 +82,14 @@ sniperRouter.post("/:id/result", (req, res) => {
   if (!["carted", "failed", "blocked", "gone"].includes(status)) {
     return res.status(400).json({ error: "status muss carted, failed, blocked oder gone sein" })
   }
-  const sig = db.prepare("SELECT id, offer_key FROM signals WHERE id = ?").get(req.params.id) as any
+  const sig = db.prepare("SELECT id, offer_key, check_detail FROM signals WHERE id = ?").get(req.params.id) as any
   if (!sig) return res.status(404).json({ error: "Signal nicht gefunden" })
+  // Testlauf: Ergebnis festhalten, aber nie Alarm und nie Sperrliste.
+  if (sig.check_detail === "dry") {
+    db.prepare(`UPDATE signals SET check_status = ?, check_detail = ?, notified_at = ${NOW},
+                dismissed_at = ${NOW} WHERE id = ?`).run(`dry-${status}`, detail ?? null, sig.id)
+    return res.json({ ok: true, dry: true })
+  }
 
   db.prepare("UPDATE signals SET check_status = ?, check_detail = ? WHERE id = ?")
     .run(status, detail ?? null, sig.id)
