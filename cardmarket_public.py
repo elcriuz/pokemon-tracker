@@ -63,7 +63,9 @@ COMMENT_RE = re.compile(r'fst-italic small">([^<]+)</span>')
 # Verkaufszahl des Anbieters (Badge „159 Verkäufe"). Ein frisches Konto mit einem
 # Preis weit unter dem Markt ist auf Cardmarket fast immer Betrug.
 SALES_RE = re.compile(r'sell-count"[^>]*>\s*(\d+)\s*<')
-ROW_SPLIT_RE = re.compile(r'<div id="articleRow\d+"')
+# Die Artikelnummer bleibt am Blockanfang stehen — der Sniper-Helfer im Browser
+# findet das Angebot darueber wieder.
+ROW_SPLIT_RE = re.compile(r'<div id="articleRow(?=\d+")')
 # Herkunftsland des Angebots — davon haengt ab, was der Versand nach Hause kostet.
 from versandkosten import STANDORT_RE  # noqa: E402
 
@@ -111,7 +113,9 @@ def parse_competitors(html: str) -> list[dict]:
         lm = LANG_RE.search(block)
         om = STANDORT_RE.search(block)
         vm = SALES_RE.search(block)
+        am = re.match(r'(\d+)"', block)
         out.append({
+            "article_id": int(am.group(1)) if am else None,
             "price": price,
             "seller": sm.group(1) if sm else "",
             "condition": cond.group(1).upper() if cond else "",

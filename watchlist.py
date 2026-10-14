@@ -11,6 +11,15 @@ sich erkennen laesst, ob 34 Euro heute guenstig sind oder ob es letzte Woche
   python3 watchlist.py --dry-run
   python3 watchlist.py --only 14 15  # nur diese Eintraege, z. B. frisch angelegte
   python3 watchlist.py --sniper --notify  # nur die Sniper-Eintraege, Cron alle 10 Min.
+  python3 watchlist.py --alert 1234       # Sniper-Meldung nach dem Warenkorb-Check (ruft der Server)
+
+Sniper-Ablauf seit 14.10.2026: Ein Schnapper wird nicht sofort gemeldet, sondern
+als `check_status = 'pending'` abgelegt. Der Sniper-Helfer (Chrome-Erweiterung in
+Christophs eingeloggtem Browser, ~/Desktop/PackGehabt/Sniper-Helper/) holt ihn
+ueber /api/sniper/pending, prueft, ob das Angebot ueberhaupt in den Warenkorb darf
+(viele Lockvogel-Angebote verschicken in kein Land), legt es hinein und meldet
+das Ergebnis. Erst dann geht der Alarm raus. Ist der Helfer offline, meldet
+notify() ungeprueft.
 """
 from __future__ import annotations
 
@@ -186,7 +195,62 @@ def evaluate_snipe(offers: list[dict], boden: float | None, min_pct: float = 3.0
         "price": best["total"],
         "detail": " · ".join(teile),
         "offer_key": f"{best['seller']}|{best['total']:.2f}",
+        "article_id": best.get("article_id"),
     }
+
+
+def gesperrte_verkaeufer(db) -> set[str]:
+    """Verkaeufer, die laut Sniper-Helfer nicht nach Oesterreich verschicken.
+
+    Das sieht man nur eingeloggt (grauer Warenkorb-Knopf). Wer einmal so
+    aufgefallen ist, zaehlt fuer keinen Eintrag mehr als Angebot.
+    """
+    return {r[0].lower() for r in db.execute("SELECT seller FROM blocked_sellers")}
+
+
+def helfer_online(db, sekunden: int = 90) -> bool:
+    seen = get_setting(db, "sniper_helper_seen")
+    try:
+        return (datetime.now() - datetime.fromisoformat(seen)).total_seconds() < sekunden
+    except (TypeError, ValueError):
+        return False
+
+
+CART_URL = "https://www.cardmarket.com/de/{game}/ShoppingCart"
+
+
+def send_sniper_alert(db, signal_id: int) -> bool:
+    """Eine Sniper-Meldung, abhaengig davon, was der Warenkorb-Check ergeben hat."""
+    from scrape_brightdata import send_telegram
+    r = db.execute("""
+        SELECT s.suggested_price, s.detail, s.check_status, s.check_detail, w.name, w.game,
+               w.condition, w.language, w.product_url
+        FROM signals s JOIN watchlist w ON w.id = s.watchlist_id WHERE s.id = ?""",
+        (signal_id,)).fetchone()
+    if not r:
+        return False
+    preis, detail, status, check, name, game, cond, lang, url = r
+    angebot = build_url(url, cond, lang)
+    if status == "carted":
+        titel = f"🛒 Im Warenkorb: {preis:.0f} €"
+        kopf = "🛒 <b>SCHNAPPER IM WARENKORB</b> — jetzt bezahlen"
+        link = CART_URL.format(game=game or "Magic")
+    elif status == "failed":
+        titel = f"🎯 Schnapper {preis:.0f} € — selbst einlegen"
+        kopf = f"🎯 <b>SCHNAPPER</b> — Warenkorb hat nicht geklappt ({check or '?'}), schnell selbst"
+        link = angebot
+    else:
+        titel = f"🎯 Schnapper {preis:.0f} € (ungeprüft)"
+        kopf = "🎯 <b>SCHNAPPER</b> — ungeprüft, Chrome-Helfer offline: Warenkorb-Knopf checken"
+        link = angebot
+    send_telegram(f'{kopf}\n<a href="{angebot}">{name[:60]}</a> <i>{lang}</i>\n'
+                  f'<b>{preis:.2f} \u20ac</b> — {detail}'
+                  + (f'\n<a href="{link}">Zum Warenkorb</a>' if status == "carted" else ""))
+    ha_push(get_setting(db, "sniper_ha_webhook"), titel, f"{name[:60]} ({lang}) — {detail}", link)
+    db.execute("UPDATE signals SET notified_at = ? WHERE id = ?",
+               (datetime.now().isoformat(timespec="seconds"), signal_id))
+    db.commit()
+    return True
 
 
 def ha_push(url: str, titel: str, text: str, link: str) -> bool:
@@ -225,7 +289,8 @@ def notify(db, limit: int = 12) -> int:
 
     rows = db.execute("""
         SELECT s.id, s.suggested_price, s.detail, w.name, w.game, w.condition,
-               w.language, w.product_url, w.sniper
+               w.language, w.product_url, w.sniper, s.check_status,
+               COALESCE(s.claimed_at, s.created_at)
         FROM signals s
         JOIN watchlist w ON w.id = s.watchlist_id
         WHERE s.notified_at IS NULL AND s.dismissed_at IS NULL AND s.kind = ?
@@ -233,18 +298,23 @@ def notify(db, limit: int = 12) -> int:
     if not rows:
         log.info("Keine neuen Kaufsignale zu melden")
         return 0
-    jetzt = datetime.now().isoformat(timespec="seconds")
 
     # Schnapper einzeln und sofort, mit Critical Push — nicht im Sammelbericht.
-    webhook = get_setting(db, "sniper_ha_webhook")
-    for (_id, preis, detail, name, game, cond, lang, url, sniper) in [r for r in rows if r[8]]:
-        link = build_url(url, cond, lang)
-        send_telegram(f'\U0001f3af <b>SCHNAPPER</b> — <a href="{link}">{name[:60]}</a> '
-                      f'<i>{(cond + "/" if cond else "")}{lang}</i>\n<b>{preis:.2f} \u20ac</b> — {detail}')
-        ha_push(webhook, f"🎯 Schnapper {preis:.0f} €", f"{name[:60]} ({lang}) — {detail}", link)
-        db.execute("UPDATE signals SET notified_at = ? WHERE id = ?", (jetzt, _id))
-        db.commit()
+    # Solange der Sniper-Helfer im Browser laeuft, prueft er zuerst den Warenkorb
+    # und der Server meldet danach (--alert). Haengt er oder ist er offline,
+    # geht die Meldung ungeprueft raus — lieber ein Fehlalarm als ein verpasster.
+    online = helfer_online(db)
+    grenze = (datetime.now() - timedelta(minutes=5)).isoformat(timespec="seconds")
+    for r in [r for r in rows if r[8]]:
+        status, seit = r[9], r[10]
+        if status in ("pending", "claimed") and online and seit > grenze:
+            log.info("Schnapper %s wartet auf den Warenkorb-Check", r[0])
+            continue
+        if status in ("pending", "claimed", None):
+            db.execute("UPDATE signals SET check_status = 'unchecked' WHERE id = ?", (r[0],))
+        send_sniper_alert(db, r[0])
     rows = [r[:8] for r in rows if not r[8]]
+    jetzt = datetime.now().isoformat(timespec="seconds")
     if not rows:
         return 0
 
@@ -273,6 +343,8 @@ def main() -> int:
                     help="nur diese Eintraege holen — der Server ruft das beim Anlegen auf")
     ap.add_argument("--sniper", action="store_true",
                     help="nur Eintraege mit Sniper-Haken — engmaschiger Cron, Schnapper-Logik")
+    ap.add_argument("--alert", type=int, metavar="SIGNAL",
+                    help="Sniper-Meldung fuer dieses Signal schicken (nach dem Warenkorb-Check)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -280,6 +352,8 @@ def main() -> int:
 
     db = sqlite3.connect(DB_PATH)
     ensure_schema(db)
+    if args.alert:
+        return 0 if send_sniper_alert(db, args.alert) else 1
     api_key = get_setting(db, "brightdata_api_key")
     zone = get_setting(db, "brightdata_zone", "cardmarket")
     me = get_setting(db, "cardmarket_user")
@@ -308,6 +382,7 @@ def main() -> int:
         log.info("Watchlist ist leer")
         return 0
     log.info("%d Wunschkarten", len(items))
+    gesperrt = gesperrte_verkaeufer(db)
     versand = Versandtabelle(lade_tabelle(ziel=int(get(db, "versand_ziel_id", 1))))
 
     def load(it):
@@ -334,7 +409,8 @@ def main() -> int:
             # Ring" liefert mit ?language=3 lauter englische Angebote. Ein Angebot
             # ohne lesbare Sprache ist darum nicht vergleichbar und faellt raus.
             alle = [c for c in parse_competitors(html)
-                    if c["seller"].lower() != (me or "").lower()]
+                    if c["seller"].lower() != (me or "").lower()
+                    and c["seller"].lower() not in gesperrt]
             offers = [c for c in alle
                       if (not it["condition"] or c["condition"] == it["condition"])
                       and (not it["language"] or c.get("language") == it["language"])]
@@ -444,9 +520,11 @@ def main() -> int:
             if sig and not schon_gemeldet(db, it["id"], sig):
                 hits += 1
                 db.execute("""INSERT INTO signals
-                    (watchlist_id, kind, created_at, my_price, suggested_price, detail, offer_key)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (it["id"], BUY, now, None, sig["price"], sig["detail"], sig.get("offer_key")))
+                    (watchlist_id, kind, created_at, my_price, suggested_price, detail, offer_key,
+                     article_id, check_status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (it["id"], BUY, now, None, sig["price"], sig["detail"], sig.get("offer_key"),
+                     sig.get("article_id"), "pending" if it["sniper"] else None))
             db.commit()
 
     log.info("Fertig: %d Kaufsignale, %d Fehler", hits, failed)
@@ -485,7 +563,14 @@ def schon_gemeldet(db, watchlist_id: int, sig: dict) -> bool:
 def ensure_schema(db) -> None:
     """Spalten, die der Server (server/db.ts) auch anlegt — falls das Script zuerst laeuft."""
     for stmt in ("ALTER TABLE watchlist ADD COLUMN sniper INTEGER NOT NULL DEFAULT 0",
-                 "ALTER TABLE signals ADD COLUMN offer_key TEXT"):
+                 "ALTER TABLE signals ADD COLUMN offer_key TEXT",
+                 "ALTER TABLE signals ADD COLUMN article_id INTEGER",
+                 "ALTER TABLE signals ADD COLUMN check_status TEXT",
+                 "ALTER TABLE signals ADD COLUMN check_detail TEXT",
+                 "ALTER TABLE signals ADD COLUMN claimed_at TEXT",
+                 """CREATE TABLE IF NOT EXISTS blocked_sellers (
+                      seller TEXT PRIMARY KEY, reason TEXT,
+                      created_at TEXT NOT NULL DEFAULT (datetime('now')))"""):
         try:
             db.execute(stmt)
         except sqlite3.OperationalError:

@@ -16,6 +16,7 @@ import { bindersRouter } from "./routes/binders"
 import { scansRouter } from "./routes/scans"
 import { cardshopRouter } from "./routes/cardshop"
 import { watchlistRouter } from "./routes/watchlist"
+import { sniperRouter } from "./routes/sniper"
 import { brightdataRouter } from "./routes/brightdata"
 
 const app = express()
@@ -38,6 +39,7 @@ app.use("/api/binders", bindersRouter)
 app.use("/api/scans", scansRouter)
 app.use("/api/cardshop", cardshopRouter)
 app.use("/api/watchlist", watchlistRouter)
+app.use("/api/sniper", sniperRouter)
 app.use("/api/brightdata", brightdataRouter)
 
 // Serve card images

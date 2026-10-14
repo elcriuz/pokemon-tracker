@@ -222,6 +222,12 @@ function initSchema(db: Database.Database) {
   // Sniper: dieser Eintrag wird alle 10 Minuten geholt und meldet Schnapper sofort.
   try { db.exec("ALTER TABLE watchlist ADD COLUMN sniper INTEGER NOT NULL DEFAULT 0") } catch {}
   try { db.exec("ALTER TABLE signals ADD COLUMN offer_key TEXT") } catch {}
+  // Warenkorb-Check durch den Sniper-Helfer im Browser (routes/sniper.ts)
+  for (const col of ["article_id INTEGER", "check_status TEXT", "check_detail TEXT", "claimed_at TEXT"]) {
+    try { db.exec(`ALTER TABLE signals ADD COLUMN ${col}`) } catch {}
+  }
+  db.exec(`CREATE TABLE IF NOT EXISTS blocked_sellers (
+    seller TEXT PRIMARY KEY, reason TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`)
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")

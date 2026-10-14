@@ -197,6 +197,10 @@ def test_sniper():
     check("Sniper: sehr weit unten = Konto prüfen", weit and "prüfen" in weit["detail"], str(weit))
     check("Sniper: ohne Vergleich kein Signal", s([o("a", 300, 7)], None) is None)
 
+    # Die Artikelnummer braucht der Helfer im Browser, um genau dieses Angebot zu finden.
+    ids = [c["article_id"] for c in cm.parse_competitors(fixture("product_sealed_en"))]
+    check("Sniper: Artikelnummer je Angebot gelesen", ids and all(isinstance(i, int) for i in ids), str(ids[:3]))
+
 
 def test_versand():
     """Versand nach Hause aus Cardmarkets eigener Tabelle — Zielland Österreich."""
