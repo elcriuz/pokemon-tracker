@@ -183,7 +183,7 @@ sniperRouter.get("/status", (req, res) => {
     events: events.map(parse),
     signals: db.prepare(`SELECT s.id, s.created_at, s.suggested_price, s.offer_key, s.check_status, s.check_detail,
                                 s.detail, w.name FROM signals s JOIN watchlist w ON w.id = s.watchlist_id
-                         WHERE s.check_status IS NOT NULL ORDER BY s.created_at DESC LIMIT 20`).all(),
+                         WHERE s.check_status IS NOT NULL AND COALESCE(s.detail, '') NOT LIKE 'TESTLAUF%' ORDER BY s.created_at DESC LIMIT 20`).all(),
     blocked: db.prepare("SELECT * FROM blocked_sellers ORDER BY created_at DESC").all(),
   })
 })
