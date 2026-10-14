@@ -219,6 +219,9 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE watchlist_snapshots ADD COLUMN best_origin TEXT") } catch {}
   try { db.exec("ALTER TABLE watchlist_snapshots ADD COLUMN median_total REAL") } catch {}
   try { db.exec("ALTER TABLE watchlist_snapshots ADD COLUMN suspicious INTEGER NOT NULL DEFAULT 0") } catch {}
+  // Sniper: dieser Eintrag wird alle 10 Minuten geholt und meldet Schnapper sofort.
+  try { db.exec("ALTER TABLE watchlist ADD COLUMN sniper INTEGER NOT NULL DEFAULT 0") } catch {}
+  try { db.exec("ALTER TABLE signals ADD COLUMN offer_key TEXT") } catch {}
 
   // Default settings
   const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")

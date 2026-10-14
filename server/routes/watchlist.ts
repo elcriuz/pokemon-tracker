@@ -185,10 +185,12 @@ watchlistRouter.post("/", (req, res) => {
 
 watchlistRouter.patch("/:id", (req, res) => {
   const db = getDb()
-  const { target_price, note } = req.body ?? {}
+  const { target_price, note, sniper } = req.body ?? {}
   const info = db.prepare(
-    "UPDATE watchlist SET target_price = COALESCE(?, target_price), note = COALESCE(?, note) WHERE id = ?"
-  ).run(target_price ?? null, note ?? null, req.params.id)
+    `UPDATE watchlist SET target_price = COALESCE(?, target_price), note = COALESCE(?, note),
+            sniper = COALESCE(?, sniper) WHERE id = ?`
+  ).run(target_price ?? null, note ?? null,
+        sniper == null ? null : (sniper ? 1 : 0), req.params.id)
   if (!info.changes) return res.status(404).json({ error: "Eintrag nicht gefunden" })
   res.json({ ok: true })
 })

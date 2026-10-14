@@ -84,6 +84,8 @@ export const api = {
   addWatchlistItem: (body: any) =>
     fetchJSON<any>("/watchlist", { method: "POST", body: JSON.stringify(body) }),
 
+  updateWatchlistItem: (id: number, body: any) =>
+    fetchJSON<any>(`/watchlist/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   removeWatchlistItem: (id: number) =>
     fetchJSON<any>(`/watchlist/${id}`, { method: "DELETE" }),
 

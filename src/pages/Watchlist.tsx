@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/lib/api"
-import { ShoppingCart, ExternalLink, Trash2, Plus, X, Clock } from "lucide-react"
+import { ShoppingCart, ExternalLink, Trash2, Plus, X, Clock, Crosshair } from "lucide-react"
 
 /** „vor 12 Min." — die Seite laedt jede Minute neu, der Text wandert also mit. */
 function relativ(iso: string | null | undefined): string {
@@ -94,6 +94,12 @@ export function Watchlist() {
 
   const remove = useMutation({
     mutationFn: (id: number) => api.removeWatchlistItem(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["watchlist"] }),
+  })
+
+  // Sniper: alle 10 Minuten holen, Schnapper sofort per Telegram + Critical Push.
+  const sniper = useMutation({
+    mutationFn: (b: { id: number; on: boolean }) => api.updateWatchlistItem(b.id, { sniper: b.on }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["watchlist"] }),
   })
 
@@ -279,6 +285,12 @@ export function Watchlist() {
                   <span className="inline-block px-1.5 py-0.5 rounded bg-muted/50 text-xs font-medium uppercase">
                     {i.language}
                   </span>
+                  {i.sniper ? (
+                    <span className="ml-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-400 text-[10px] font-medium"
+                      title="Wird alle 10 Minuten geholt. Meldet sofort, wenn ein Angebot klar unter dem nächsten und unter dem 7-Tage-Boden liegt.">
+                      <Crosshair className="w-3 h-3" /> 10 Min.
+                    </span>
+                  ) : null}
                   <div className="text-[11px] text-muted-foreground mt-1">
                     {i.offers_count != null ? `${i.offers_count} Angebote` : "wird geholt …"}
                     {i.suspicious > 0 && (
@@ -325,6 +337,11 @@ export function Watchlist() {
                         <ShoppingCart className="w-3 h-3" /> Kaufen
                       </span>
                     )}
+                    <button onClick={() => sniper.mutate({ id: i.id, on: !i.sniper })}
+                      className={i.sniper ? "text-orange-400" : "opacity-30 hover:opacity-100"}
+                      title={i.sniper ? "Sniper aus — wieder 3× täglich" : "Sniper an — alle 10 Min., Schnapper sofort aufs Handy"}>
+                      <Crosshair className="w-3.5 h-3.5" />
+                    </button>
                     <button onClick={() => remove.mutate(i.id)}
                       className="opacity-30 hover:opacity-100" title="Diese Sprache von der Liste nehmen">
                       <Trash2 className="w-3.5 h-3.5" />

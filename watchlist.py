@@ -10,13 +10,16 @@ sich erkennen laesst, ob 34 Euro heute guenstig sind oder ob es letzte Woche
   python3 watchlist.py --notify     # und die neuen per Telegram melden
   python3 watchlist.py --dry-run
   python3 watchlist.py --only 14 15  # nur diese Eintraege, z. B. frisch angelegte
+  python3 watchlist.py --sniper --notify  # nur die Sniper-Eintraege, Cron alle 10 Min.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sqlite3
 import sys
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -112,6 +115,101 @@ def evaluate_buy(item: dict, snap: dict, prev: dict | None, below_pct: float) ->
     return None
 
 
+def boden_7d(db, watchlist_id: int, vor: str) -> float | None:
+    """Was das Produkt in den letzten 7 Tagen ueblicherweise mindestens gekostet hat.
+
+    Median der jeweils guenstigsten Angebote aller Abrufe — ein einzelner
+    Ausreisser (auch ein frueherer Schnapper) zieht ihn kaum. Unter vier
+    Abrufen gibt es noch keinen Boden.
+    """
+    ab = (datetime.fromisoformat(vor) - timedelta(days=7)).isoformat(timespec="seconds")
+    werte = [r[0] for r in db.execute(
+        """SELECT best_total FROM watchlist_snapshots WHERE watchlist_id = ?
+           AND captured_at >= ? AND captured_at < ? AND best_total IS NOT NULL""",
+        (watchlist_id, ab, vor))]
+    return median(werte) if len(werte) >= 4 else None
+
+
+def evaluate_snipe(offers: list[dict], boden: float | None, min_pct: float = 3.0,
+                   pruef_pct: float = 25.0, target: float | None = None,
+                   min_eur: float = 10.0) -> dict | None:
+    """Schnapper: das guenstigste Angebot liegt klar unter ALLEM anderen.
+
+    Gemessen wird gegen zwei Dinge zugleich — das naechstguenstige Angebot von
+    jetzt und den Boden der letzten 7 Tage — und gilt der niedrigere. Faellt der
+    ganze Markt langsam (Reality Fracture: 376 → 342 € in zwei Wochen), sinkt das
+    zweite Angebot mit, und es meldet sich nichts. Steht dagegen einer allein
+    deutlich darunter, wird er gleich weg sein. Genau dann zuschlagen.
+
+    `offers` sind die vergleichbaren Angebote (Sprache passt, kein Betrugs-
+    verdacht) mit `total` inkl. Versand.
+    """
+    if not offers:
+        return None
+    reihe = sorted(offers, key=lambda c: c["total"])
+    best = reihe[0]
+    # Derselbe Verkaeufer zweimal zum selben Preis ist kein Konkurrent.
+    zweit = next((c["total"] for c in reihe[1:]
+                  if c["seller"] != best["seller"] or c["total"] != best["total"]), None)
+    refs = [x for x in (zweit, boden) if x]
+    ziel_ok = bool(target and best["total"] <= target)
+    if not refs and not ziel_ok:
+        return None
+    ref = min(refs) if refs else None
+    unter = (1 - best["total"] / ref) * 100 if ref else 0.0
+    # Beides muss stimmen: 3 % von 340 € sind 10 €, von einer 140-€-Box nur 4 € —
+    # das ist Rauschen, kein Schnapper.
+    abstand = ref - best["total"] if ref else 0.0
+    if (unter < min_pct or abstand < min_eur) and not ziel_ok:
+        return None
+
+    verkaeufer = best["seller"] or "?"
+    if best.get("sales") is not None:
+        verkaeufer += f" ({best['sales']} Verkäufe)"
+    vergleich = []
+    if zweit:
+        vergleich.append(f"nächstes Angebot {zweit:.2f} €")
+    if boden:
+        vergleich.append(f"7-Tage-Boden {boden:.2f} €")
+    teile = [f"{best['total']:.2f} € inkl. Versand ({best['price']:.2f} € + "
+             f"{best['shipping']:.2f} € aus {land_name(best.get('origin')) or '?'})",
+             f"von {verkaeufer}"]
+    if ref and unter > 0:
+        teile.append(f"{unter:.0f} % / {ref - best['total']:.0f} € unter allem anderen "
+                     f"({', '.join(vergleich)})")
+    if ziel_ok:
+        teile.append(f"Zielpreis {target:.2f} € erreicht")
+    if unter >= pruef_pct:
+        teile.append("⚠ ungewöhnlich weit unter Markt — Verkäuferkonto prüfen")
+    return {
+        "kind": BUY,
+        "price": best["total"],
+        "detail": " · ".join(teile),
+        "offer_key": f"{best['seller']}|{best['total']:.2f}",
+    }
+
+
+def ha_push(url: str, titel: str, text: str, link: str) -> bool:
+    """Critical Push aufs iPhone ueber einen Webhook-Trigger in HA 7010.
+
+    Telegram landet gern in der iOS-Mitteilungszusammenfassung; ein Schnapper
+    ist nach Minuten weg. Die Automation in HA schickt den Push mit
+    interruption-level critical, der Tap oeffnet das Angebot.
+    """
+    if not url:
+        return False
+    daten = json.dumps({"title": titel, "message": text, "url": link}).encode()
+    try:
+        req = urllib.request.Request(url, data=daten, method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            r.read()
+        return True
+    except Exception as e:
+        log.error("HA-Push fehlgeschlagen: %s", e)
+        return False
+
+
 def notify(db, limit: int = 12) -> int:
     """Schickt noch nicht gemeldete Kaufsignale gebuendelt per Telegram.
 
@@ -127,13 +225,27 @@ def notify(db, limit: int = 12) -> int:
 
     rows = db.execute("""
         SELECT s.id, s.suggested_price, s.detail, w.name, w.game, w.condition,
-               w.language, w.product_url
+               w.language, w.product_url, w.sniper
         FROM signals s
         JOIN watchlist w ON w.id = s.watchlist_id
         WHERE s.notified_at IS NULL AND s.dismissed_at IS NULL AND s.kind = ?
         ORDER BY s.suggested_price DESC""", (BUY,)).fetchall()
     if not rows:
         log.info("Keine neuen Kaufsignale zu melden")
+        return 0
+    jetzt = datetime.now().isoformat(timespec="seconds")
+
+    # Schnapper einzeln und sofort, mit Critical Push — nicht im Sammelbericht.
+    webhook = get_setting(db, "sniper_ha_webhook")
+    for (_id, preis, detail, name, game, cond, lang, url, sniper) in [r for r in rows if r[8]]:
+        link = build_url(url, cond, lang)
+        send_telegram(f'\U0001f3af <b>SCHNAPPER</b> — <a href="{link}">{name[:60]}</a> '
+                      f'<i>{(cond + "/" if cond else "")}{lang}</i>\n<b>{preis:.2f} \u20ac</b> — {detail}')
+        ha_push(webhook, f"🎯 Schnapper {preis:.0f} €", f"{name[:60]} ({lang}) — {detail}", link)
+        db.execute("UPDATE signals SET notified_at = ? WHERE id = ?", (jetzt, _id))
+        db.commit()
+    rows = [r[:8] for r in rows if not r[8]]
+    if not rows:
         return 0
 
     zeilen = [f"<b>Wunschliste — {len(rows)} neue Kaufsignale</b>", ""]
@@ -147,7 +259,6 @@ def notify(db, limit: int = 12) -> int:
         zeilen.append(f"\n… und {len(rows) - limit} weitere in der Wunschliste")
 
     send_telegram("\n".join(zeilen))
-    jetzt = datetime.now().isoformat(timespec="seconds")
     db.executemany("UPDATE signals SET notified_at = ? WHERE id = ?",
                    [(jetzt, r[0]) for r in rows])
     db.commit()
@@ -160,30 +271,38 @@ def main() -> int:
     ap.add_argument("--notify", action="store_true", help="neue Kaufsignale per Telegram melden")
     ap.add_argument("--only", type=int, nargs="+", metavar="ID",
                     help="nur diese Eintraege holen — der Server ruft das beim Anlegen auf")
+    ap.add_argument("--sniper", action="store_true",
+                    help="nur Eintraege mit Sniper-Haken — engmaschiger Cron, Schnapper-Logik")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
 
     db = sqlite3.connect(DB_PATH)
+    ensure_schema(db)
     api_key = get_setting(db, "brightdata_api_key")
     zone = get_setting(db, "brightdata_zone", "cardmarket")
     me = get_setting(db, "cardmarket_user")
     below_pct = get(db, "sig_buy_below_median_pct", 12)
     scam_pct = get(db, "scam_max_pct_of_median", 55)
     scam_sales = int(get(db, "scam_max_sales", 50))
+    snipe_pct = get(db, "sniper_min_pct", 3)
+    snipe_eur = get(db, "sniper_min_eur", 10)
+    snipe_pruef = get(db, "sniper_check_pct", 25)
     if not api_key:
         log.error("Kein Bright-Data-Key in settings")
         return 2
 
     sql = """SELECT id, product_url, name, condition, language, target_price, max_price,
-                    image, kind FROM watchlist WHERE active = 1"""
+                    image, kind, sniper FROM watchlist WHERE active = 1"""
     params: tuple = ()
     if args.only:
         sql += f" AND id IN ({','.join('?' * len(args.only))})"
         params = tuple(args.only)
+    if args.sniper:
+        sql += " AND sniper = 1"
     items = [dict(zip(["id", "product_url", "name", "condition", "language",
-                       "target_price", "max_price", "image", "kind"], r))
+                       "target_price", "max_price", "image", "kind", "sniper"], r))
              for r in db.execute(sql, params)]
     if not items:
         log.info("Watchlist ist leer")
@@ -295,7 +414,12 @@ def main() -> int:
             if problem:
                 log.warning("  %-34s %s", it["name"][:34], problem)
 
-            sig = evaluate_buy(it, snap, prev_d, below_pct)
+            # Sniper-Eintraege messen das Angebot am Rest des Marktes, nicht am Median.
+            if it["sniper"]:
+                sig = evaluate_snipe(offers, boden_7d(db, it["id"], now), snipe_pct,
+                                     snipe_pruef, it["target_price"], snipe_eur)
+            else:
+                sig = evaluate_buy(it, snap, prev_d, below_pct)
             mark = "  ← KAUFEN" if sig else ""
             log.info("  %-34s %s € inkl. %s € Versand (Median %s, %d Angebote)%s",
                      it["name"][:34],
@@ -317,25 +441,55 @@ def main() -> int:
                  snap["market_avg30"], snap["best_total"], snap["best_shipping"],
                  snap["best_origin"], snap["median_total"], snap["suspicious"]))
 
-            if sig:
+            if sig and not schon_gemeldet(db, it["id"], sig):
                 hits += 1
-                # Dieselbe Wiedervorlagesperre wie bei den Verkaufssignalen, damit
-                # eine dauerhaft guenstige Karte nicht jeden Tag meldet.
-                cutoff = (datetime.now() - timedelta(days=7)).isoformat(timespec="seconds")
-                exists = db.execute("""SELECT 1 FROM signals WHERE watchlist_id = ? AND kind = ?
-                    AND created_at > ? AND dismissed_at IS NULL LIMIT 1""",
-                    (it["id"], BUY, cutoff)).fetchone()
-                if not exists:
-                    db.execute("""INSERT INTO signals
-                        (watchlist_id, kind, created_at, my_price, suggested_price, detail)
-                        VALUES (?, ?, ?, ?, ?, ?)""",
-                        (it["id"], BUY, now, None, sig["price"], sig["detail"]))
+                db.execute("""INSERT INTO signals
+                    (watchlist_id, kind, created_at, my_price, suggested_price, detail, offer_key)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (it["id"], BUY, now, None, sig["price"], sig["detail"], sig.get("offer_key")))
             db.commit()
 
     log.info("Fertig: %d Kaufsignale, %d Fehler", hits, failed)
     if args.notify and not args.dry_run:
         log.info("%d per Telegram gemeldet", notify(db))
     return 0
+
+
+def schon_gemeldet(db, watchlist_id: int, sig: dict) -> bool:
+    """Wiedervorlagesperre, damit ein dauerhaft guenstiges Angebot nicht jeden Lauf meldet.
+
+    Bis 14.10.2026 sperrte jedes Signal das Produkt pauschal 7 Tage. Dadurch ging
+    Reality Fracture am 03.10. fuer 203 € (statt ~370 €) ungemeldet durch, weil am
+    27.09. schon eins fuer 241 € gekommen war. Jetzt gilt: Ein Angebot, das
+    mindestens 3 % unter der letzten Meldung liegt, kommt immer durch. Schnapper
+    sperren zusaetzlich nur dasselbe Angebot (Verkaeufer + Preis).
+    """
+    cutoff = (datetime.now() - timedelta(days=7)).isoformat(timespec="seconds")
+    if sig.get("offer_key"):
+        if db.execute("""SELECT 1 FROM signals WHERE watchlist_id = ? AND kind = ?
+                         AND offer_key = ? AND created_at > ? LIMIT 1""",
+                      (watchlist_id, BUY, sig["offer_key"], cutoff)).fetchone():
+            return True
+        # Ein anderes Angebot zum (fast) selben Preis wie gerade eben gemeldet:
+        # nicht nochmal klingeln, solange die letzte Meldung juenger als 6 h ist.
+        kurz = (datetime.now() - timedelta(hours=6)).isoformat(timespec="seconds")
+        return db.execute("""SELECT 1 FROM signals WHERE watchlist_id = ? AND kind = ?
+                             AND created_at > ? AND suggested_price <= ? LIMIT 1""",
+                          (watchlist_id, BUY, kurz, sig["price"] * 1.03)).fetchone() is not None
+    return db.execute("""SELECT 1 FROM signals WHERE watchlist_id = ? AND kind = ?
+                         AND created_at > ? AND dismissed_at IS NULL
+                         AND suggested_price <= ? LIMIT 1""",
+                      (watchlist_id, BUY, cutoff, sig["price"] * 1.03)).fetchone() is not None
+
+
+def ensure_schema(db) -> None:
+    """Spalten, die der Server (server/db.ts) auch anlegt — falls das Script zuerst laeuft."""
+    for stmt in ("ALTER TABLE watchlist ADD COLUMN sniper INTEGER NOT NULL DEFAULT 0",
+                 "ALTER TABLE signals ADD COLUMN offer_key TEXT"):
+        try:
+            db.execute(stmt)
+        except sqlite3.OperationalError:
+            pass
 
 
 def get_setting(db, key, default=""):

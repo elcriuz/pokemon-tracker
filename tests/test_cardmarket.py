@@ -177,6 +177,27 @@ def test_betrugsverdacht():
     check("Schwellen sind einstellbar", not s(300.0, 600.0, 3, max_pct=45) and s(300.0, 600.0, 60, max_sales=100))
 
 
+def test_sniper():
+    s = wl.evaluate_snipe
+    def o(seller, price, ship, sales=200, origin="Österreich"):
+        return {"seller": seller, "price": price, "shipping": ship, "total": price + ship,
+                "sales": sales, "origin": origin}
+    markt = [o("b", 340, 7), o("c", 315, 25, origin="Frankreich"), o("d", 345, 15.49)]
+
+    check("Sniper: ruhiger Markt meldet nichts", s(markt, 342.6) is None)
+    hit = s(markt + [o("a", 320, 7)], 342.6)
+    check("Sniper: 327 € aus AT gegen 340/342 € meldet", hit is not None and hit["price"] == 327, str(hit))
+    check("Sniper: Angebot eindeutig benannt", hit and hit["offer_key"] == "a|327.00", str(hit))
+    # Faellt der ganze Markt, sinkt das zweite Angebot mit — kein Schnapper.
+    gefallen = [o("a", 320, 7), o("b", 322, 7), o("c", 325, 7)]
+    check("Sniper: fallender Markt ist kein Schnapper", s(gefallen, 342.6) is None)
+    # Zielpreis meldet auch ohne Abstand.
+    check("Sniper: Zielpreis greift", s(gefallen, 342.6, target=330) is not None)
+    weit = s(markt + [o("a", 190, 15.49)], 372)
+    check("Sniper: sehr weit unten = Konto prüfen", weit and "prüfen" in weit["detail"], str(weit))
+    check("Sniper: ohne Vergleich kein Signal", s([o("a", 300, 7)], None) is None)
+
+
 def test_versand():
     """Versand nach Hause aus Cardmarkets eigener Tabelle — Zielland Österreich."""
     print("\nVersandkosten")
@@ -242,6 +263,7 @@ if __name__ == "__main__":
     test_watchlist()
     test_sealed()
     test_betrugsverdacht()
+    test_sniper()
     test_versand()
     test_vorschaubild()
 
