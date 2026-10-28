@@ -164,16 +164,36 @@ watchlistRouter.post("/", (req, res) => {
                            target_price, note)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `)
+  // Loeschen deaktiviert nur (der Verlauf bleibt), der UNIQUE-Index gilt aber
+  // weiter. Kommt dieselbe Ausfuehrung zurueck, wird die alte Zeile wieder
+  // aktiviert — fuer den Nutzer war sie unsichtbar, „steht schon auf der Liste"
+  // waere falsch. Zielpreis und Notiz kommen vom neuen Formular.
+  const findInactive = db.prepare(`
+    SELECT id FROM watchlist
+    WHERE product_url = ? AND condition = ? AND language = ? AND active = 0
+  `)
+  const revive = db.prepare(`
+    UPDATE watchlist SET active = 1, target_price = ?, note = ?, sniper = 0, last_error = NULL
+    WHERE id = ?
+  `)
+  const baseUrl = url.split("?")[0]
+  const target = target_price ? Number(target_price) : null
   const ids: number[] = []
   const created: string[] = []
   for (const lang of wanted) {
     try {
-      const info = insert.run(url.split("?")[0], parsed.name, parsed.game, parsed.kind, cond, lang,
-                              target_price ? Number(target_price) : null, note ?? "")
+      const info = insert.run(baseUrl, parsed.name, parsed.game, parsed.kind, cond, lang,
+                              target, note ?? "")
       ids.push(Number(info.lastInsertRowid))
       created.push(lang)
     } catch (e: any) {
       if (!String(e).includes("UNIQUE")) throw e
+      const old = findInactive.get(baseUrl, cond, lang) as { id: number } | undefined
+      if (old) {
+        revive.run(target, note ?? "", old.id)
+        ids.push(old.id)
+        created.push(lang)
+      }
     }
   }
   if (!ids.length) {
