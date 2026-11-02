@@ -1,7 +1,7 @@
 import { useParams, useNavigate, Link } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api"
-import { formatEUR, urlToFlag, expiredPriceDays, STALE_PRICE_DAYS } from "@/lib/utils"
+import { formatEUR, urlToFlag, expiredPriceDays, STALE_PRICE_DAYS, MANUAL_PRICE_DAYS } from "@/lib/utils"
 import { ArrowLeft, Pencil, Trash2, ExternalLink, RefreshCw, ImageOff, Eye, EyeOff, Tag, Undo2 } from "lucide-react"
 import { PriceHistoryChart } from "@/components/charts/PriceHistoryChart"
 import { useState } from "react"
@@ -231,14 +231,29 @@ export function CardDetail() {
       {expiredDays != null && (
         <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-sm">
           <div className="font-medium text-amber-400">
-            {card.grade ? `Kein aktuelles ${card.grade}-Angebot` : "Kein passendes Angebot"}
-            {card.last_fresh_at && ` seit ${new Date(card.last_fresh_at).toLocaleDateString("de-DE")}`}
+            {card.last_fresh_source === "manual"
+              ? `Manueller Marktwert vom ${new Date(card.last_fresh_at).toLocaleDateString("de-DE")} ist abgelaufen`
+              : <>
+                  {card.grade ? `Kein aktuelles ${card.grade}-Angebot` : "Kein passendes Angebot"}
+                  {card.last_fresh_at && ` seit ${new Date(card.last_fresh_at).toLocaleDateString("de-DE")}`}
+                </>}
           </div>
           <div className="text-xs text-muted-foreground mt-1">
             Zuletzt bestätigter Wert: {formatEUR(card.value)}. Der Scraper hält ihn, bis wieder ein
-            passendes Angebot auftaucht — als Marktwert ist er nach {STALE_PRICE_DAYS} Tagen nicht mehr belastbar.
+            passendes Angebot auftaucht — als Marktwert ist er nach{" "}
+            {card.last_fresh_source === "manual" ? MANUAL_PRICE_DAYS : STALE_PRICE_DAYS} Tagen nicht mehr belastbar.
           </div>
+          <ManualPriceForm cardId={cardId} grade={card.grade} />
         </div>
+      )}
+      {expiredDays == null && card.last_fresh_source === "manual" && (
+        <div className="text-xs text-muted-foreground -mt-3">
+          Wert manuell gesetzt am {new Date(card.last_fresh_at).toLocaleDateString("de-DE")} — gilt
+          {" "}{MANUAL_PRICE_DAYS} Tage oder bis der Scraper selbst ein passendes Angebot findet.
+        </div>
+      )}
+      {expiredDays == null && card.grade && !card.sold_at && (
+        <ManualPriceForm cardId={cardId} grade={card.grade} compact />
       )}
 
       {/* Profit/Loss */}
@@ -304,5 +319,62 @@ export function CardDetail() {
         onClose={() => { deleteMutation.reset(); setShowDelete(false) }}
       />
     </div>
+  )
+}
+
+/** Marktwert von Hand setzen — fuer Graded-Karten, deren guenstigstes Angebot Cardmarket
+ *  ausgeloggt nicht zeigt (nur die 50 billigsten Angebote sind sichtbar). */
+function ManualPriceForm({ cardId, grade, compact }: { cardId: number; grade?: string; compact?: boolean }) {
+  const queryClient = useQueryClient()
+  const [wert, setWert] = useState("")
+  const [offen, setOffen] = useState(!compact)
+  const mutation = useMutation({
+    mutationFn: (v: number) => api.setManualPrice(cardId, v),
+    onSuccess: () => {
+      setWert("")
+      if (compact) setOffen(false)
+      queryClient.invalidateQueries({ queryKey: ["card", cardId] })
+      queryClient.invalidateQueries({ queryKey: ["cardPrices", cardId] })
+      queryClient.invalidateQueries({ queryKey: ["cards"] })
+    },
+  })
+  // "1.200,50" und "680.5" beide zulassen: Punkt nur dann Tausendertrenner, wenn ein Komma folgt
+  const zahl = Number(wert.includes(",") ? wert.replace(/\./g, "").replace(",", ".") : wert)
+  const gueltig = wert.trim() !== "" && Number.isFinite(zahl) && zahl > 0
+
+  if (!offen) {
+    return (
+      <button onClick={() => setOffen(true)} className="block text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 -mt-3">
+        Marktwert manuell setzen
+      </button>
+    )
+  }
+  return (
+    <form
+      className={`flex flex-wrap items-center gap-2 ${compact ? "-mt-3" : "mt-3"}`}
+      onSubmit={(e) => { e.preventDefault(); if (gueltig) mutation.mutate(zahl) }}
+    >
+      <label className="text-xs text-muted-foreground">
+        {grade ? `Günstigstes ${grade}-Angebot laut Cardmarket` : "Marktwert"}
+      </label>
+      <div className="relative">
+        <input
+          inputMode="decimal"
+          value={wert}
+          onChange={(e) => setWert(e.target.value)}
+          placeholder="z. B. 680"
+          className="w-28 h-8 pl-2 pr-6 rounded-md bg-background border border-border text-sm tabular-nums"
+          autoFocus={compact}
+        />
+        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">€</span>
+      </div>
+      <button type="submit" disabled={!gueltig || mutation.isPending} className="h-8 px-3 rounded-md bg-ring/20 text-ring text-sm font-medium disabled:opacity-40">
+        {mutation.isPending ? "Speichern …" : "Übernehmen"}
+      </button>
+      {compact && (
+        <button type="button" onClick={() => setOffen(false)} className="h-8 px-2 text-xs text-muted-foreground">Abbrechen</button>
+      )}
+      {mutation.isError && <span className="text-xs text-negative">{(mutation.error as Error).message}</span>}
+    </form>
   )
 }

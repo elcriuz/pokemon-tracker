@@ -11,8 +11,9 @@ export const cardsRouter = Router()
 
 // Letzter Lauf, in dem der Wert wirklich von einem passenden Angebot kam. Steht
 // stale_grade auf 1, haelt der Scraper nur den alten Wert — wie lange schon, sagt das hier.
-const LAST_FRESH_AT = `(SELECT MAX(f.scraped_at) FROM prices f
-  WHERE f.card_id = c.id AND f.stale_grade = 0 AND f.value IS NOT NULL AND f.error IS NULL)`
+const LAST_FRESH_WHERE = `f.card_id = c.id AND f.stale_grade = 0 AND f.value IS NOT NULL AND f.error IS NULL`
+const LAST_FRESH_AT = `(SELECT MAX(f.scraped_at) FROM prices f WHERE ${LAST_FRESH_WHERE})`
+const LAST_FRESH_SOURCE = `(SELECT f.source FROM prices f WHERE ${LAST_FRESH_WHERE} ORDER BY f.scraped_at DESC LIMIT 1)`
 
 // GET /api/cards - all cards with latest price
 cardsRouter.get("/", (req, res) => {
@@ -23,7 +24,7 @@ cardsRouter.get("/", (req, res) => {
            p.value, p.trend, p.avg7, p.avg30, p.avg1, p.from_price,
            p.available_items, p.psa10_low, p.psa9_low, p.cgc10_low, p.bgs10_low,
            p.scraped_at, p.error, p.stale_grade,
-           ${LAST_FRESH_AT} as last_fresh_at,
+           ${LAST_FRESH_AT} as last_fresh_at, ${LAST_FRESH_SOURCE} as last_fresh_source,
            prev.value as prev_value
     FROM cards c
     LEFT JOIN binders b ON b.id = c.binder_id
@@ -61,7 +62,7 @@ cardsRouter.get("/:id", (req, res) => {
              p.value, p.trend, p.avg7, p.avg30, p.avg1, p.from_price,
              p.available_items, p.psa10_low, p.psa9_low, p.cgc10_low, p.bgs10_low,
              p.scraped_at, p.error, p.stale_grade,
-             ${LAST_FRESH_AT} as last_fresh_at
+             ${LAST_FRESH_AT} as last_fresh_at, ${LAST_FRESH_SOURCE} as last_fresh_source
       FROM cards c
       LEFT JOIN binders b ON b.id = c.binder_id
       LEFT JOIN prices p ON p.card_id = c.id
@@ -128,6 +129,37 @@ cardsRouter.put("/:id", (req, res) => {
   )
   const card = db.prepare("SELECT * FROM cards WHERE id = ?").get(req.params.id)
   res.json(card)
+})
+
+// POST /api/cards/:id/manual-price - Marktwert von Hand setzen
+// Fuer Graded-Karten, deren guenstigstes Angebot der Scraper nicht sieht (ausgeloggt zeigt
+// Cardmarket nur die 50 billigsten Angebote). Wird als eigener Preispunkt gespeichert:
+// Der Scraper nimmt ihn als letzten bekannten Grade-Preis und haelt ihn, bis er selbst
+// wieder ein passendes Angebot findet. Trend & Co. kommen vom letzten Lauf, damit der
+// Preisverlauf keine Luecke bekommt.
+cardsRouter.post("/:id/manual-price", (req, res) => {
+  const db = getDb()
+  const value = Number(req.body?.value)
+  if (!Number.isFinite(value) || value <= 0) return res.status(400).json({ error: "Ungültiger Wert" })
+  const card = db.prepare("SELECT id, grade FROM cards WHERE id = ?").get(req.params.id) as any
+  if (!card) return res.status(404).json({ error: "Card not found" })
+  const gradeKey = ({ PSA10: "psa10_low", PSA9: "psa9_low", CGC10: "cgc10_low", BGS10: "bgs10_low" } as Record<string, string>)[
+    (card.grade || "").replace(/\s/g, "").toUpperCase()
+  ]
+  const last = (db.prepare("SELECT * FROM prices WHERE card_id = ? ORDER BY scraped_at DESC LIMIT 1").get(card.id) as any) || {}
+  // Zeitformat wie der Scraper (lokale Zeit, ISO ohne Zone)
+  const scrapedAt = (db.prepare("SELECT strftime('%Y-%m-%dT%H:%M:%f', 'now', 'localtime') AS t").get() as any).t
+  db.prepare(`
+    INSERT INTO prices (card_id, scraped_at, value, trend, avg7, avg30, avg1, from_price, available_items,
+                        psa10_low, psa9_low, cgc10_low, bgs10_low, error, stale_grade, source)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'manual')
+  `).run(
+    card.id, scrapedAt, value, last.trend ?? null, last.avg7 ?? null, last.avg30 ?? null, last.avg1 ?? null,
+    last.from_price ?? null, last.available_items ?? null,
+    gradeKey === "psa10_low" ? value : null, gradeKey === "psa9_low" ? value : null,
+    gradeKey === "cgc10_low" ? value : null, gradeKey === "bgs10_low" ? value : null,
+  )
+  res.json({ ok: true, scraped_at: scrapedAt, value })
 })
 
 // POST /api/cards/:id/watch - toggle watch flag (always-scrape)

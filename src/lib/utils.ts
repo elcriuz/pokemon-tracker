@@ -47,19 +47,25 @@ export function urlToFlag(url: string | null | undefined): string {
 // Ab so vielen Tagen ohne passendes Angebot zeigen wir den gehaltenen Wert nicht mehr
 // als Marktwert an. Der Scraper laeuft woechentlich — 7 Tage = ein verpasster Lauf.
 export const STALE_PRICE_DAYS = 7
+// Von Hand gesetzte Marktwerte (Graded-Karten) gelten laenger — sie sind bewusst geprueft.
+export const MANUAL_PRICE_DAYS = 30
 
 /** Tage seit dem letzten echten Preis, wenn der aktuelle Wert nur gehalten ist und das
  *  laenger als STALE_PRICE_DAYS — sonst null. */
 export function expiredPriceDays(card: {
   stale_grade?: number | null
   last_fresh_at?: string | null
+  last_fresh_source?: string | null
   scraped_at?: string | null
 }): number | null {
-  if (!card.stale_grade || !card.scraped_at) return null
+  if (!card.scraped_at) return null
+  const manual = card.last_fresh_source === "manual"
+  // Ein manueller Wert ist selbst der juengste Preispunkt (stale_grade 0) — er laeuft trotzdem ab
+  if (!card.stale_grade && !manual) return null
   const ref = card.last_fresh_at ?? null
   if (!ref) return Infinity
   const days = Math.floor((Date.now() - new Date(ref + "Z").getTime()) / 86400000)
-  return days > STALE_PRICE_DAYS ? days : null
+  return days > (manual ? MANUAL_PRICE_DAYS : STALE_PRICE_DAYS) ? days : null
 }
 
 export function timeAgo(dateStr: string | null | undefined): string {

@@ -211,6 +211,8 @@ function initSchema(db: Database.Database) {
   try { db.exec("ALTER TABLE cards ADD COLUMN sold_price REAL") } catch {}
   try { db.exec("ALTER TABLE scrape_runs ADD COLUMN engine TEXT NOT NULL DEFAULT 'patchright'") } catch {}
   try { db.exec("ALTER TABLE prices ADD COLUMN stale_grade INTEGER NOT NULL DEFAULT 0") } catch {}
+  // NULL = Scraper, 'manual' = von Hand gesetzter Marktwert (POST /api/cards/:id/manual-price)
+  try { db.exec("ALTER TABLE prices ADD COLUMN source TEXT") } catch {}
   try { db.exec("ALTER TABLE cards ADD COLUMN watch INTEGER NOT NULL DEFAULT 0") } catch {}
   try { db.exec("ALTER TABLE watchlist ADD COLUMN last_error TEXT") } catch {}
   try { db.exec("ALTER TABLE watchlist ADD COLUMN image TEXT NOT NULL DEFAULT ''") } catch {}

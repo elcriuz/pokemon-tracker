@@ -57,6 +57,11 @@ export const api = {
     }),
   deleteImage: (id: number) =>
     fetchJSON<any>(`/cards/${id}/image`, { method: "DELETE" }),
+  setManualPrice: (id: number, value: number) =>
+    fetchJSON<{ ok: true; scraped_at: string; value: number }>(`/cards/${id}/manual-price`, {
+      method: "POST",
+      body: JSON.stringify({ value }),
+    }),
   toggleWatch: (id: number) =>
     fetchJSON<any>(`/cards/${id}/watch`, { method: "POST" }),
   triggerScrape: (engine?: string) =>

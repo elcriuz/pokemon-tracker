@@ -16,7 +16,9 @@ pricesRouter.get("/history", (req, res) => {
       SELECT DATE(scraped_at) as date, card_id, value,
              ROW_NUMBER() OVER (PARTITION BY card_id, DATE(scraped_at) ORDER BY scraped_at DESC) as rn
       FROM prices
-      WHERE value IS NOT NULL
+      -- Manuelle Preispunkte liegen meist an Tagen ohne Scrape und ergaeben dort eine
+      -- Tagessumme aus nur einer Karte; ab dem naechsten Lauf haelt der Scraper den Wert ohnehin
+      WHERE value IS NOT NULL AND source IS NOT 'manual'
     )
     WHERE rn = 1
   `

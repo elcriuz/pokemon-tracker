@@ -80,7 +80,8 @@ dashboardRouter.get("/", (req, res) => {
                ROW_NUMBER() OVER (PARTITION BY p.card_id, DATE(p.scraped_at) ORDER BY p.scraped_at DESC) as rn
         FROM prices p
         JOIN cards c ON c.id = p.card_id
-        WHERE p.value IS NOT NULL AND c.sold_at IS NULL
+        -- ohne manuelle Preispunkte, s. routes/prices.ts
+        WHERE p.value IS NOT NULL AND c.sold_at IS NULL AND p.source IS NOT 'manual'
       )
       WHERE rn = 1
       GROUP BY date
