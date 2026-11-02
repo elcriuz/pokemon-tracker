@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { api } from "@/lib/api"
-import { formatEUR, urlToFlag, timeAgo } from "@/lib/utils"
+import { formatEUR, urlToFlag, timeAgo, expiredPriceDays } from "@/lib/utils"
 import { Plus, RefreshCw, ExternalLink, Check, ArrowUpDown, Filter, Square, ImageOff, Tag, Trash2, Undo2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { AddCardDialog } from "@/components/cards/AddCardDialog"
@@ -442,8 +442,18 @@ export function Dashboard() {
                       {card.grade && <span className="flex-shrink-0 px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-400 text-[10px] font-medium">{card.grade}</span>}
                     </div>
                     <div className="font-bold tabular-nums text-base flex items-center gap-1.5">
-                      {formatEUR(totalVal)}
-                      {card.prev_value != null && card.value != null && card.value !== card.prev_value && (() => {
+                      {expiredPriceDays(card) != null ? (
+                        <span
+                          className="text-muted-foreground line-through decoration-1"
+                          title={`Kein passendes Angebot${card.last_fresh_at ? ` seit ${new Date(card.last_fresh_at).toLocaleDateString("de-DE")}` : ""} — Wert nur gehalten`}
+                        >
+                          {formatEUR(totalVal)}
+                        </span>
+                      ) : formatEUR(totalVal)}
+                      {expiredPriceDays(card) != null && (
+                        <span className="text-[10px] font-medium px-1 py-0.5 rounded bg-amber-500/20 text-amber-400">veraltet</span>
+                      )}
+                      {expiredPriceDays(card) == null && card.prev_value != null && card.value != null && card.value !== card.prev_value && (() => {
                         const diff = card.value - card.prev_value
                         const pct = (diff / card.prev_value) * 100
                         const up = diff > 0

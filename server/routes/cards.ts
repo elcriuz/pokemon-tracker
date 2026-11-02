@@ -9,6 +9,11 @@ const __dirname = path.dirname(__filename)
 
 export const cardsRouter = Router()
 
+// Letzter Lauf, in dem der Wert wirklich von einem passenden Angebot kam. Steht
+// stale_grade auf 1, haelt der Scraper nur den alten Wert — wie lange schon, sagt das hier.
+const LAST_FRESH_AT = `(SELECT MAX(f.scraped_at) FROM prices f
+  WHERE f.card_id = c.id AND f.stale_grade = 0 AND f.value IS NOT NULL AND f.error IS NULL)`
+
 // GET /api/cards - all cards with latest price
 cardsRouter.get("/", (req, res) => {
   const db = getDb()
@@ -18,6 +23,7 @@ cardsRouter.get("/", (req, res) => {
            p.value, p.trend, p.avg7, p.avg30, p.avg1, p.from_price,
            p.available_items, p.psa10_low, p.psa9_low, p.cgc10_low, p.bgs10_low,
            p.scraped_at, p.error, p.stale_grade,
+           ${LAST_FRESH_AT} as last_fresh_at,
            prev.value as prev_value
     FROM cards c
     LEFT JOIN binders b ON b.id = c.binder_id
@@ -54,7 +60,8 @@ cardsRouter.get("/:id", (req, res) => {
       SELECT c.*, b.name as binder_name, b.color as binder_color,
              p.value, p.trend, p.avg7, p.avg30, p.avg1, p.from_price,
              p.available_items, p.psa10_low, p.psa9_low, p.cgc10_low, p.bgs10_low,
-             p.scraped_at, p.error, p.stale_grade
+             p.scraped_at, p.error, p.stale_grade,
+             ${LAST_FRESH_AT} as last_fresh_at
       FROM cards c
       LEFT JOIN binders b ON b.id = c.binder_id
       LEFT JOIN prices p ON p.card_id = c.id

@@ -44,6 +44,24 @@ export function urlToFlag(url: string | null | undefined): string {
   return ""
 }
 
+// Ab so vielen Tagen ohne passendes Angebot zeigen wir den gehaltenen Wert nicht mehr
+// als Marktwert an. Der Scraper laeuft woechentlich — 7 Tage = ein verpasster Lauf.
+export const STALE_PRICE_DAYS = 7
+
+/** Tage seit dem letzten echten Preis, wenn der aktuelle Wert nur gehalten ist und das
+ *  laenger als STALE_PRICE_DAYS — sonst null. */
+export function expiredPriceDays(card: {
+  stale_grade?: number | null
+  last_fresh_at?: string | null
+  scraped_at?: string | null
+}): number | null {
+  if (!card.stale_grade || !card.scraped_at) return null
+  const ref = card.last_fresh_at ?? null
+  if (!ref) return Infinity
+  const days = Math.floor((Date.now() - new Date(ref + "Z").getTime()) / 86400000)
+  return days > STALE_PRICE_DAYS ? days : null
+}
+
 export function timeAgo(dateStr: string | null | undefined): string {
   if (!dateStr) return ""
   const now = Date.now()

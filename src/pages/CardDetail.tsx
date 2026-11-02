@@ -1,7 +1,7 @@
 import { useParams, useNavigate, Link } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api"
-import { formatEUR, urlToFlag } from "@/lib/utils"
+import { formatEUR, urlToFlag, expiredPriceDays, STALE_PRICE_DAYS } from "@/lib/utils"
 import { ArrowLeft, Pencil, Trash2, ExternalLink, RefreshCw, ImageOff, Eye, EyeOff, Tag, Undo2 } from "lucide-react"
 import { PriceHistoryChart } from "@/components/charts/PriceHistoryChart"
 import { useState } from "react"
@@ -67,13 +67,16 @@ export function CardDetail() {
   if (!card) return <div>Karte nicht gefunden</div>
 
   const qty = card.quantity || 1
-  const profitPerCard = card.purchase_price && card.value ? card.value - card.purchase_price : null
+  // Gehaltener Wert ohne passendes Angebot seit > STALE_PRICE_DAYS: nicht mehr als Marktwert zeigen
+  const expiredDays = expiredPriceDays(card)
+  const value = expiredDays == null ? card.value : null
+  const profitPerCard = card.purchase_price && value ? value - card.purchase_price : null
   const profit = profitPerCard != null ? profitPerCard * qty : null
-  const profitPct = card.purchase_price && card.value ? ((card.value - card.purchase_price) / card.purchase_price) * 100 : null
+  const profitPct = card.purchase_price && value ? ((value - card.purchase_price) / card.purchase_price) * 100 : null
   const isProfitable = profit != null && profit >= 0
 
   const priceFields = [
-    { label: "Wert", value: card.value, highlight: true },
+    { label: "Wert", value, highlight: true },
     { label: "Kaufpreis", value: card.purchase_price },
     { label: "Trend", value: card.trend },
     { label: "7-Tage Avg", value: card.avg7 },
@@ -224,6 +227,19 @@ export function CardDetail() {
           </div>
         ))}
       </div>
+
+      {expiredDays != null && (
+        <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-sm">
+          <div className="font-medium text-amber-400">
+            {card.grade ? `Kein aktuelles ${card.grade}-Angebot` : "Kein passendes Angebot"}
+            {card.last_fresh_at && ` seit ${new Date(card.last_fresh_at).toLocaleDateString("de-DE")}`}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            Zuletzt bestätigter Wert: {formatEUR(card.value)}. Der Scraper hält ihn, bis wieder ein
+            passendes Angebot auftaucht — als Marktwert ist er nach {STALE_PRICE_DAYS} Tagen nicht mehr belastbar.
+          </div>
+        </div>
+      )}
 
       {/* Profit/Loss */}
       {profit != null && (
